@@ -3423,6 +3423,7 @@ static void kswapd_try_to_sleep(pg_data_t *pgdat, int order,
 	prepare_to_wait(&pgdat->kswapd_wait, &wait, TASK_INTERRUPTIBLE);
 
 	/* Try to sleep for a short interval */
+<<<<<<< HEAD
 	if (prepare_kswapd_sleep(pgdat, order, remaining,
 						balanced_classzone_idx)) {
 		/*
@@ -3439,6 +3440,9 @@ static void kswapd_try_to_sleep(pg_data_t *pgdat, int order,
 		 */
 		wakeup_kcompactd(pgdat, order, classzone_idx);
 
+=======
+	if (prepare_kswapd_sleep(pgdat, order, remaining, classzone_idx)) {
+>>>>>>> 77c531f66919 (simple_lmk: Make reclaim deterministic)
 		remaining = schedule_timeout(HZ/10);
 		finish_wait(&pgdat->kswapd_wait, &wait);
 		prepare_to_wait(&pgdat->kswapd_wait, &wait, TASK_INTERRUPTIBLE);
@@ -3448,8 +3452,12 @@ static void kswapd_try_to_sleep(pg_data_t *pgdat, int order,
 	 * After a short sleep, check if it was a premature sleep. If not, then
 	 * go fully to sleep until explicitly woken up.
 	 */
+<<<<<<< HEAD
 	if (prepare_kswapd_sleep(pgdat, order, remaining,
 						balanced_classzone_idx)) {
+=======
+	if (prepare_kswapd_sleep(pgdat, order, remaining, classzone_idx)) {
+>>>>>>> 77c531f66919 (simple_lmk: Make reclaim deterministic)
 		trace_mm_vmscan_kswapd_sleep(pgdat->node_id);
 
 		/*
