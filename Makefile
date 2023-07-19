@@ -743,7 +743,7 @@ ifdef CONFIG_KCOV
   endif
 endif
 
-LDFLAGS += -O2 -z,notext
+LDFLAGS += -O2 -z
 
 KBUILD_CFLAGS += $(call cc-disable-warning, unused-const-variable)
 ifdef CONFIG_FRAME_POINTER
