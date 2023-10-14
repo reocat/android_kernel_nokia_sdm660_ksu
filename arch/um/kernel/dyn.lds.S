@@ -1,4 +1,4 @@
-#include <asm-generic/vmlinux.lds.h>
+#include <asm/vmlinux.lds.h>
 #include <asm/page.h>
 
 OUTPUT_FORMAT(ELF_FORMAT)
@@ -74,6 +74,7 @@ SECTIONS
     _stext = .;
     TEXT_TEXT
     SCHED_TEXT
+    CPUIDLE_TEXT
     LOCK_TEXT
     *(.fixup)
     *(.stub .text.* .gnu.linkonce.t.*)

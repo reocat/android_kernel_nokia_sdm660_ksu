@@ -1,13 +1,7 @@
-/* Copyright (c) 2012, 2014-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+/*
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  */
 
 #undef TRACE_SYSTEM
@@ -250,24 +244,6 @@ TRACE_EVENT(cluster_pred_hist,
 		__entry->sample, __entry->tmr)
 );
 
-TRACE_EVENT(pre_pc_cb,
-
-	TP_PROTO(int tzflag),
-
-	TP_ARGS(tzflag),
-
-	TP_STRUCT__entry(
-		__field(int, tzflag)
-	),
-
-	TP_fast_assign(
-		__entry->tzflag = tzflag;
-	),
-
-	TP_printk("tzflag:%d",
-		__entry->tzflag
-	)
-);
 #endif
 #define TRACE_INCLUDE_FILE trace_msm_low_power
 #include <trace/define_trace.h>

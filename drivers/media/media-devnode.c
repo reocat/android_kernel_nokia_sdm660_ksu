@@ -4,7 +4,7 @@
  * Copyright (C) 2010 Nokia Corporation
  *
  * Based on drivers/media/video/v4l2_dev.c code authored by
- *	Mauro Carvalho Chehab <mchehab@infradead.org> (version 2)
+ *	Mauro Carvalho Chehab <mchehab@kernel.org> (version 2)
  *	Alan Cox, <alan@lxorguk.ukuu.org.uk> (version 1)
  *
  * Contacts: Laurent Pinchart <laurent.pinchart@ideasonboard.com>
@@ -18,10 +18,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  * --
  *
@@ -103,13 +99,13 @@ static ssize_t media_write(struct file *filp, const char __user *buf,
 	return devnode->fops->write(filp, buf, sz, off);
 }
 
-static unsigned int media_poll(struct file *filp,
+static __poll_t media_poll(struct file *filp,
 			       struct poll_table_struct *poll)
 {
 	struct media_devnode *devnode = media_devnode_data(filp);
 
 	if (!media_devnode_is_registered(devnode))
-		return POLLERR | POLLHUP;
+		return EPOLLERR | EPOLLHUP;
 	if (!devnode->fops->poll)
 		return DEFAULT_POLLMASK;
 	return devnode->fops->poll(filp, poll);
@@ -220,21 +216,6 @@ static const struct file_operations media_devnode_fops = {
 	.llseek = no_llseek,
 };
 
-/**
- * media_devnode_register - register a media device node
- * @media_dev: struct media_device we want to register a device node
- * @devnode: media device node structure we want to register
- *
- * The registration code assigns minor numbers and registers the new device node
- * with the kernel. An error is returned if no free minor number can be found,
- * or if the registration of the device node fails.
- *
- * Zero is returned on success.
- *
- * Note that if the media_devnode_register call fails, the release() callback of
- * the media_devnode structure is *not* called, so the caller is responsible for
- * freeing any data.
- */
 int __must_check media_devnode_register(struct media_device *mdev,
 					struct media_devnode *devnode,
 					struct module *owner)
@@ -267,22 +248,15 @@ int __must_check media_devnode_register(struct media_device *mdev,
 	dev_set_name(&devnode->dev, "media%d", devnode->minor);
 	device_initialize(&devnode->dev);
 
-	/* Part 2: Initialize and register the character device */
+	/* Part 2: Initialize the character device */
 	cdev_init(&devnode->cdev, &media_devnode_fops);
 	devnode->cdev.owner = owner;
-	devnode->cdev.kobj.parent = &devnode->dev.kobj;
 
-	ret = cdev_add(&devnode->cdev, MKDEV(MAJOR(media_dev_t), devnode->minor), 1);
+	/* Part 3: Add the media and char device */
+	ret = cdev_device_add(&devnode->cdev, &devnode->dev);
 	if (ret < 0) {
-		pr_err("%s: cdev_add failed\n", __func__);
+		pr_err("%s: cdev_device_add failed\n", __func__);
 		goto cdev_add_error;
-	}
-
-	/* Part 3: Add the media device */
-	ret = device_add(&devnode->dev);
-	if (ret < 0) {
-		pr_err("%s: device_add failed\n", __func__);
-		goto device_add_error;
 	}
 
 	/* Part 4: Activate this minor. The char device can now be used. */
@@ -290,8 +264,6 @@ int __must_check media_devnode_register(struct media_device *mdev,
 
 	return 0;
 
-device_add_error:
-	cdev_del(&devnode->cdev);
 cdev_add_error:
 	mutex_lock(&media_devnode_lock);
 	clear_bit(devnode->minor, media_devnode_nums);
@@ -313,22 +285,12 @@ void media_devnode_unregister_prepare(struct media_devnode *devnode)
 	mutex_unlock(&media_devnode_lock);
 }
 
-/**
- * media_devnode_unregister - unregister a media device node
- * @devnode: the device node to unregister
- *
- * This unregisters the passed device. Future open calls will be met with
- * errors.
- *
- * Should be called after media_devnode_unregister_prepare()
- */
 void media_devnode_unregister(struct media_devnode *devnode)
 {
 	mutex_lock(&media_devnode_lock);
 	/* Delete the cdev on this minor as well */
-	cdev_del(&devnode->cdev);
+	cdev_device_del(&devnode->cdev, &devnode->dev);
 	mutex_unlock(&media_devnode_lock);
-	device_del(&devnode->dev);
 	devnode->media_dev = NULL;
 	put_device(&devnode->dev);
 }

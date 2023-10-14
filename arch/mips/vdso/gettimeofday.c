@@ -11,14 +11,18 @@
 #include "vdso.h"
 
 #include <linux/compiler.h>
-#include <linux/irqchip/mips-gic.h>
 #include <linux/time.h>
 
 #include <asm/clocksource.h>
 #include <asm/io.h>
-#include <asm/mips-cm.h>
 #include <asm/unistd.h>
 #include <asm/vdso.h>
+
+#if MIPS_ISA_REV < 6
+#define VDSO_SYSCALL_CLOBBERS "hi", "lo",
+#else
+#define VDSO_SYSCALL_CLOBBERS
+#endif
 
 #ifdef CONFIG_MIPS_CLOCK_VSYSCALL
 
@@ -36,7 +40,9 @@ static __always_inline long gettimeofday_fallback(struct timeval *_tv,
 	: "=r" (ret), "=r" (error)
 	: "r" (tv), "r" (tz), "r" (nr)
 	: "$1", "$3", "$8", "$9", "$10", "$11", "$12", "$13",
-	  "$14", "$15", "$24", "$25", "hi", "lo", "memory");
+	  "$14", "$15", "$24", "$25",
+	  VDSO_SYSCALL_CLOBBERS
+	  "memory");
 
 	return error ? -ret : ret;
 }
@@ -57,7 +63,9 @@ static __always_inline long clock_gettime_fallback(clockid_t _clkid,
 	: "=r" (ret), "=r" (error)
 	: "r" (clkid), "r" (ts), "r" (nr)
 	: "$1", "$3", "$8", "$9", "$10", "$11", "$12", "$13",
-	  "$14", "$15", "$24", "$25", "hi", "lo", "memory");
+	  "$14", "$15", "$24", "$25",
+	  VDSO_SYSCALL_CLOBBERS
+	  "memory");
 
 	return error ? -ret : ret;
 }
@@ -126,9 +134,9 @@ static __always_inline u64 read_gic_count(const union mips_vdso_data *data)
 	u32 hi, hi2, lo;
 
 	do {
-		hi = __raw_readl(gic + GIC_UMV_SH_COUNTER_63_32_OFS);
-		lo = __raw_readl(gic + GIC_UMV_SH_COUNTER_31_00_OFS);
-		hi2 = __raw_readl(gic + GIC_UMV_SH_COUNTER_63_32_OFS);
+		hi = __raw_readl(gic + sizeof(lo));
+		lo = __raw_readl(gic);
+		hi2 = __raw_readl(gic + sizeof(lo));
 	} while (hi2 != hi);
 
 	return (((u64)hi) << 32) + lo;

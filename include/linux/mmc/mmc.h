@@ -24,12 +24,75 @@
 #ifndef LINUX_MMC_MMC_H
 #define LINUX_MMC_MMC_H
 
-#include <uapi/linux/mmc/mmc.h>
+#include <linux/types.h>
 
-/* class 11 */
-#define MMC_CMDQ_TASK_MGMT       48  /* ac   [31:0] task ID     R1b */
-#define DISCARD_QUEUE		0x1
-#define DISCARD_TASK		0x2
+/* Standard MMC commands (4.1)           type  argument     response */
+   /* class 1 */
+#define MMC_GO_IDLE_STATE         0   /* bc                          */
+#define MMC_SEND_OP_COND          1   /* bcr  [31:0] OCR         R3  */
+#define MMC_ALL_SEND_CID          2   /* bcr                     R2  */
+#define MMC_SET_RELATIVE_ADDR     3   /* ac   [31:16] RCA        R1  */
+#define MMC_SET_DSR               4   /* bc   [31:16] RCA            */
+#define MMC_SLEEP_AWAKE		  5   /* ac   [31:16] RCA 15:flg R1b */
+#define MMC_SWITCH                6   /* ac   [31:0] See below   R1b */
+#define MMC_SELECT_CARD           7   /* ac   [31:16] RCA        R1  */
+#define MMC_SEND_EXT_CSD          8   /* adtc                    R1  */
+#define MMC_SEND_CSD              9   /* ac   [31:16] RCA        R2  */
+#define MMC_SEND_CID             10   /* ac   [31:16] RCA        R2  */
+#define MMC_READ_DAT_UNTIL_STOP  11   /* adtc [31:0] dadr        R1  */
+#define MMC_STOP_TRANSMISSION    12   /* ac                      R1b */
+#define MMC_SEND_STATUS          13   /* ac   [31:16] RCA        R1  */
+#define MMC_BUS_TEST_R           14   /* adtc                    R1  */
+#define MMC_GO_INACTIVE_STATE    15   /* ac   [31:16] RCA            */
+#define MMC_BUS_TEST_W           19   /* adtc                    R1  */
+#define MMC_SPI_READ_OCR         58   /* spi                  spi_R3 */
+#define MMC_SPI_CRC_ON_OFF       59   /* spi  [0:0] flag      spi_R1 */
+
+  /* class 2 */
+#define MMC_SET_BLOCKLEN         16   /* ac   [31:0] block len   R1  */
+#define MMC_READ_SINGLE_BLOCK    17   /* adtc [31:0] data addr   R1  */
+#define MMC_READ_MULTIPLE_BLOCK  18   /* adtc [31:0] data addr   R1  */
+#define MMC_SEND_TUNING_BLOCK    19   /* adtc                    R1  */
+#define MMC_SEND_TUNING_BLOCK_HS200	21	/* adtc R1  */
+#define MMC_SEND_TUNING_BLOCK_HS400      MMC_SEND_TUNING_BLOCK_HS200
+
+  /* class 3 */
+#define MMC_WRITE_DAT_UNTIL_STOP 20   /* adtc [31:0] data addr   R1  */
+
+  /* class 4 */
+#define MMC_SET_BLOCK_COUNT      23   /* adtc [31:0] data addr   R1  */
+#define MMC_WRITE_BLOCK          24   /* adtc [31:0] data addr   R1  */
+#define MMC_WRITE_MULTIPLE_BLOCK 25   /* adtc                    R1  */
+#define MMC_PROGRAM_CID          26   /* adtc                    R1  */
+#define MMC_PROGRAM_CSD          27   /* adtc                    R1  */
+
+  /* class 6 */
+#define MMC_SET_WRITE_PROT       28   /* ac   [31:0] data addr   R1b */
+#define MMC_CLR_WRITE_PROT       29   /* ac   [31:0] data addr   R1b */
+#define MMC_SEND_WRITE_PROT      30   /* adtc [31:0] wpdata addr R1  */
+
+  /* class 5 */
+#define MMC_ERASE_GROUP_START    35   /* ac   [31:0] data addr   R1  */
+#define MMC_ERASE_GROUP_END      36   /* ac   [31:0] data addr   R1  */
+#define MMC_ERASE                38   /* ac                      R1b */
+
+  /* class 9 */
+#define MMC_FAST_IO              39   /* ac   <Complex>          R4  */
+#define MMC_GO_IRQ_STATE         40   /* bcr                     R5  */
+
+  /* class 7 */
+#define MMC_LOCK_UNLOCK          42   /* adtc                    R1b */
+
+  /* class 8 */
+#define MMC_APP_CMD              55   /* ac   [31:16] RCA        R1  */
+#define MMC_GEN_CMD              56   /* adtc [0] RD/WR          R1  */
+
+  /* class 11 */
+#define MMC_QUE_TASK_PARAMS      44   /* ac   [20:16] task id    R1  */
+#define MMC_QUE_TASK_ADDR        45   /* ac   [31:0] data addr   R1  */
+#define MMC_EXECUTE_READ_TASK    46   /* adtc [20:16] task id    R1  */
+#define MMC_EXECUTE_WRITE_TASK   47   /* adtc [20:16] task id    R1  */
+#define MMC_CMDQ_TASK_MGMT       48   /* ac   [20:16] task id    R1b */
 
 static inline bool mmc_op_multi(u32 opcode)
 {
@@ -82,7 +145,7 @@ static inline bool mmc_op_multi(u32 opcode)
 #define R1_WP_ERASE_SKIP	(1 << 15)	/* sx, c */
 #define R1_CARD_ECC_DISABLED	(1 << 14)	/* sx, a */
 #define R1_ERASE_RESET		(1 << 13)	/* sr, c */
-#define R1_STATUS(x)            (x & 0xFFFFE000)
+#define R1_STATUS(x)            (x & 0xFFF9A000)
 #define R1_CURRENT_STATE(x)	((x & 0x00001E00) >> 9)	/* sx, b (4 bits) */
 #define R1_READY_FOR_DATA	(1 << 8)	/* sx, a */
 #define R1_SWITCH_ERROR		(1 << 7)	/* sx, c */
@@ -121,50 +184,6 @@ static inline bool mmc_op_multi(u32 opcode)
 #define R2_SPI_ERASE_PARAM	(1 << 14)
 #define R2_SPI_OUT_OF_RANGE	(1 << 15)	/* or CSD overwrite */
 #define R2_SPI_CSD_OVERWRITE	R2_SPI_OUT_OF_RANGE
-
-/* These are unpacked versions of the actual responses */
-
-struct _mmc_csd {
-	u8  csd_structure;
-	u8  spec_vers;
-	u8  taac;
-	u8  nsac;
-	u8  tran_speed;
-	u16 ccc;
-	u8  read_bl_len;
-	u8  read_bl_partial;
-	u8  write_blk_misalign;
-	u8  read_blk_misalign;
-	u8  dsr_imp;
-	u16 c_size;
-	u8  vdd_r_curr_min;
-	u8  vdd_r_curr_max;
-	u8  vdd_w_curr_min;
-	u8  vdd_w_curr_max;
-	u8  c_size_mult;
-	union {
-		struct { /* MMC system specification version 3.1 */
-			u8  erase_grp_size;
-			u8  erase_grp_mult;
-		} v31;
-		struct { /* MMC system specification version 2.2 */
-			u8  sector_size;
-			u8  erase_grp_size;
-		} v22;
-	} erase;
-	u8  wp_grp_size;
-	u8  wp_grp_enable;
-	u8  default_ecc;
-	u8  r2w_factor;
-	u8  write_bl_len;
-	u8  write_bl_partial;
-	u8  file_format_grp;
-	u8  copy;
-	u8  perm_write_protect;
-	u8  tmp_write_protect;
-	u8  file_format;
-	u8  ecc;
-};
 
 /*
  * OCR bits are mostly in host.h
@@ -220,8 +239,7 @@ struct _mmc_csd {
  * EXT_CSD fields
  */
 
-#define EXT_CSD_CMDQ			15	/* R/W */
-#define EXT_CSD_BARRIER_CTRL		31      /* R/W */
+#define EXT_CSD_CMDQ_MODE_EN		15	/* R/W */
 #define EXT_CSD_FLUSH_CACHE		32      /* W */
 #define EXT_CSD_CACHE_CTRL		33      /* R/W */
 #define EXT_CSD_POWER_OFF_NOTIFICATION	34	/* R/W */
@@ -287,8 +305,6 @@ struct _mmc_csd {
 #define EXT_CSD_DEVICE_LIFE_TIME_EST_TYP_B	269	/* RO */
 #define EXT_CSD_CMDQ_DEPTH		307	/* RO */
 #define EXT_CSD_CMDQ_SUPPORT		308	/* RO */
-#define EXT_CSD_BARRIER_SUPPORT		486	/* RO */
- #define EXT_CSD_TAG_UNIT_SIZE		498	/* RO */
 #define EXT_CSD_SUPPORTED_MODE		493	/* RO */
 #define EXT_CSD_TAG_UNIT_SIZE		498	/* RO */
 #define EXT_CSD_DATA_TAG_SUPPORT	499	/* RO */
@@ -340,13 +356,14 @@ struct _mmc_csd {
 #define EXT_CSD_CARD_TYPE_HS400_1_2V	(1<<7)	/* Card can run at 200MHz DDR, 1.2V */
 #define EXT_CSD_CARD_TYPE_HS400		(EXT_CSD_CARD_TYPE_HS400_1_8V | \
 					 EXT_CSD_CARD_TYPE_HS400_1_2V)
+#define EXT_CSD_CARD_TYPE_HS400ES	(1<<8)	/* Card can run at HS400ES */
 
 #define EXT_CSD_BUS_WIDTH_1	0	/* Card is in 1 bit mode */
 #define EXT_CSD_BUS_WIDTH_4	1	/* Card is in 4 bit mode */
 #define EXT_CSD_BUS_WIDTH_8	2	/* Card is in 8 bit mode */
 #define EXT_CSD_DDR_BUS_WIDTH_4	5	/* Card is in 4 bit DDR mode */
 #define EXT_CSD_DDR_BUS_WIDTH_8	6	/* Card is in 8 bit DDR mode */
-#define EXT_CSD_BUS_WIDTH_STROBE	0x80	/* Card is in 8 bit DDR mode */
+#define EXT_CSD_BUS_WIDTH_STROBE BIT(7)	/* Enhanced strobe mode */
 
 #define EXT_CSD_TIMING_BC	0	/* Backwards compatility */
 #define EXT_CSD_TIMING_HS	1	/* High speed */
@@ -397,15 +414,34 @@ struct _mmc_csd {
  * BKOPS modes
  */
 #define EXT_CSD_MANUAL_BKOPS_MASK	0x01
+#define EXT_CSD_AUTO_BKOPS_MASK		0x02
+
+/*
+ * Command Queue
+ */
+#define EXT_CSD_CMDQ_MODE_ENABLED	BIT(0)
+#define EXT_CSD_CMDQ_DEPTH_MASK		GENMASK(4, 0)
+#define EXT_CSD_CMDQ_SUPPORTED		BIT(0)
 
 /*
  * MMC_SWITCH access modes
  */
-
 #define MMC_SWITCH_MODE_CMD_SET		0x00	/* Change the command set */
 #define MMC_SWITCH_MODE_SET_BITS	0x01	/* Set bits which are 1 in value */
 #define MMC_SWITCH_MODE_CLEAR_BITS	0x02	/* Clear bits which are 1 in value */
 #define MMC_SWITCH_MODE_WRITE_BYTE	0x03	/* Set target to value */
+
+/*
+ * Erase/trim/discard
+ */
+#define MMC_ERASE_ARG			0x00000000
+#define MMC_SECURE_ERASE_ARG		0x80000000
+#define MMC_TRIM_ARG			0x00000001
+#define MMC_DISCARD_ARG			0x00000003
+#define MMC_SECURE_TRIM1_ARG		0x80000001
+#define MMC_SECURE_TRIM2_ARG		0x80008000
+#define MMC_SECURE_ARGS			0x80000000
+#define MMC_TRIM_ARGS			0x00008001
 
 #define mmc_driver_type_mask(n)		(1 << (n))
 

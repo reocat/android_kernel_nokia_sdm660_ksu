@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * PCI Backend Operations - respond to PCI requests from Frontend
  *
@@ -6,7 +7,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/wait.h>
 #include <linux/bitops.h>
 #include <xen/events.h>
@@ -231,7 +232,7 @@ int xen_pcibk_enable_msix(struct xen_pcibk_device *pdev,
 	if (dev->msi_enabled || !(cmd & PCI_COMMAND_MEMORY))
 		return -ENXIO;
 
-	entries = kmalloc(op->value * sizeof(*entries), GFP_KERNEL);
+	entries = kmalloc_array(op->value, sizeof(*entries), GFP_KERNEL);
 	if (entries == NULL)
 		return -ENOMEM;
 
@@ -317,7 +318,7 @@ static void xen_pcibk_test_and_schedule_op(struct xen_pcibk_device *pdev)
 	/* Check that frontend is requesting an operation and that we are not
 	 * already processing a request */
 	if (xen_pcibk_test_op_pending(pdev)) {
-		queue_work(xen_pcibk_wq, &pdev->op_work);
+		schedule_work(&pdev->op_work);
 		eoi = false;
 	}
 	/*_XEN_PCIB_active should have been cleared by pcifront. And also make

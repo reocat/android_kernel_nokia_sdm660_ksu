@@ -1,15 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
 /*
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+ * Copyright (c) 2014-2015,2017 The Linux Foundation. All rights reserved.
  */
 
 #ifndef __ARCH_ARM_MACH_MSM_LPM_STATS_H
@@ -61,35 +53,23 @@ static inline struct lpm_stats *lpm_stats_config_level(const char *name,
 
 static inline void lpm_stats_cluster_enter(struct lpm_stats *stats,
 						uint32_t index)
-{
-	return;
-}
+{ }
 
 static inline void lpm_stats_cluster_exit(struct lpm_stats *stats,
 					uint32_t index, bool success)
-{
-	return;
-}
+{ }
 
 static inline void lpm_stats_cpu_enter(uint32_t index, uint64_t time)
-{
-	return;
-}
+{ }
 
 static inline void lpm_stats_cpu_exit(uint32_t index, bool success,
 							uint64_t time)
-{
-	return;
-}
+{ }
 
 static inline void lpm_stats_suspend_enter(void)
-{
-	return;
-}
+{ }
 
 static inline void lpm_stats_suspend_exit(void)
-{
-	return;
-}
+{ }
 #endif
 #endif  /* __ARCH_ARM_MACH_MSM_LPM_STATS_H */

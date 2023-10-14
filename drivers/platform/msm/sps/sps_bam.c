@@ -1,15 +1,7 @@
-/* Copyright (c) 2011-2017, 2019, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2011-2019, The Linux Foundation. All rights reserved.
  */
-
 #include <linux/types.h>	/* u32 */
 #include <linux/kernel.h>	/* pr_info() */
 #include <linux/mutex.h>	/* mutex */
@@ -137,6 +129,7 @@ polling:
 	if ((dev->state & BAM_STATE_MTI) == 0) {
 		u32 mask = dev->pipe_active_mask;
 		enum sps_callback_case cb_case;
+
 		source = bam_check_irq_source(&dev->base, dev->props.ee,
 						mask, &cb_case);
 
@@ -195,6 +188,7 @@ polling:
 	if (dev->props.options & SPS_BAM_RES_CONFIRM) {
 		u32 mask = dev->pipe_active_mask;
 		enum sps_callback_case cb_case;
+
 		source = bam_check_irq_source(&dev->base, dev->props.ee,
 						mask, &cb_case);
 
@@ -230,27 +224,28 @@ static irqreturn_t bam_isr(int irq, void *ctxt)
 {
 	struct sps_bam *dev = ctxt;
 
-	SPS_DBG1(dev, "sps:bam_isr: bam:%pa; IRQ #:%d.\n",
-		BAM_ID(dev), irq);
+	SPS_DBG1(dev, "sps:%s: bam:%pa; IRQ #:%d.\n",
+		__func__, BAM_ID(dev), irq);
 
 	if (dev->props.options & SPS_BAM_RES_CONFIRM) {
 		if (dev->props.callback) {
 			bool ready = false;
+
 			dev->props.callback(SPS_CALLBACK_BAM_RES_REQ, &ready);
 			if (ready) {
 				SPS_DBG1(dev,
-					"sps:bam_isr: handle IRQ for bam:%pa IRQ #:%d.\n",
-					BAM_ID(dev), irq);
+					"sps:%s: handle IRQ for bam:%pa IRQ #:%d.\n",
+					__func__, BAM_ID(dev), irq);
 				if (sps_bam_check_irq(dev))
 					SPS_DBG2(dev,
-						"sps:bam_isr: callback bam:%pa IRQ #:%d to poll the pipes.\n",
-						BAM_ID(dev), irq);
+						"sps:%s: callback bam:%pa IRQ #:%d to poll the pipes.\n",
+						__func__, BAM_ID(dev), irq);
 				dev->props.callback(SPS_CALLBACK_BAM_RES_REL,
 							&ready);
 			} else {
 				SPS_DBG1(dev,
-					"sps:bam_isr: BAM is not ready and thus skip IRQ for bam:%pa IRQ #:%d.\n",
-					BAM_ID(dev), irq);
+					"sps:%s: BAM is not ready and thus skip IRQ for bam:%pa IRQ #:%d.\n",
+					__func__, BAM_ID(dev), irq);
 			}
 		} else {
 			SPS_ERR(dev,
@@ -334,10 +329,10 @@ int sps_bam_enable(struct sps_bam *dev)
 					"sps:Fail to enable wakeup irq for BAM %pa IRQ %d\n",
 					BAM_ID(dev), dev->props.irq);
 				return SPS_ERROR;
-			} else
-				SPS_DBG3(dev,
-					"sps:Enable wakeup irq for BAM %pa IRQ %d\n",
-					BAM_ID(dev), dev->props.irq);
+			}
+			SPS_DBG3(dev,
+				"sps:Enable wakeup irq for BAM %pa IRQ %d\n",
+				BAM_ID(dev), dev->props.irq);
 		}
 	}
 
@@ -485,6 +480,7 @@ int sps_bam_enable(struct sps_bam *dev)
 			&& MTIenabled) {
 		u32 pipe_index;
 		u32 pipe_mask;
+
 		for (pipe_index = 0, pipe_mask = 1;
 		    pipe_index < dev->props.num_pipes;
 		    pipe_index++, pipe_mask <<= 1) {
@@ -718,7 +714,8 @@ u32 sps_bam_pipe_alloc(struct sps_bam *dev, u32 pipe_index)
 		}
 	} else {
 		/* Check that client-specified pipe is available */
-		if (pipe_index >= dev->props.num_pipes) {
+		if (pipe_index >= dev->props.num_pipes ||
+				pipe_index >= BAM_MAX_PIPES) {
 			SPS_ERR(dev,
 				"sps:Invalid pipe %d for allocate on BAM %pa\n",
 				pipe_index, BAM_ID(dev));
@@ -1108,6 +1105,7 @@ int sps_bam_pipe_disconnect(struct sps_bam *dev, u32 pipe_index)
 			bam_pipe_exit(&dev->base, pipe_index, dev->props.ee);
 		if (pipe->sys.desc_cache != NULL) {
 			u32 size = pipe->num_descs * sizeof(void *);
+
 			if (pipe->desc_size + size <= PAGE_SIZE) {
 				if (dev->props.options & SPS_BAM_HOLD_MEM)
 					memset(pipe->sys.desc_cache, 0,
@@ -1510,6 +1508,7 @@ int sps_bam_pipe_transfer_one(struct sps_bam *dev,
 	/* Record user pointer value */
 	if (!pipe->sys.no_queue) {
 		u32 index = pipe->sys.desc_offset / sizeof(struct sps_iovec);
+
 		pipe->sys.user_ptrs[index] = user;
 #ifdef SPS_BAM_STATISTICS
 		if (user != NULL)
@@ -1706,8 +1705,8 @@ static void trigger_event(struct sps_bam *dev,
 
 	if (event_reg->xfer_done) {
 		complete(event_reg->xfer_done);
-		SPS_DBG(dev, "sps:trigger_event.done=%d.\n",
-			event_reg->xfer_done->done);
+		SPS_DBG(dev, "sps:%s.done=%d.\n",
+			__func__, event_reg->xfer_done->done);
 	}
 
 	if (event_reg->callback) {
@@ -1841,6 +1840,7 @@ static void pipe_handler_eot(struct sps_bam *dev, struct sps_pipe *pipe)
 
 	if (producer && pipe->late_eot) {
 		struct sps_iovec *desc_end;
+
 		if (end_offset == 0)
 			desc_end = (struct sps_iovec *)(pipe->sys.desc_buf
 				+ pipe->desc_size - sizeof(struct sps_iovec));
@@ -2031,8 +2031,8 @@ static void pipe_handler(struct sps_bam *dev, struct sps_pipe *pipe)
 	pipe_index = pipe->pipe_index;
 	status = bam_pipe_get_and_clear_irq_status(&dev->base, pipe_index);
 
-	SPS_DBG(dev, "sps:pipe_handler.bam %pa.pipe %d.status=0x%x.\n",
-			BAM_ID(dev), pipe_index, status);
+	SPS_DBG(dev, "sps:%s.bam %pa.pipe %d.status=0x%x.\n",
+			__func__, BAM_ID(dev), pipe_index, status);
 
 	/* Check for enabled interrupt sources */
 	status &= pipe->irq_mask;

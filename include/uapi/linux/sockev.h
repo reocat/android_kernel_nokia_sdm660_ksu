@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
+
 #ifndef _SOCKEV_H_
 #define _SOCKEV_H_
 
@@ -14,8 +16,8 @@ enum sknetlink_groups {
 #define SOCKEV_STR_MAX 32
 
 /********************************************************************
-*		Socket operation messages
-****/
+ *		Socket operation messages
+ ****/
 
 struct sknlsockevmsg {
 	__u8 event[SOCKEV_STR_MAX];

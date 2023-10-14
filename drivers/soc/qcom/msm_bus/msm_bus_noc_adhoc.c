@@ -1,13 +1,6 @@
-/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "AXI: NOC: %s(): " fmt, __func__
@@ -100,7 +93,7 @@ static uint64_t noc_bw(uint32_t bw_field, uint32_t qos_freq)
 /**
  * Calculate the max BW in Bytes/s for a given time-base.
  */
-static uint32_t noc_bw_ceil(long int bw_field, uint32_t qos_freq_khz)
+static uint32_t noc_bw_ceil(int bw_field, uint32_t qos_freq_khz)
 {
 	uint64_t bw_temp = 2 * qos_freq_khz * bw_field;
 	uint32_t scale = 1000 * BW_SCALE;
@@ -161,10 +154,10 @@ static uint32_t noc_sat_field(uint64_t bw, uint32_t ws, uint32_t qos_freq)
 		uint64_t bw_scaled = min_t(uint64_t, bw, MAX_BW(qos_freq));
 		uint32_t rem = noc_div(&bw_scaled, 100000);
 
-		/**
-			SATURATION =
-			(BW [MBps] * integration window [us] *
-				time base frequency [MHz]) / (256 * 16)
+		/*
+		 *	SATURATION =
+		 *	(BW [MBps] * integration window [us] *
+		 *		time base frequency [MHz]) / (256 * 16)
 		 */
 		tbw = bw_scaled * ws * qos_freq;
 		tscale = BW_SCALE * SAT_SCALE * 1000000LL;
@@ -294,7 +287,7 @@ static void msm_bus_noc_set_qos_bw(void __iomem *base, uint32_t qos_off,
 uint8_t msm_bus_noc_get_qos_mode(void __iomem *base, uint32_t qos_off,
 	uint32_t mport, uint32_t qos_delta, uint32_t mode, uint32_t perm_mode)
 {
-	if (NOC_QOS_MODES_ALL_PERM == perm_mode)
+	if (perm_mode == NOC_QOS_MODES_ALL_PERM)
 		return readl_relaxed(NOC_QOS_MODEn_ADDR(base, qos_off,
 			mport, qos_delta)) & NOC_QOS_MODEn_MODE_BMSK;
 	else
@@ -342,7 +335,7 @@ static bool msm_bus_noc_update_bw_reg(int mode)
 
 	if ((mode == NOC_QOS_MODE_LIMITER) ||
 			(mode == NOC_QOS_MODE_REGULATOR))
-			ret = true;
+		ret = true;
 
 	return ret;
 }
@@ -410,8 +403,8 @@ static int msm_bus_noc_set_bw(struct msm_bus_node_device_type *dev,
 			NOC_QOS_MODE_LIMITER))) {
 		struct msm_bus_noc_qos_bw qos_bw;
 
-		bw = msm_bus_div64(info->num_qports,
-				dev->node_bw[ACTIVE_CTX].sum_ab);
+		bw = msm_bus_div64(dev->node_bw[ACTIVE_CTX].sum_ab,
+				info->num_qports);
 
 		for (i = 0; i < info->num_qports; i++) {
 			if (!info->qport) {

@@ -1,15 +1,5 @@
-/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2016-2018, 2020, The Linux Foundation. All rights reserved. */
 
 #ifndef __MDSS_DP_PLL_14NM_H
 #define __MDSS_DP_PLL_14NM_H
@@ -176,6 +166,9 @@ struct dp_pll_db {
 
 	/* PHY vco divider */
 	u32 phy_vco_div;
+
+	/* TX settings */
+	u32 lane_mode_1;
 };
 
 int dp_vco_set_rate_14nm(struct clk_hw *hw, unsigned long rate,

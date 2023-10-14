@@ -1,20 +1,15 @@
-/* Copyright (c) 2002,2007-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2002, 2007-2020, The Linux Foundation. All rights reserved.
  */
 #ifndef __KGSL_SHAREDMEM_H
 #define __KGSL_SHAREDMEM_H
 
 #include <linux/dma-mapping.h>
+#include <linux/scatterlist.h>
+#include <linux/slab.h>
 
+#include "kgsl.h"
 #include "kgsl_mmu.h"
 
 struct kgsl_device;
@@ -57,6 +52,9 @@ int kgsl_cache_range_op(struct kgsl_memdesc *memdesc,
 			uint64_t offset, uint64_t size,
 			unsigned int op);
 
+void kgsl_memdesc_init(struct kgsl_device *device,
+			struct kgsl_memdesc *memdesc, uint64_t flags);
+
 void kgsl_process_init_sysfs(struct kgsl_device *device,
 		struct kgsl_process_private *private);
 void kgsl_process_uninit_sysfs(struct kgsl_process_private *private);
@@ -72,6 +70,32 @@ void kgsl_get_memory_usage(char *str, size_t len, uint64_t memflags);
 
 int kgsl_sharedmem_page_alloc_user(struct kgsl_memdesc *memdesc,
 				uint64_t size);
+
+void kgsl_free_secure_page(struct page *page);
+
+struct page *kgsl_alloc_secure_page(void);
+
+/**
+ * kgsl_free_pages() - Free pages in the pages array
+ * @memdesc: memdesc that has the array to be freed
+ *
+ * Free the pages in the pages array of memdesc. If pool
+ * is configured, pages are added back to the pool.
+ * If shmem is used for allocation, kgsl refcount on the page
+ * is decremented.
+ */
+void kgsl_free_pages(struct kgsl_memdesc *memdesc);
+
+/**
+ * kgsl_free_pages_from_sgt() - Free scatter-gather list
+ * @memdesc: pointer of the memdesc which has the sgt to be freed
+ *
+ * Free the sg list by collapsing any physical adjacent pages.
+ * If pool is configured, pages are added back to the pool.
+ * If shmem is used for allocation, kgsl refcount on the page
+ * is decremented.
+ */
+void kgsl_free_pages_from_sgt(struct kgsl_memdesc *memdesc);
 
 #define MEMFLAGS(_flags, _mask, _shift) \
 	((unsigned int) (((_flags) & (_mask)) >> (_shift)))
@@ -131,8 +155,9 @@ kgsl_memdesc_set_align(struct kgsl_memdesc *memdesc, unsigned int align)
 	if (align > 32)
 		align = 32;
 
-	memdesc->flags &= ~KGSL_MEMALIGN_MASK;
-	memdesc->flags |= (align << KGSL_MEMALIGN_SHIFT) & KGSL_MEMALIGN_MASK;
+	memdesc->flags &= ~(uint64_t)KGSL_MEMALIGN_MASK;
+	memdesc->flags |= (uint64_t)((align << KGSL_MEMALIGN_SHIFT) &
+					KGSL_MEMALIGN_MASK);
 	return 0;
 }
 
@@ -152,34 +177,17 @@ kgsl_memdesc_usermem_type(const struct kgsl_memdesc *memdesc)
 }
 
 /**
- * memdesg_sg_dma() - Turn a dma_addr (from CMA) into a sg table
- * @memdesc: Pointer to the memdesc structure
+ * kgsl_memdesc_sg_dma - Turn a dma_addr (from CMA) into a sg table
+ * @memdesc: Pointer to a memory descriptor
  * @addr: Physical address from the dma_alloc function
  * @size: Size of the chunk
  *
- * Create a sg table for the contigious chunk specified by addr and size.
+ * Create a sg table for the contiguous chunk specified by addr and size.
+ *
+ * Return: 0 on success or negative on failure.
  */
-static inline int
-memdesc_sg_dma(struct kgsl_memdesc *memdesc,
-		phys_addr_t addr, uint64_t size)
-{
-	int ret;
-	struct page *page = phys_to_page(addr);
-
-	memdesc->sgt = kmalloc(sizeof(struct sg_table), GFP_KERNEL);
-	if (memdesc->sgt == NULL)
-		return -ENOMEM;
-
-	ret = sg_alloc_table(memdesc->sgt, 1, GFP_KERNEL);
-	if (ret) {
-		kfree(memdesc->sgt);
-		memdesc->sgt = NULL;
-		return ret;
-	}
-
-	sg_set_page(memdesc->sgt->sgl, page, (size_t) size, 0);
-	return 0;
-}
+int kgsl_memdesc_sg_dma(struct kgsl_memdesc *memdesc,
+		phys_addr_t addr, u64 size);
 
 /*
  * kgsl_memdesc_is_global - is this a globally mapped buffer?
@@ -213,6 +221,17 @@ static inline int
 kgsl_memdesc_has_guard_page(const struct kgsl_memdesc *memdesc)
 {
 	return (memdesc->priv & KGSL_MEMDESC_GUARD_PAGE) != 0;
+}
+
+/**
+ * kgsl_memdesc_is_reclaimed - check if a buffer is reclaimed
+ * @memdesc: the memdesc
+ *
+ * Return: true if the memdesc pages were reclaimed, false otherwise
+ */
+static inline bool kgsl_memdesc_is_reclaimed(const struct kgsl_memdesc *memdesc)
+{
+	return memdesc && (memdesc->priv & KGSL_MEMDESC_RECLAIMED);
 }
 
 /*
@@ -258,7 +277,8 @@ kgsl_memdesc_use_cpu_map(const struct kgsl_memdesc *memdesc)
 static inline uint64_t
 kgsl_memdesc_footprint(const struct kgsl_memdesc *memdesc)
 {
-	return  memdesc->size + kgsl_memdesc_guard_page_size(memdesc);
+	return ALIGN(memdesc->size + kgsl_memdesc_guard_page_size(memdesc),
+		PAGE_SIZE);
 }
 
 /*
@@ -275,30 +295,9 @@ kgsl_memdesc_footprint(const struct kgsl_memdesc *memdesc)
  * all pagetables.  This is for use for device wide GPU allocations such as
  * ringbuffers.
  */
-static inline int kgsl_allocate_global(struct kgsl_device *device,
+int kgsl_allocate_global(struct kgsl_device *device,
 	struct kgsl_memdesc *memdesc, uint64_t size, uint64_t flags,
-	unsigned int priv, const char *name)
-{
-	int ret;
-
-	memdesc->flags = flags;
-	memdesc->priv = priv;
-
-	if (((memdesc->priv & KGSL_MEMDESC_CONTIG) != 0) ||
-		(kgsl_mmu_get_mmutype(device) == KGSL_MMU_TYPE_NONE))
-		ret = kgsl_sharedmem_alloc_contig(device, memdesc,
-						(size_t) size);
-	else {
-		ret = kgsl_sharedmem_page_alloc_user(memdesc, (size_t) size);
-		if (ret == 0)
-			kgsl_memdesc_map(memdesc);
-	}
-
-	if (ret == 0)
-		kgsl_mmu_add_global(device, memdesc, name);
-
-	return ret;
-}
+	unsigned int priv, const char *name);
 
 /**
  * kgsl_free_global() - Free a device wide GPU allocation and remove it from the
@@ -310,12 +309,7 @@ static inline int kgsl_allocate_global(struct kgsl_device *device,
  * Remove the specific memory descriptor from the global pagetable entry list
  * and free it
  */
-static inline void kgsl_free_global(struct kgsl_device *device,
-		struct kgsl_memdesc *memdesc)
-{
-	kgsl_mmu_remove_global(device, memdesc);
-	kgsl_sharedmem_free(memdesc);
-}
+void kgsl_free_global(struct kgsl_device *device, struct kgsl_memdesc *memdesc);
 
 void kgsl_sharedmem_set_noretry(bool val);
 bool kgsl_sharedmem_get_noretry(void);
@@ -373,8 +367,12 @@ static inline void kgsl_free_sgt(struct sg_table *sgt)
  * Return supported pagesize
  */
 #ifndef CONFIG_ALLOC_BUFFERS_IN_4K_CHUNKS
-static inline int kgsl_get_page_size(size_t size, unsigned int align)
+static inline int kgsl_get_page_size(size_t size, unsigned int align,
+			struct kgsl_memdesc *memdesc)
 {
+	if (memdesc->priv & KGSL_MEMDESC_USE_SHMEM)
+		return PAGE_SIZE;
+
 	if (align >= ilog2(SZ_1M) && size >= SZ_1M &&
 		kgsl_pool_avaialable(SZ_1M))
 		return SZ_1M;
@@ -393,5 +391,52 @@ static inline int kgsl_get_page_size(size_t size, unsigned int align)
 	return PAGE_SIZE;
 }
 #endif
+
+/**
+ * kgsl_gfp_mask() - get gfp_mask to be used
+ * @page_order: order of the page
+ *
+ * Get the gfp_mask to be used for page allocation
+ * based on the order of the page
+ *
+ * Return appropriate gfp_mask
+ */
+unsigned int kgsl_gfp_mask(unsigned int page_order);
+
+/**
+ * kgsl_zero_page() - zero out a page
+ * @p: pointer to the struct page
+ * @order: order of the page
+ *
+ * Map a page into kernel and zero it out
+ */
+void kgsl_zero_page(struct page *page, unsigned int order);
+
+/**
+ * kgsl_flush_page - flush a page
+ * @page: pointer to the struct page
+ *
+ * Map a page into kernel and flush it
+ */
+void kgsl_flush_page(struct page *page);
+
+/**
+ * struct kgsl_process_attribute - basic attribute for a process
+ * @attr: Underlying struct attribute
+ * @show: Attribute show function
+ * @store: Attribute store function
+ */
+struct kgsl_process_attribute {
+	struct attribute attr;
+	ssize_t (*show)(struct kobject *kobj,
+			struct kgsl_process_attribute *attr, char *buf);
+	ssize_t (*store)(struct kobject *kobj,
+		struct kgsl_process_attribute *attr, const char *buf,
+		ssize_t count);
+};
+
+#define PROCESS_ATTR(_name, _mode, _show, _store) \
+	static struct kgsl_process_attribute attr_##_name = \
+			__ATTR(_name, _mode, _show, _store)
 
 #endif /* __KGSL_SHAREDMEM_H */

@@ -46,10 +46,38 @@ struct msm_gem_vma {
 	struct list_head list;
 };
 
+struct msm_gem_address_space {
+	const char *name;
+	/* NOTE: mm managed at the page level, size is in # of pages
+	 * and position mm_node->start is in # of pages:
+	 */
+	struct drm_mm mm;
+	spinlock_t lock; /* Protects drm_mm node allocation/removal */
+	struct msm_mmu *mmu;
+	struct kref kref;
+};
+
+struct msm_gem_vma {
+	struct drm_mm_node node;
+	uint64_t iova;
+	struct msm_gem_address_space *aspace;
+	struct list_head list;    /* node in msm_gem_object::vmas */
+};
+
 struct msm_gem_object {
 	struct drm_gem_object base;
 
 	uint32_t flags;
+
+	/**
+	 * Advice: are the backing pages purgeable?
+	 */
+	uint8_t madv;
+
+	/**
+	 * count of active vmap'ing
+	 */
+	uint8_t vmap_count;
 
 	/* And object is either:
 	 *  inactive - on priv->inactive_list
@@ -61,7 +89,6 @@ struct msm_gem_object {
 	 */
 	struct list_head mm_list;
 	struct msm_gpu *gpu;     /* non-null if active */
-	uint32_t read_fence, write_fence;
 
 	/* Transiently in the process of submit ioctl, objects associated
 	 * with the submit are on submit->bo_list.. this only lasts for
@@ -74,7 +101,7 @@ struct msm_gem_object {
 	struct sg_table *sgt;
 	void *vaddr;
 
-	struct list_head domains;
+	struct list_head vmas;    /* list of msm_gem_vma */
 
 	/* normally (resv == &_resv) except for imported bo's */
 	struct reservation_object *resv;
@@ -119,21 +146,36 @@ static inline bool is_active(struct msm_gem_object *msm_obj)
 	return msm_obj->gpu != NULL;
 }
 
-static inline uint32_t msm_gem_fence(struct msm_gem_object *msm_obj,
-		uint32_t op)
+static inline bool is_purgeable(struct msm_gem_object *msm_obj)
 {
-	uint32_t fence = 0;
-
-	if (op & MSM_PREP_READ)
-		fence = msm_obj->write_fence;
-	if (op & MSM_PREP_WRITE)
-		fence = max(fence, msm_obj->read_fence);
-
-	return fence;
+	WARN_ON(!mutex_is_locked(&msm_obj->base.dev->struct_mutex));
+	return (msm_obj->madv == MSM_MADV_DONTNEED) && msm_obj->sgt &&
+			!msm_obj->base.dma_buf && !msm_obj->base.import_attach;
 }
 
-/* Internal submit flags */
-#define SUBMIT_FLAG_SKIP_HANGCHECK 0x00000001
+static inline bool is_vunmapable(struct msm_gem_object *msm_obj)
+{
+	return (msm_obj->vmap_count == 0) && msm_obj->vaddr;
+}
+
+/* The shrinker can be triggered while we hold objA->lock, and need
+ * to grab objB->lock to purge it.  Lockdep just sees these as a single
+ * class of lock, so we use subclasses to teach it the difference.
+ *
+ * OBJ_LOCK_NORMAL is implicit (ie. normal mutex_lock() call), and
+ * OBJ_LOCK_SHRINKER is used by shrinker.
+ *
+ * It is *essential* that we never go down paths that could trigger the
+ * shrinker for a purgable object.  This is ensured by checking that
+ * msm_obj->madv == MSM_MADV_WILLNEED.
+ */
+enum msm_gem_lock {
+	OBJ_LOCK_NORMAL,
+	OBJ_LOCK_SHRINKER,
+};
+
+void msm_gem_purge(struct drm_gem_object *obj, enum msm_gem_lock subclass);
+void msm_gem_vunmap(struct drm_gem_object *obj, enum msm_gem_lock subclass);
 
 /* Created per submit-ioctl, to track bo's and cmdstream bufs, etc,
  * associated with the cmdstream submission for synchronization (and
@@ -142,18 +184,17 @@ static inline uint32_t msm_gem_fence(struct msm_gem_object *msm_obj,
  */
 struct msm_gem_submit {
 	struct drm_device *dev;
-	struct msm_gem_address_space *aspace;
+	struct msm_gpu *gpu;
 	struct list_head node;   /* node in ring submit list */
 	struct list_head bo_list;
 	struct ww_acquire_ctx ticket;
-	uint32_t fence;
-	int ring;
-	u32 flags;
-	uint64_t profile_buf_iova;
-	struct drm_msm_gem_submit_profile_buffer *profile_buf;
-	bool secure;
+	uint32_t seqno;		/* Sequence number of the submit on the ring */
+	struct dma_fence *fence;
 	struct msm_gpu_submitqueue *queue;
-	int tick_index;
+	struct pid *pid;    /* submitting process */
+	bool valid;         /* true if no cmdstream patching needed */
+	bool in_rb;         /* "sudo" mode, copy cmds into RB */
+	struct msm_ringbuffer *ring;
 	unsigned int nr_cmds;
 	unsigned int nr_bos;
 	struct {

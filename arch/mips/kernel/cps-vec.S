@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2013 Imagination Technologies
- * Author: Paul Burton <paul.burton@imgtec.com>
+ * Author: Paul Burton <paul.burton@mips.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -235,6 +235,7 @@ LEAF(mips_cps_core_init)
 	has_mt	t0, 3f
 
 	.set	push
+	.set	MIPS_ISA_LEVEL_RAW
 	.set	mt
 
 	/* Only allow 1 TC per VPE to execute... */
@@ -327,8 +328,8 @@ LEAF(mips_cps_get_bootcfg)
 	 * to handle contiguous VP numbering, but no such systems yet
 	 * exist.
 	 */
-	mfc0	t9, $3, 1
-	andi	t9, t9, 0xff
+	mfc0	t9, CP0_GLOBALNUMBER
+	andi	t9, t9, MIPS_GLOBALNUMBER_VP
 #elif defined(CONFIG_MIPS_MT_SMP)
 	has_mt	ta2, 1f
 
@@ -362,7 +363,7 @@ LEAF(mips_cps_get_bootcfg)
 	END(mips_cps_get_bootcfg)
 
 LEAF(mips_cps_boot_vpes)
-	PTR_L	ta2, COREBOOTCFG_VPEMASK(a0)
+	lw	ta2, COREBOOTCFG_VPEMASK(a0)
 	PTR_L	ta3, COREBOOTCFG_VPECONFIG(a0)
 
 #if defined(CONFIG_CPU_MIPSR6)
@@ -387,14 +388,16 @@ LEAF(mips_cps_boot_vpes)
 
 #elif defined(CONFIG_MIPS_MT)
 
-	.set	push
-	.set	mt
-
 	/* If the core doesn't support MT then return */
 	has_mt	t0, 5f
 
 	/* Enter VPE configuration state */
+	.set	push
+	.set	MIPS_ISA_LEVEL_RAW
+	.set	mt
 	dvpe
+	.set	pop
+
 	PTR_LA	t1, 1f
 	jr.hb	t1
 	 nop
@@ -419,6 +422,10 @@ LEAF(mips_cps_boot_vpes)
 	or	t0, t0, ta1
 	mtc0	t0, CP0_VPECONTROL
 	ehb
+
+	.set	push
+	.set	MIPS_ISA_LEVEL_RAW
+	.set	mt
 
 	/* Skip the VPE if its TC is not halted */
 	mftc0	t0, CP0_TCHALT
@@ -446,6 +453,21 @@ LEAF(mips_cps_boot_vpes)
 	mfc0	t0, CP0_CONFIG
 	mttc0	t0, CP0_CONFIG
 
+	/*
+	 * Copy the EVA config from this VPE if the CPU supports it.
+	 * CONFIG3 must exist to be running MT startup - just read it.
+	 */
+	mfc0	t0, CP0_CONFIG, 3
+	and	t0, t0, MIPS_CONF3_SC
+	beqz	t0, 3f
+	 nop
+	mfc0    t0, CP0_SEGCTL0
+	mttc0	t0, CP0_SEGCTL0
+	mfc0    t0, CP0_SEGCTL1
+	mttc0	t0, CP0_SEGCTL1
+	mfc0    t0, CP0_SEGCTL2
+	mttc0	t0, CP0_SEGCTL2
+3:
 	/* Ensure no software interrupts are pending */
 	mttc0	zero, CP0_CAUSE
 	mttc0	zero, CP0_STATUS
@@ -478,6 +500,8 @@ LEAF(mips_cps_boot_vpes)
 	ehb
 	evpe
 
+	.set	pop
+
 	/* Check whether this VPE is meant to be running */
 	li	t0, 1
 	sll	t0, t0, a1
@@ -492,7 +516,7 @@ LEAF(mips_cps_boot_vpes)
 1:	jr.hb	t0
 	 nop
 
-2:	.set	pop
+2:
 
 #endif /* CONFIG_MIPS_MT_SMP */
 
@@ -500,6 +524,79 @@ LEAF(mips_cps_boot_vpes)
 5:	jr	ra
 	 nop
 	END(mips_cps_boot_vpes)
+
+LEAF(mips_cps_cache_init)
+	/*
+	 * Clear the bits used to index the caches. Note that the architecture
+	 * dictates that writing to any of TagLo or TagHi selects 0 or 2 should
+	 * be valid for all MIPS32 CPUs, even those for which said writes are
+	 * unnecessary.
+	 */
+	mtc0	zero, CP0_TAGLO, 0
+	mtc0	zero, CP0_TAGHI, 0
+	mtc0	zero, CP0_TAGLO, 2
+	mtc0	zero, CP0_TAGHI, 2
+	ehb
+
+	/* Primary cache configuration is indicated by Config1 */
+	mfc0	v0, CP0_CONFIG, 1
+
+	/* Detect I-cache line size */
+	_EXT	t0, v0, MIPS_CONF1_IL_SHF, MIPS_CONF1_IL_SZ
+	beqz	t0, icache_done
+	 li	t1, 2
+	sllv	t0, t1, t0
+
+	/* Detect I-cache size */
+	_EXT	t1, v0, MIPS_CONF1_IS_SHF, MIPS_CONF1_IS_SZ
+	xori	t2, t1, 0x7
+	beqz	t2, 1f
+	 li	t3, 32
+	addiu	t1, t1, 1
+	sllv	t1, t3, t1
+1:	/* At this point t1 == I-cache sets per way */
+	_EXT	t2, v0, MIPS_CONF1_IA_SHF, MIPS_CONF1_IA_SZ
+	addiu	t2, t2, 1
+	mul	t1, t1, t0
+	mul	t1, t1, t2
+
+	li	a0, CKSEG0
+	PTR_ADD	a1, a0, t1
+1:	cache	Index_Store_Tag_I, 0(a0)
+	PTR_ADD	a0, a0, t0
+	bne	a0, a1, 1b
+	 nop
+
+	/* Detect D-cache line size */
+	_EXT	t0, v0, MIPS_CONF1_DL_SHF, MIPS_CONF1_DL_SZ
+	beqz	t0, dcache_done
+	 li	t1, 2
+	sllv	t0, t1, t0
+
+	/* Detect D-cache size */
+	_EXT	t1, v0, MIPS_CONF1_DS_SHF, MIPS_CONF1_DS_SZ
+	xori	t2, t1, 0x7
+	beqz	t2, 1f
+	 li	t3, 32
+	addiu	t1, t1, 1
+	sllv	t1, t3, t1
+1:	/* At this point t1 == D-cache sets per way */
+	_EXT	t2, v0, MIPS_CONF1_DA_SHF, MIPS_CONF1_DA_SZ
+	addiu	t2, t2, 1
+	mul	t1, t1, t0
+	mul	t1, t1, t2
+
+	li	a0, CKSEG0
+	PTR_ADDU a1, a0, t1
+	PTR_SUBU a1, a1, t0
+1:	cache	Index_Store_Tag_D, 0(a0)
+	bne	a0, a1, 1b
+	 PTR_ADD a0, a0, t0
+dcache_done:
+
+	jr	ra
+	 nop
+	END(mips_cps_cache_init)
 
 LEAF(mips_cps_cache_init)
 	/*

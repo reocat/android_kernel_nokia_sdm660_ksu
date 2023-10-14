@@ -1,14 +1,6 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef SDE_ROTATOR_SYNC_H
@@ -20,7 +12,7 @@
 struct sde_rot_sync_fence;
 struct sde_rot_timeline;
 
-#if defined(CONFIG_SYNC) && defined(CONFIG_SW_SYNC)
+#if defined(CONFIG_SYNC_FILE)
 struct sde_rot_timeline *sde_rotator_create_timeline(const char *name);
 
 void sde_rotator_destroy_timeline(struct sde_rot_timeline *tl);

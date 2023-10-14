@@ -9,6 +9,7 @@
 
 #include <linux/kernel.h>
 #include <linux/backing-dev.h>
+#include <linux/dax.h>
 #include <linux/gfp.h>
 #include <linux/mm.h>
 #include <linux/swap.h>
@@ -19,48 +20,120 @@
 #include <linux/task_io_accounting_ops.h>
 #include <linux/buffer_head.h>	/* grr. try_to_release_page,
 				   do_invalidatepage */
+#include <linux/shmem_fs.h>
 #include <linux/cleancache.h>
 #include <linux/rmap.h>
 #include "internal.h"
 
-static void clear_exceptional_entry(struct address_space *mapping,
-				    pgoff_t index, void *entry)
+/*
+ * Regular page slots are stabilized by the page lock even without the tree
+ * itself locked.  These unlocked entries need verification under the tree
+ * lock.
+ */
+static inline void __clear_shadow_entry(struct address_space *mapping,
+				pgoff_t index, void *entry)
 {
 	struct radix_tree_node *node;
 	void **slot;
+
+	if (!__radix_tree_lookup(&mapping->i_pages, index, &node, &slot))
+		return;
+	if (*slot != entry)
+		return;
+	__radix_tree_replace(&mapping->i_pages, node, slot, NULL,
+			     workingset_update_node);
+	mapping->nrexceptional--;
+}
+
+static void clear_shadow_entry(struct address_space *mapping, pgoff_t index,
+			       void *entry)
+{
+	xa_lock_irq(&mapping->i_pages);
+	__clear_shadow_entry(mapping, index, entry);
+	xa_unlock_irq(&mapping->i_pages);
+}
+
+/*
+ * Unconditionally remove exceptional entries. Usually called from truncate
+ * path. Note that the pagevec may be altered by this function by removing
+ * exceptional entries similar to what pagevec_remove_exceptionals does.
+ */
+static void truncate_exceptional_pvec_entries(struct address_space *mapping,
+				struct pagevec *pvec, pgoff_t *indices,
+				pgoff_t end)
+{
+	int i, j;
+	bool dax, lock;
 
 	/* Handled by shmem itself */
 	if (shmem_mapping(mapping))
 		return;
 
-	spin_lock_irq(&mapping->tree_lock);
-	/*
-	 * Regular page slots are stabilized by the page lock even
-	 * without the tree itself locked.  These unlocked entries
-	 * need verification under the tree lock.
-	 */
-	if (!__radix_tree_lookup(&mapping->page_tree, index, &node, &slot))
-		goto unlock;
-	if (*slot != entry)
-		goto unlock;
-	radix_tree_replace_slot(slot, NULL);
-	mapping->nrshadows--;
-	if (!node)
-		goto unlock;
-	workingset_node_shadows_dec(node);
-	/*
-	 * Don't track node without shadow entries.
-	 *
-	 * Avoid acquiring the list_lru lock if already untracked.
-	 * The list_empty() test is safe as node->private_list is
-	 * protected by mapping->tree_lock.
-	 */
-	if (!workingset_node_shadows(node) &&
-	    !list_empty(&node->private_list))
-		list_lru_del(&workingset_shadow_nodes, &node->private_list);
-	__radix_tree_delete_node(&mapping->page_tree, node);
-unlock:
-	spin_unlock_irq(&mapping->tree_lock);
+	for (j = 0; j < pagevec_count(pvec); j++)
+		if (radix_tree_exceptional_entry(pvec->pages[j]))
+			break;
+
+	if (j == pagevec_count(pvec))
+		return;
+
+	dax = dax_mapping(mapping);
+	lock = !dax && indices[j] < end;
+	if (lock)
+		xa_lock_irq(&mapping->i_pages);
+
+	for (i = j; i < pagevec_count(pvec); i++) {
+		struct page *page = pvec->pages[i];
+		pgoff_t index = indices[i];
+
+		if (!radix_tree_exceptional_entry(page)) {
+			pvec->pages[j++] = page;
+			continue;
+		}
+
+		if (index >= end)
+			continue;
+
+		if (unlikely(dax)) {
+			dax_delete_mapping_entry(mapping, index);
+			continue;
+		}
+
+		__clear_shadow_entry(mapping, index, page);
+	}
+
+	if (lock)
+		xa_unlock_irq(&mapping->i_pages);
+	pvec->nr = j;
+}
+
+/*
+ * Invalidate exceptional entry if easily possible. This handles exceptional
+ * entries for invalidate_inode_pages().
+ */
+static int invalidate_exceptional_entry(struct address_space *mapping,
+					pgoff_t index, void *entry)
+{
+	/* Handled by shmem itself, or for DAX we do nothing. */
+	if (shmem_mapping(mapping) || dax_mapping(mapping))
+		return 1;
+	clear_shadow_entry(mapping, index, entry);
+	return 1;
+}
+
+/*
+ * Invalidate exceptional entry if clean. This handles exceptional entries for
+ * invalidate_inode_pages2() so for DAX it evicts only clean entries.
+ */
+static int invalidate_exceptional_entry2(struct address_space *mapping,
+					 pgoff_t index, void *entry)
+{
+	/* Handled by shmem itself */
+	if (shmem_mapping(mapping))
+		return 1;
+	if (dax_mapping(mapping))
+		return dax_invalidate_mapping_entry_sync(mapping, index);
+	clear_shadow_entry(mapping, index, entry);
+	return 1;
 }
 
 static void do_truncate_inode_pages_range(struct address_space *mapping,
@@ -267,14 +340,13 @@ void do_invalidatepage(struct page *page, unsigned int offset,
  * its lock, b) when a concurrent invalidate_mapping_pages got there first and
  * c) when tmpfs swizzles a page between a tmpfs inode and swapper_space.
  */
-static int
-truncate_complete_page(struct address_space *mapping, struct page *page)
+static void truncate_cleanup_page(struct page *page)
 {
-	if (page->mapping != mapping)
-		return -EIO;
+	if (page_mapped(page))
+		unmap_mapping_page(page);
 
 	if (page_has_private(page))
-		do_invalidatepage(page, 0, PAGE_CACHE_SIZE);
+		do_invalidatepage(page, 0, PAGE_SIZE);
 
 	/*
 	 * Some filesystems seem to re-dirty the page even after
@@ -283,8 +355,6 @@ truncate_complete_page(struct address_space *mapping, struct page *page)
 	 */
 	cancel_dirty_page(page);
 	ClearPageMappedToDisk(page);
-	delete_from_page_cache(page);
-	return 0;
 }
 
 /*
@@ -313,12 +383,14 @@ invalidate_complete_page(struct address_space *mapping, struct page *page)
 
 int truncate_inode_page(struct address_space *mapping, struct page *page)
 {
-	if (page_mapped(page)) {
-		unmap_mapping_range(mapping,
-				   (loff_t)page->index << PAGE_CACHE_SHIFT,
-				   PAGE_CACHE_SIZE, 0);
-	}
-	return truncate_complete_page(mapping, page);
+	VM_BUG_ON_PAGE(PageTail(page), page);
+
+	if (page->mapping != mapping)
+		return -EIO;
+
+	truncate_cleanup_page(page);
+	delete_from_page_cache(page);
+	return 0;
 }
 
 /*
@@ -383,7 +455,171 @@ int invalidate_inode_page(struct page *page)
 void truncate_inode_pages_range(struct address_space *mapping,
 				loff_t lstart, loff_t lend)
 {
-	do_truncate_inode_pages_range(mapping, lstart, lend, false);
+	pgoff_t		start;		/* inclusive */
+	pgoff_t		end;		/* exclusive */
+	unsigned int	partial_start;	/* inclusive */
+	unsigned int	partial_end;	/* exclusive */
+	struct pagevec	pvec;
+	pgoff_t		indices[PAGEVEC_SIZE];
+	pgoff_t		index;
+	int		i;
+
+	if (mapping->nrpages == 0 && mapping->nrexceptional == 0)
+		goto out;
+
+	/* Offsets within partial pages */
+	partial_start = lstart & (PAGE_SIZE - 1);
+	partial_end = (lend + 1) & (PAGE_SIZE - 1);
+
+	/*
+	 * 'start' and 'end' always covers the range of pages to be fully
+	 * truncated. Partial pages are covered with 'partial_start' at the
+	 * start of the range and 'partial_end' at the end of the range.
+	 * Note that 'end' is exclusive while 'lend' is inclusive.
+	 */
+	start = (lstart + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	if (lend == -1)
+		/*
+		 * lend == -1 indicates end-of-file so we have to set 'end'
+		 * to the highest possible pgoff_t and since the type is
+		 * unsigned we're using -1.
+		 */
+		end = -1;
+	else
+		end = (lend + 1) >> PAGE_SHIFT;
+
+	pagevec_init(&pvec);
+	index = start;
+	while (index < end && pagevec_lookup_entries(&pvec, mapping, index,
+			min(end - index, (pgoff_t)PAGEVEC_SIZE),
+			indices)) {
+		/*
+		 * Pagevec array has exceptional entries and we may also fail
+		 * to lock some pages. So we store pages that can be deleted
+		 * in a new pagevec.
+		 */
+		struct pagevec locked_pvec;
+
+		pagevec_init(&locked_pvec);
+		for (i = 0; i < pagevec_count(&pvec); i++) {
+			struct page *page = pvec.pages[i];
+
+			/* We rely upon deletion not changing page->index */
+			index = indices[i];
+			if (index >= end)
+				break;
+
+			if (radix_tree_exceptional_entry(page))
+				continue;
+
+			if (!trylock_page(page))
+				continue;
+			WARN_ON(page_to_index(page) != index);
+			if (PageWriteback(page)) {
+				unlock_page(page);
+				continue;
+			}
+			if (page->mapping != mapping) {
+				unlock_page(page);
+				continue;
+			}
+			pagevec_add(&locked_pvec, page);
+		}
+		for (i = 0; i < pagevec_count(&locked_pvec); i++)
+			truncate_cleanup_page(locked_pvec.pages[i]);
+		delete_from_page_cache_batch(mapping, &locked_pvec);
+		for (i = 0; i < pagevec_count(&locked_pvec); i++)
+			unlock_page(locked_pvec.pages[i]);
+		truncate_exceptional_pvec_entries(mapping, &pvec, indices, end);
+		pagevec_release(&pvec);
+		cond_resched();
+		index++;
+	}
+	if (partial_start) {
+		struct page *page = find_lock_page(mapping, start - 1);
+		if (page) {
+			unsigned int top = PAGE_SIZE;
+			if (start > end) {
+				/* Truncation within a single page */
+				top = partial_end;
+				partial_end = 0;
+			}
+			wait_on_page_writeback(page);
+			zero_user_segment(page, partial_start, top);
+			cleancache_invalidate_page(mapping, page);
+			if (page_has_private(page))
+				do_invalidatepage(page, partial_start,
+						  top - partial_start);
+			unlock_page(page);
+			put_page(page);
+		}
+	}
+	if (partial_end) {
+		struct page *page = find_lock_page(mapping, end);
+		if (page) {
+			wait_on_page_writeback(page);
+			zero_user_segment(page, 0, partial_end);
+			cleancache_invalidate_page(mapping, page);
+			if (page_has_private(page))
+				do_invalidatepage(page, 0,
+						  partial_end);
+			unlock_page(page);
+			put_page(page);
+		}
+	}
+	/*
+	 * If the truncation happened within a single page no pages
+	 * will be released, just zeroed, so we can bail out now.
+	 */
+	if (start >= end)
+		goto out;
+
+	index = start;
+	for ( ; ; ) {
+		cond_resched();
+		if (!pagevec_lookup_entries(&pvec, mapping, index,
+			min(end - index, (pgoff_t)PAGEVEC_SIZE), indices)) {
+			/* If all gone from start onwards, we're done */
+			if (index == start)
+				break;
+			/* Otherwise restart to make sure all gone */
+			index = start;
+			continue;
+		}
+		if (index == start && indices[0] >= end) {
+			/* All gone out of hole to be punched, we're done */
+			pagevec_remove_exceptionals(&pvec);
+			pagevec_release(&pvec);
+			break;
+		}
+
+		for (i = 0; i < pagevec_count(&pvec); i++) {
+			struct page *page = pvec.pages[i];
+
+			/* We rely upon deletion not changing page->index */
+			index = indices[i];
+			if (index >= end) {
+				/* Restart punch to make sure all gone */
+				index = start - 1;
+				break;
+			}
+
+			if (radix_tree_exceptional_entry(page))
+				continue;
+
+			lock_page(page);
+			WARN_ON(page_to_index(page) != index);
+			wait_on_page_writeback(page);
+			truncate_inode_page(mapping, page);
+			unlock_page(page);
+		}
+		truncate_exceptional_pvec_entries(mapping, &pvec, indices, end);
+		pagevec_release(&pvec);
+		index++;
+	}
+
+out:
+	cleancache_invalidate_inode(mapping);
 }
 EXPORT_SYMBOL(truncate_inode_pages_range);
 
@@ -469,7 +705,7 @@ EXPORT_SYMBOL(truncate_inode_pages_fill_zero);
  */
 void truncate_inode_pages_final(struct address_space *mapping)
 {
-	unsigned long nrshadows;
+	unsigned long nrexceptional;
 	unsigned long nrpages;
 
 	/*
@@ -483,22 +719,22 @@ void truncate_inode_pages_final(struct address_space *mapping)
 
 	/*
 	 * When reclaim installs eviction entries, it increases
-	 * nrshadows first, then decreases nrpages.  Make sure we see
+	 * nrexceptional first, then decreases nrpages.  Make sure we see
 	 * this in the right order or we might miss an entry.
 	 */
 	nrpages = mapping->nrpages;
 	smp_rmb();
-	nrshadows = mapping->nrshadows;
+	nrexceptional = mapping->nrexceptional;
 
-	if (nrpages || nrshadows) {
+	if (nrpages || nrexceptional) {
 		/*
 		 * As truncation uses a lockless tree lookup, cycle
 		 * the tree lock to make sure any ongoing tree
 		 * modification that does not see AS_EXITING is
 		 * completed before starting the final truncate.
 		 */
-		spin_lock_irq(&mapping->tree_lock);
-		spin_unlock_irq(&mapping->tree_lock);
+		xa_lock_irq(&mapping->i_pages);
+		xa_unlock_irq(&mapping->i_pages);
 	}
 
 	/*
@@ -532,7 +768,7 @@ unsigned long invalidate_mapping_pages(struct address_space *mapping,
 	unsigned long count = 0;
 	int i;
 
-	pagevec_init(&pvec, 0);
+	pagevec_init(&pvec);
 	while (index <= end && pagevec_lookup_entries(&pvec, mapping, index,
 			min(end - index, (pgoff_t)PAGEVEC_SIZE - 1) + 1,
 			indices)) {
@@ -545,13 +781,34 @@ unsigned long invalidate_mapping_pages(struct address_space *mapping,
 				break;
 
 			if (radix_tree_exceptional_entry(page)) {
-				clear_exceptional_entry(mapping, index, page);
+				invalidate_exceptional_entry(mapping, index,
+							     page);
 				continue;
 			}
 
 			if (!trylock_page(page))
 				continue;
-			WARN_ON(page->index != index);
+
+			WARN_ON(page_to_index(page) != index);
+
+			/* Middle of THP: skip */
+			if (PageTransTail(page)) {
+				unlock_page(page);
+				continue;
+			} else if (PageTransHuge(page)) {
+				index += HPAGE_PMD_NR - 1;
+				i += HPAGE_PMD_NR - 1;
+				/*
+				 * 'end' is in the middle of THP. Don't
+				 * invalidate the page as the part outside of
+				 * 'end' could be still useful.
+				 */
+				if (index > end) {
+					unlock_page(page);
+					continue;
+				}
+			}
+
 			ret = invalidate_inode_page(page);
 			unlock_page(page);
 			/*
@@ -581,7 +838,6 @@ EXPORT_SYMBOL(invalidate_mapping_pages);
 static int
 invalidate_complete_page2(struct address_space *mapping, struct page *page)
 {
-	struct mem_cgroup *memcg;
 	unsigned long flags;
 
 	if (page->mapping != mapping)
@@ -590,24 +846,21 @@ invalidate_complete_page2(struct address_space *mapping, struct page *page)
 	if (page_has_private(page) && !try_to_release_page(page, GFP_KERNEL))
 		return 0;
 
-	memcg = mem_cgroup_begin_page_stat(page);
-	spin_lock_irqsave(&mapping->tree_lock, flags);
+	xa_lock_irqsave(&mapping->i_pages, flags);
 	if (PageDirty(page))
 		goto failed;
 
 	BUG_ON(page_has_private(page));
-	__delete_from_page_cache(page, NULL, memcg);
-	spin_unlock_irqrestore(&mapping->tree_lock, flags);
-	mem_cgroup_end_page_stat(memcg);
+	__delete_from_page_cache(page, NULL);
+	xa_unlock_irqrestore(&mapping->i_pages, flags);
 
 	if (mapping->a_ops->freepage)
 		mapping->a_ops->freepage(page);
 
-	page_cache_release(page);	/* pagecache ref */
+	put_page(page);	/* pagecache ref */
 	return 1;
 failed:
-	spin_unlock_irqrestore(&mapping->tree_lock, flags);
-	mem_cgroup_end_page_stat(memcg);
+	xa_unlock_irqrestore(&mapping->i_pages, flags);
 	return 0;
 }
 
@@ -642,8 +895,10 @@ int invalidate_inode_pages2_range(struct address_space *mapping,
 	int ret2 = 0;
 	int did_range_unmap = 0;
 
-	cleancache_invalidate_inode(mapping);
-	pagevec_init(&pvec, 0);
+	if (mapping->nrpages == 0 && mapping->nrexceptional == 0)
+		goto out;
+
+	pagevec_init(&pvec);
 	index = start;
 	while (index <= end && pagevec_lookup_entries(&pvec, mapping, index,
 			min(end - index, (pgoff_t)PAGEVEC_SIZE - 1) + 1,
@@ -657,38 +912,34 @@ int invalidate_inode_pages2_range(struct address_space *mapping,
 				break;
 
 			if (radix_tree_exceptional_entry(page)) {
-				clear_exceptional_entry(mapping, index, page);
+				if (!invalidate_exceptional_entry2(mapping,
+								   index, page))
+					ret = -EBUSY;
 				continue;
 			}
 
+			if (!did_range_unmap && page_mapped(page)) {
+				/*
+				 * If page is mapped, before taking its lock,
+				 * zap the rest of the file in one hit.
+				 */
+				unmap_mapping_pages(mapping, index,
+						(1 + end - index), false);
+				did_range_unmap = 1;
+			}
+
 			lock_page(page);
-			WARN_ON(page->index != index);
+			WARN_ON(page_to_index(page) != index);
 			if (page->mapping != mapping) {
 				unlock_page(page);
 				continue;
 			}
 			wait_on_page_writeback(page);
-			if (page_mapped(page)) {
-				if (!did_range_unmap) {
-					/*
-					 * Zap the rest of the file in one hit.
-					 */
-					unmap_mapping_range(mapping,
-					   (loff_t)index << PAGE_CACHE_SHIFT,
-					   (loff_t)(1 + end - index)
-							 << PAGE_CACHE_SHIFT,
-					    0);
-					did_range_unmap = 1;
-				} else {
-					/*
-					 * Just zap this page
-					 */
-					unmap_mapping_range(mapping,
-					   (loff_t)index << PAGE_CACHE_SHIFT,
-					   PAGE_CACHE_SIZE, 0);
-				}
-			}
+
+			if (page_mapped(page))
+				unmap_mapping_page(page);
 			BUG_ON(page_mapped(page));
+
 			ret2 = do_launder_page(mapping, page);
 			if (ret2 == 0) {
 				if (!invalidate_complete_page2(mapping, page))
@@ -703,6 +954,17 @@ int invalidate_inode_pages2_range(struct address_space *mapping,
 		cond_resched();
 		index++;
 	}
+	/*
+	 * For DAX we invalidate page tables after invalidating radix tree.  We
+	 * could invalidate page tables while invalidating each entry however
+	 * that would be expensive. And doing range unmapping before doesn't
+	 * work as we have no cheap way to find whether radix tree entry didn't
+	 * get remapped later.
+	 */
+	if (dax_mapping(mapping)) {
+		unmap_mapping_pages(mapping, start, end - start + 1, false);
+	}
+out:
 	cleancache_invalidate_inode(mapping);
 	return ret;
 }
@@ -810,14 +1072,14 @@ void pagecache_isize_extended(struct inode *inode, loff_t from, loff_t to)
 
 	WARN_ON(to > inode->i_size);
 
-	if (from >= to || bsize == PAGE_CACHE_SIZE)
+	if (from >= to || bsize == PAGE_SIZE)
 		return;
 	/* Page straddling @from will not have any hole block created? */
 	rounded_from = round_up(from, bsize);
-	if (to <= rounded_from || !(rounded_from & (PAGE_CACHE_SIZE - 1)))
+	if (to <= rounded_from || !(rounded_from & (PAGE_SIZE - 1)))
 		return;
 
-	index = from >> PAGE_CACHE_SHIFT;
+	index = from >> PAGE_SHIFT;
 	page = find_lock_page(inode->i_mapping, index);
 	/* Page not cached? Nothing to do */
 	if (!page)
@@ -829,7 +1091,7 @@ void pagecache_isize_extended(struct inode *inode, loff_t from, loff_t to)
 	if (page_mkclean(page))
 		set_page_dirty(page);
 	unlock_page(page);
-	page_cache_release(page);
+	put_page(page);
 }
 EXPORT_SYMBOL(pagecache_isize_extended);
 

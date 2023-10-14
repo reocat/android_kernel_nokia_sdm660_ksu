@@ -1,13 +1,5 @@
-/* Copyright (c) 2012,2014 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2012, 2014, 2016, 2018 The Linux Foundation. All rights reserved.
  */
 #include <linux/termios.h>
 #include <linux/slab.h>
@@ -78,7 +70,7 @@ static void diag_smux_event(void *priv, int event_type, const void *metadata)
 		diag_remote_dev_read_done(ch->dev_id, ch->read_buf,
 					  ch->read_len);
 		break;
-	};
+	}
 }
 
 static int diag_smux_init_ch(struct diag_smux_info *ch)
@@ -264,7 +256,6 @@ static struct platform_driver msm_diagfwd_smux_driver = {
 	.remove = diagfwd_smux_remove,
 	.driver = {
 		   .name = "SMUX_DIAG",
-		   .owner = THIS_MODULE,
 		   .pm   = &diagfwd_smux_dev_pm_ops,
 		   },
 };
@@ -275,9 +266,10 @@ static struct diag_remote_dev_ops diag_smux_fwd_ops = {
 	.queue_read = smux_queue_read,
 	.write = smux_write,
 	.fwd_complete = smux_fwd_complete,
+	.remote_proc_check = NULL,
 };
 
-int diag_smux_init()
+int diag_smux_init(void)
 {
 	int i;
 	int err = 0;
@@ -286,8 +278,8 @@ int diag_smux_init()
 
 	for (i = 0; i < NUM_SMUX_DEV; i++) {
 		ch = &diag_smux[i];
-		strlcpy(wq_name, "DIAG_SMUX_", 11);
-		strlcat(wq_name, ch->name, sizeof(ch->name));
+		strlcpy(wq_name, "DIAG_SMUX_", sizeof(wq_name));
+		strlcat(wq_name, ch->name, sizeof(wq_name));
 		ch->smux_wq = create_singlethread_workqueue(wq_name);
 		if (!ch->smux_wq) {
 			err = -ENOMEM;
@@ -314,10 +306,11 @@ fail:
 	return err;
 }
 
-void diag_smux_exit()
+void diag_smux_exit(void)
 {
 	int i;
 	struct diag_smux_info *ch = NULL;
+
 	for (i = 0; i < NUM_SMUX_DEV; i++) {
 		ch = &diag_smux[i];
 		kfree(ch->read_buf);

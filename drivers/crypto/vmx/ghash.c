@@ -62,10 +62,9 @@ static int p8_ghash_setkey(struct crypto_shash *tfm, const u8 *key,
 
 	preempt_disable();
 	pagefault_disable();
-	enable_kernel_altivec();
 	enable_kernel_vsx();
-	enable_kernel_fp();
 	gcm_init_p8(ctx->htable, (const u64 *) key);
+	disable_kernel_vsx();
 	pagefault_enable();
 	preempt_enable();
 
@@ -80,11 +79,10 @@ static inline void __ghash_block(struct p8_ghash_ctx *ctx,
 	if (!IN_INTERRUPT) {
 		preempt_disable();
 		pagefault_disable();
-		enable_kernel_altivec();
 		enable_kernel_vsx();
-		enable_kernel_fp();
 		gcm_ghash_p8(dctx->shash, ctx->htable,
 				dctx->buffer, GHASH_DIGEST_SIZE);
+		disable_kernel_vsx();
 		pagefault_enable();
 		preempt_enable();
 	} else {
@@ -100,11 +98,10 @@ static inline void __ghash_blocks(struct p8_ghash_ctx *ctx,
 	if (!IN_INTERRUPT) {
 		preempt_disable();
 		pagefault_disable();
-		enable_kernel_altivec();
 		enable_kernel_vsx();
-		enable_kernel_fp();
 		gcm_ghash_p8(dctx->shash, ctx->htable,
 				src, srclen);
+		disable_kernel_vsx();
 		pagefault_enable();
 		preempt_enable();
 	} else {
@@ -181,7 +178,6 @@ struct shash_alg p8_ghash_alg = {
 		 .cra_name = "ghash",
 		 .cra_driver_name = "p8_ghash",
 		 .cra_priority = 1000,
-		 .cra_flags = CRYPTO_ALG_TYPE_SHASH,
 		 .cra_blocksize = GHASH_BLOCK_SIZE,
 		 .cra_ctxsize = sizeof(struct p8_ghash_ctx),
 		 .cra_module = THIS_MODULE,

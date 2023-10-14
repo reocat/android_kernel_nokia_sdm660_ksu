@@ -13,17 +13,18 @@
 #include <asm/ppc_asm.h>
 #include <asm/asm-offsets.h>
 #include <asm/ptrace.h>
+#include <asm/feature-fixups.h>
 
 	.section	".text"
 	
 #ifdef CONFIG_TRACEPOINTS
 
-#ifndef HAVE_JUMP_LABEL
+#ifndef CONFIG_JUMP_LABEL
 	.section	".toc","aw"
 
 	.globl hcall_tracepoint_refcount
 hcall_tracepoint_refcount:
-	.llong	0
+	.8byte	0
 
 	.section	".text"
 #endif
@@ -78,7 +79,7 @@ hcall_tracepoint_refcount:
 	mr	r5,BUFREG;					\
 	__HCALL_INST_POSTCALL
 
-#ifdef HAVE_JUMP_LABEL
+#ifdef CONFIG_JUMP_LABEL
 #define HCALL_BRANCH(LABEL)					\
 	ARCH_STATIC_BRANCH(LABEL, hcall_tracepoint_key)
 #else

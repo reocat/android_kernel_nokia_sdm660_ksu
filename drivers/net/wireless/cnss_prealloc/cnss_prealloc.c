@@ -1,26 +1,17 @@
-/* Copyright (c) 2012,2014-2015 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2012,2014-2017,2019 The Linux Foundation. All rights reserved. */
+
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/seq_file.h>
 #include <linux/err.h>
 #include <linux/stacktrace.h>
-#include <linux/wcnss_wlan.h>
 #include <linux/spinlock.h>
 #include <linux/debugfs.h>
-#include <net/cnss_prealloc.h>
-#ifdef	CONFIG_WCNSS_SKB_PRE_ALLOC
+#ifdef CONFIG_WCNSS_SKB_PRE_ALLOC
 #include <linux/skbuff.h>
 #endif
+#include <net/cnss_prealloc.h>
 
 static DEFINE_SPINLOCK(alloc_lock);
 
@@ -53,32 +44,21 @@ static struct wcnss_prealloc wcnss_allocs[] = {
 	{0, 8  * 1024, NULL},
 	{0, 8  * 1024, NULL},
 	{0, 8  * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
-	{0, 16 * 1024, NULL},
+	{0, 8  * 1024, NULL},
+	{0, 8  * 1024, NULL},
+	{0, 8  * 1024, NULL},
+	{0, 8  * 1024, NULL},
+	{0, 8  * 1024, NULL},
+	{0, 8  * 1024, NULL},
+	{0, 8  * 1024, NULL},
+	{0, 8  * 1024, NULL},
+	{0, 8  * 1024, NULL},
+	{0, 8  * 1024, NULL},
+	{0, 8  * 1024, NULL},
+	{0, 8  * 1024, NULL},
+	{0, 8  * 1024, NULL},
+	{0, 8  * 1024, NULL},
+	{0, 8  * 1024, NULL},
 	{0, 16 * 1024, NULL},
 	{0, 16 * 1024, NULL},
 	{0, 16 * 1024, NULL},
@@ -101,10 +81,9 @@ static struct wcnss_prealloc wcnss_allocs[] = {
 	{0, 32 * 1024, NULL},
 	{0, 32 * 1024, NULL},
 	{0, 32 * 1024, NULL},
-	{0, 32 * 1024, NULL},
-	{0, 32 * 1024, NULL},
-	{0, 32 * 1024, NULL},
-	{0, 32 * 1024, NULL},
+	{0, 64 * 1024, NULL},
+	{0, 64 * 1024, NULL},
+	{0, 64 * 1024, NULL},
 	{0, 64 * 1024, NULL},
 	{0, 64 * 1024, NULL},
 	{0, 64 * 1024, NULL},
@@ -121,7 +100,7 @@ int wcnss_prealloc_init(void)
 	for (i = 0; i < ARRAY_SIZE(wcnss_allocs); i++) {
 		wcnss_allocs[i].occupied = 0;
 		wcnss_allocs[i].ptr = kmalloc(wcnss_allocs[i].size, GFP_KERNEL);
-		if (wcnss_allocs[i].ptr == NULL)
+		if (!wcnss_allocs[i].ptr)
 			return -ENOMEM;
 	}
 
@@ -150,14 +129,10 @@ static void wcnss_prealloc_save_stack_trace(struct wcnss_prealloc *entry)
 	trace->skip = 2;
 
 	save_stack_trace(trace);
-
-	return;
 }
 #else
-static inline void wcnss_prealloc_save_stack_trace(struct wcnss_prealloc *entry)
-{
-	return;
-}
+static inline
+void wcnss_prealloc_save_stack_trace(struct wcnss_prealloc *entry) {}
 #endif
 
 void *wcnss_prealloc_get(size_t size)
@@ -179,9 +154,6 @@ void *wcnss_prealloc_get(size_t size)
 		}
 	}
 	spin_unlock_irqrestore(&alloc_lock, flags);
-
-	pr_err("wcnss: %s: prealloc not available for size: %zu\n",
-	       __func__, size);
 
 	return NULL;
 }
@@ -224,7 +196,6 @@ void wcnss_prealloc_check_memory_leak(void)
 		       wcnss_allocs[i].size, wcnss_allocs[i].ptr);
 		print_stack_trace(&wcnss_allocs[i].trace, 1);
 	}
-
 }
 #else
 void wcnss_prealloc_check_memory_leak(void) {}
@@ -247,7 +218,7 @@ int wcnss_pre_alloc_reset(void)
 }
 EXPORT_SYMBOL(wcnss_pre_alloc_reset);
 
-int prealloc_memory_stats_show(struct seq_file *fp, void *data)
+static int prealloc_memory_stats_show(struct seq_file *fp, void *data)
 {
 	int i = 0;
 	int used_slots = 0, free_slots = 0;
@@ -258,9 +229,8 @@ int prealloc_memory_stats_show(struct seq_file *fp, void *data)
 		tsize += wcnss_allocs[i].size;
 		if (size != wcnss_allocs[i].size) {
 			if (size) {
-				seq_printf(
-					fp, "[%d : %d]\n",
-					used_slots, free_slots);
+				seq_printf(fp, "[%d : %d]\n",
+					   used_slots, free_slots);
 			}
 
 			size = wcnss_allocs[i].size;
@@ -289,7 +259,7 @@ int prealloc_memory_stats_show(struct seq_file *fp, void *data)
 	return 0;
 }
 
-int prealloc_memory_stats_open(struct inode *inode, struct file *file)
+static int prealloc_memory_stats_open(struct inode *inode, struct file *file)
 {
 	return single_open(file, prealloc_memory_stats_show, NULL);
 }
@@ -315,10 +285,10 @@ static int __init wcnss_pre_alloc_init(void)
 	debug_base = debugfs_create_dir(PRE_ALLOC_DEBUGFS_DIR, NULL);
 	if (IS_ERR_OR_NULL(debug_base)) {
 		pr_err("%s: Failed to create debugfs dir\n", __func__);
-	} else if (IS_ERR_OR_NULL(debugfs_create_file(
-			PRE_ALLOC_DEBUGFS_FILE_OBJ,
-			0644, debug_base, NULL,
-			&prealloc_memory_stats_fops))) {
+	} else if (IS_ERR_OR_NULL(debugfs_create_file
+				  (PRE_ALLOC_DEBUGFS_FILE_OBJ,
+				   0644, debug_base, NULL,
+				   &prealloc_memory_stats_fops))) {
 		pr_err("%s: Failed to create debugfs file\n", __func__);
 		debugfs_remove_recursive(debug_base);
 	}

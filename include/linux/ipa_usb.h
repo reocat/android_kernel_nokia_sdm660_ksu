@@ -1,13 +1,6 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _IPA_USB_H_
@@ -40,6 +33,7 @@ enum ipa_usb_notify_event {
 };
 
 enum ipa_usb_max_usb_packet_size {
+	IPA_USB_FULL_SPEED_64B = 64,
 	IPA_USB_HIGH_SPEED_512B = 512,
 	IPA_USB_SUPER_SPEED_1024B = 1024
 };
@@ -62,7 +56,7 @@ struct ipa_usb_teth_prot_params {
  * ipa_usb_xdci_connect_params - parameters required to start IN, OUT
  * channels, and connect RNDIS/ECM/teth_bridge
  *
- * @max_pkt_size:          high speed or full speed
+ * @max_pkt_size:          USB speed (full/high/super/super-speed plus)
  * @ipa_to_usb_xferrscidx: Transfer Resource Index (XferRscIdx) for IN channel.
  *                         The hardware-assigned transfer resource index for the
  *                         transfer, which was returned in response to the
@@ -121,14 +115,16 @@ struct ipa_usb_xdci_chan_scratch {
  * @dir:                 channel direction
  * @xfer_ring_len:       length of transfer ring in bytes (must be integral
  *                       multiple of transfer element size - 16B for xDCI)
- * @xfer_ring_base_addr: physical base address of transfer ring. Address must be
- *                       aligned to xfer_ring_len rounded to power of two
  * @xfer_scratch:        parameters for xDCI channel scratch
- * @xfer_ring_base_addr_iova: IO virtual address mapped to xfer_ring_base_addr
+ * @xfer_ring_base_addr_iova: IO virtual address mapped to pysical base address
  * @data_buff_base_len:  length of data buffer allocated by USB driver
- * @data_buff_base_addr: physical base address for the data buffer (where TRBs
- *                       points)
- * @data_buff_base_addr_iova:  IO virtual address mapped to data_buff_base_addr
+ * @data_buff_base_addr_iova:  IO virtual address mapped to pysical base address
+ * @sgt_xfer_rings:      Scatter table for Xfer rings,contains valid non NULL
+ *			 value
+ *                       when USB S1-SMMU enabed, else NULL.
+ * @sgt_data_buff:       Scatter table for data buffs,contains valid non NULL
+ *			 value
+ *                       when USB S1-SMMU enabed, else NULL.
  *
  */
 struct ipa_usb_xdci_chan_params {
@@ -143,12 +139,12 @@ struct ipa_usb_xdci_chan_params {
 	/* transfer ring params */
 	enum gsi_chan_dir dir;
 	u16 xfer_ring_len;
-	u64 xfer_ring_base_addr;
 	struct ipa_usb_xdci_chan_scratch xfer_scratch;
 	u64 xfer_ring_base_addr_iova;
 	u32 data_buff_base_len;
-	u64 data_buff_base_addr;
 	u64 data_buff_base_addr_iova;
+	struct sg_table *sgt_xfer_rings;
+	struct sg_table *sgt_data_buff;
 };
 
 /**

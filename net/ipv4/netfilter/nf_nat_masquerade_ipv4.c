@@ -7,7 +7,6 @@
  */
 
 #include <linux/types.h>
-#include <linux/module.h>
 #include <linux/atomic.h>
 #include <linux/inetdevice.h>
 #include <linux/ip.h>
@@ -24,23 +23,22 @@
 
 unsigned int
 nf_nat_masquerade_ipv4(struct sk_buff *skb, unsigned int hooknum,
-		       const struct nf_nat_range *range,
+		       const struct nf_nat_range2 *range,
 		       const struct net_device *out)
 {
 	struct nf_conn *ct;
 	struct nf_conn_nat *nat;
 	enum ip_conntrack_info ctinfo;
-	struct nf_nat_range newrange;
+	struct nf_nat_range2 newrange;
 	const struct rtable *rt;
 	__be32 newsrc, nh;
 
-	NF_CT_ASSERT(hooknum == NF_INET_POST_ROUTING);
+	WARN_ON(hooknum != NF_INET_POST_ROUTING);
 
 	ct = nf_ct_get(skb, &ctinfo);
-	nat = nfct_nat(ct);
 
-	NF_CT_ASSERT(ct && (ctinfo == IP_CT_NEW || ctinfo == IP_CT_RELATED ||
-			    ctinfo == IP_CT_RELATED_REPLY));
+	WARN_ON(!(ct && (ctinfo == IP_CT_NEW || ctinfo == IP_CT_RELATED ||
+			 ctinfo == IP_CT_RELATED_REPLY)));
 
 	/* Source address is 0.0.0.0 - locally generated packet that is
 	 * probably not supposed to be masqueraded.
@@ -56,7 +54,9 @@ nf_nat_masquerade_ipv4(struct sk_buff *skb, unsigned int hooknum,
 		return NF_DROP;
 	}
 
-	nat->masq_index = out->ifindex;
+	nat = nf_ct_nat_ext_add(ct);
+	if (nat)
+		nat->masq_index = out->ifindex;
 
 	/* Transfer from original range. */
 	memset(&newrange.min_addr, 0, sizeof(newrange.min_addr));
@@ -95,13 +95,27 @@ static int masq_device_event(struct notifier_block *this,
 		 * conntracks which were associated with that device,
 		 * and forget them.
 		 */
-		NF_CT_ASSERT(dev->ifindex != 0);
+		WARN_ON(dev->ifindex == 0);
 
-		nf_ct_iterate_cleanup(net, device_cmp,
-				      (void *)(long)dev->ifindex, 0, 0);
+		nf_ct_iterate_cleanup_net(net, device_cmp,
+					  (void *)(long)dev->ifindex, 0, 0);
 	}
 
 	return NOTIFY_DONE;
+}
+
+static int inet_cmp(struct nf_conn *ct, void *ptr)
+{
+	struct in_ifaddr *ifa = (struct in_ifaddr *)ptr;
+	struct net_device *dev = ifa->ifa_dev->dev;
+	struct nf_conntrack_tuple *tuple;
+
+	if (!device_cmp(ct, (void *)(long)dev->ifindex))
+		return 0;
+
+	tuple = &ct->tuplehash[IP_CT_DIR_REPLY].tuple;
+
+	return ifa->ifa_address == tuple->dst.u3.ip;
 }
 
 static int masq_inet_event(struct notifier_block *this,
@@ -109,7 +123,7 @@ static int masq_inet_event(struct notifier_block *this,
 			   void *ptr)
 {
 	struct in_device *idev = ((struct in_ifaddr *)ptr)->ifa_dev;
-	struct netdev_notifier_info info;
+	struct net *net = dev_net(idev->dev);
 
 	/* The masq_dev_notifier will catch the case of the device going
 	 * down.  So if the inetdev is dead and being destroyed we have
@@ -119,8 +133,10 @@ static int masq_inet_event(struct notifier_block *this,
 	if (idev->dead)
 		return NOTIFY_DONE;
 
-	netdev_notifier_info_init(&info, idev->dev);
-	return masq_device_event(this, event, &info);
+	if (event == NETDEV_DOWN)
+		nf_ct_iterate_cleanup_net(net, inet_cmp, ptr, 0, 0);
+
+	return NOTIFY_DONE;
 }
 
 static struct notifier_block masq_dev_notifier = {
@@ -131,31 +147,50 @@ static struct notifier_block masq_inet_notifier = {
 	.notifier_call	= masq_inet_event,
 };
 
-static atomic_t masquerade_notifier_refcount = ATOMIC_INIT(0);
+static int masq_refcnt;
+static DEFINE_MUTEX(masq_mutex);
 
-void nf_nat_masquerade_ipv4_register_notifier(void)
+int nf_nat_masquerade_ipv4_register_notifier(void)
 {
+	int ret = 0;
+
+	mutex_lock(&masq_mutex);
 	/* check if the notifier was already set */
-	if (atomic_inc_return(&masquerade_notifier_refcount) > 1)
-		return;
+	if (++masq_refcnt > 1)
+		goto out_unlock;
 
 	/* Register for device down reports */
-	register_netdevice_notifier(&masq_dev_notifier);
+	ret = register_netdevice_notifier(&masq_dev_notifier);
+	if (ret)
+		goto err_dec;
 	/* Register IP address change reports */
-	register_inetaddr_notifier(&masq_inet_notifier);
+	ret = register_inetaddr_notifier(&masq_inet_notifier);
+	if (ret)
+		goto err_unregister;
+
+	mutex_unlock(&masq_mutex);
+	return ret;
+
+err_unregister:
+	unregister_netdevice_notifier(&masq_dev_notifier);
+err_dec:
+	masq_refcnt--;
+out_unlock:
+	mutex_unlock(&masq_mutex);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(nf_nat_masquerade_ipv4_register_notifier);
 
 void nf_nat_masquerade_ipv4_unregister_notifier(void)
 {
+	mutex_lock(&masq_mutex);
 	/* check if the notifier still has clients */
-	if (atomic_dec_return(&masquerade_notifier_refcount) > 0)
-		return;
+	if (--masq_refcnt > 0)
+		goto out_unlock;
 
 	unregister_netdevice_notifier(&masq_dev_notifier);
 	unregister_inetaddr_notifier(&masq_inet_notifier);
+out_unlock:
+	mutex_unlock(&masq_mutex);
 }
 EXPORT_SYMBOL_GPL(nf_nat_masquerade_ipv4_unregister_notifier);
-
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Rusty Russell <rusty@rustcorp.com.au>");

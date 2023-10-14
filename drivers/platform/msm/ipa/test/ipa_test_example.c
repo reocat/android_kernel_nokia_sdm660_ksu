@@ -1,13 +1,6 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  */
 
 #include "ipa_ut_framework.h"
@@ -41,14 +34,14 @@ static int ipa_test_example_suite_setup(void **ppriv)
 static int ipa_test_example_teardown(void *priv)
 {
 	IPA_UT_DBG("Start Teardown\n");
-	IPA_UT_DBG("priv=0x%p - value=0x%x\n", priv, *((int *)priv));
+	IPA_UT_DBG("priv=0x%pK - value=0x%x\n", priv, *((int *)priv));
 
 	return 0;
 }
 
 static int ipa_test_example_test1(void *priv)
 {
-	IPA_UT_LOG("priv=0x%p - value=0x%x\n", priv, *((int *)priv));
+	IPA_UT_LOG("priv=0x%pK - value=0x%x\n", priv, *((int *)priv));
 	ipa_test_example_dummy++;
 
 	return 0;
@@ -56,7 +49,7 @@ static int ipa_test_example_test1(void *priv)
 
 static int ipa_test_example_test2(void *priv)
 {
-	IPA_UT_LOG("priv=0x%p - value=0x%x\n", priv, *((int *)priv));
+	IPA_UT_LOG("priv=0x%pK - value=0x%x\n", priv, *((int *)priv));
 	ipa_test_example_dummy++;
 
 	return 0;
@@ -64,7 +57,7 @@ static int ipa_test_example_test2(void *priv)
 
 static int ipa_test_example_test3(void *priv)
 {
-	IPA_UT_LOG("priv=0x%p - value=0x%x\n", priv, *((int *)priv));
+	IPA_UT_LOG("priv=0x%pK - value=0x%x\n", priv, *((int *)priv));
 	ipa_test_example_dummy++;
 
 	return 0;
@@ -72,7 +65,7 @@ static int ipa_test_example_test3(void *priv)
 
 static int ipa_test_example_test4(void *priv)
 {
-	IPA_UT_LOG("priv=0x%p - value=0x%x\n", priv, *((int *)priv));
+	IPA_UT_LOG("priv=0x%pK - value=0x%x\n", priv, *((int *)priv));
 	ipa_test_example_dummy++;
 
 	IPA_UT_TEST_FAIL_REPORT("failed on test");

@@ -1,14 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __REGULATOR_CPR3_REGULATOR_H__
@@ -19,8 +11,9 @@
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/types.h>
-#include <linux/power/qcom/apm.h>
+#include <soc/qcom/apm.h>
 #include <linux/regulator/driver.h>
+#include <linux/regulator/msm-ldo-regulator.h>
 
 struct cpr3_controller;
 struct cpr3_thread;
@@ -344,7 +337,7 @@ struct cpr3_regulator {
 	struct regulator_dev	*rdev;
 	struct regulator	*mem_acc_regulator;
 	struct regulator	*ldo_regulator;
-	bool			ldo_regulator_bypass;
+	enum msm_ldo_supply_mode ldo_regulator_bypass;
 	struct regulator	*ldo_ret_regulator;
 	struct cpr3_corner	*corner;
 	int			corner_count;

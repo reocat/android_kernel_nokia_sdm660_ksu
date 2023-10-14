@@ -4,11 +4,12 @@
 menuconfig CORESIGHT
 	bool "CoreSight Tracing Support"
 	select ARM_AMBA
+	select PERF_EVENTS
 	help
 	  This framework provides a kernel interface for the CoreSight debug
 	  and trace drivers to register themselves with. It's intended to build
 	  a topological view of the CoreSight components based on a DT
-	  specification and configure the right serie of components when a
+	  specification and configure the right series of components when a
 	  trace source gets enabled.
 
 if CORESIGHT
@@ -48,6 +49,17 @@ config CORESIGHT_LINK_AND_SINK_TMC
 	  complies with the generic implementation of the component without
 	  special enhancement or added features.
 
+config CORESIGHT_CATU
+	bool "Coresight Address Translation Unit (CATU) driver"
+	depends on CORESIGHT_LINK_AND_SINK_TMC
+	help
+	   Enable support for the Coresight Address Translation Unit (CATU).
+	   CATU supports a scatter gather table of 4K pages, with forward/backward
+	   lookup. CATU helps TMC ETR to use a large physically non-contiguous trace
+	   buffer by translating the addresses used by ETR to the physical address
+	   by looking up the provided table. CATU can also be used in pass-through
+	   mode where the address is not translated.
+
 config CORESIGHT_SINK_TPIU
 	bool "Coresight generic TPIU driver"
 	depends on CORESIGHT_LINKS_AND_SINKS
@@ -80,53 +92,46 @@ config CORESIGHT_SOURCE_ETM3X
 config CORESIGHT_SOURCE_ETM4X
 	bool "CoreSight Embedded Trace Macrocell 4.x driver"
 	select CORESIGHT_LINKS_AND_SINKS
+	select PID_IN_CONTEXTIDR
 	help
 	  This driver provides support for the ETM4.x tracer module, tracing the
 	  instructions that a processor is executing. This is primarily useful
 	  for instruction level tracing. Depending on the implemented version
 	  data tracing may also be available.
 
-config CORESIGHT_REMOTE_ETM
-	bool "Remote processor ETM trace support"
-	depends on MSM_QMI_INTERFACE
-	help
-	  Enables support for ETM trace collection on remote processor using
-	  CoreSight framework. Enabling this will allow turning on ETM
-	  tracing on remote processor via sysfs by configuring the required
-	  CoreSight components.
-
-config CORESIGHT_REMOTE_ETM_DEFAULT_ENABLE
-	int "default enable bits for Remote processor ETM"
-	depends on CORESIGHT_REMOTE_ETM
-	help
-	  Support for enabling separated Remote processor ETM tracing. Depends
-	  on if instance id bit is set.
-
-config CORESIGHT_QCOM_REPLICATOR
-	bool "Qualcomm CoreSight Replicator driver"
+config CORESIGHT_DYNAMIC_REPLICATOR
+	bool "CoreSight Programmable Replicator driver"
 	depends on CORESIGHT_LINKS_AND_SINKS
 	help
-	  This enables support for Qualcomm CoreSight link driver. The
-	  programmable ATB replicator sends the ATB trace stream from the
-	  ETB/ETF to the TPIUi and ETR.
+	  This enables support for dynamic CoreSight replicator link driver.
+	  The programmable ATB replicator allows independent filtering of the
+	  trace data based on the traceid.
 
 config CORESIGHT_STM
 	bool "CoreSight System Trace Macrocell driver"
+	depends on (ARM && !(CPU_32v3 || CPU_32v4 || CPU_32v4T)) || ARM64
 	select CORESIGHT_LINKS_AND_SINKS
+	select STM
+	select CORESIGHT_OST
 	help
 	  This driver provides support for hardware assisted software
-	  instrumentation based tracing. This is primarily useful for
-	  logging useful software events or data.
+	  instrumentation based tracing. This is primarily used for
+	  logging useful software events or data coming from various entities
+	  in the system, possibly running different OSs
 
-config CORESIGHT_HWEVENT
-	bool "CoreSight Hardware Event driver"
-	depends on CORESIGHT_STM
-	select CORESIGHT_CSR
+config CORESIGHT_CPU_DEBUG
+	tristate "CoreSight CPU Debug driver"
+	depends on ARM || ARM64
+	depends on DEBUG_FS
 	help
-	  This driver provides support for monitoring and tracing CoreSight
-	  Hardware Event across STM interface. It configures Coresight
-	  Hardware Event mux control registers to select hardware events
-	  based on user input.
+	  This driver provides support for coresight debugging module. This
+	  is primarily used to dump sample-based profiling registers when
+	  system triggers panic, the driver will parse context registers so
+	  can quickly get to know program counter (PC), secure state,
+	  exception level, etc. Before use debugging functionality, platform
+	  needs to ensure the clock domain and power domain are enabled
+	  properly, please refer Documentation/trace/coresight-cpu-debug.txt
+	  for detailed description and the example for usage.
 
 config CORESIGHT_CTI
 	bool "CoreSight Cross Trigger Interface driver"
@@ -146,6 +151,15 @@ config CORESIGHT_CTI_SAVE_DISABLE
 	  targets where cpu CTIs have to be preserved across power collapse.
 
 	  If unsure, say 'N' here to avoid breaking cpu CTI support.
+
+config CORESIGHT_OST
+	bool "CoreSight OST framework"
+	depends on CORESIGHT_STM
+	help
+	  This driver enables the support for Open System Trace packets in STM.
+	  This is primarily intended to be used as a layer on top of underlying
+	  physical byte transport mechanisms.The additional header can be used
+	  to provide more information.
 
 config CORESIGHT_TPDA
 	bool "CoreSight Trace, Profiling & Diagnostics Aggregator driver"
@@ -174,19 +188,66 @@ config CORESIGHT_TPDM_DEFAULT_ENABLE
 	  If unsure, say 'N' here to avoid potential power and performance
 	  penalty.
 
-config CORESIGHT_QPDI
-	bool "CoreSight PMIC debug interface support"
+config CORESIGHT_CSR
+	bool "CoreSight Slave Register driver"
 	help
-	  This driver provides support for controlling the PMIC debug interface
-	  feature. When enabled via sysfs it allows disagnostic access to the
-	  PMIC. Similarly this debug feature can be disabled via sysfs which
-	  prevents debug dongle detection.
+	  This driver provides support for CoreSight Slave Register block
+	  that hosts miscellaneous configuration registers.
+	  Those configuration registers can be used to control, various
+	  coresight configurations.
 
-config CORESIGHT_SOURCE_DUMMY
-	bool "Dummy source support"
+config CORESIGHT_HWEVENT
+	bool "CoreSight Hardware Event driver"
+	depends on CORESIGHT_STM
+	select CORESIGHT_CSR
 	help
-	  Enables support for dummy source devices. Dummy source driver can be
-	  used for CoreSight sources that are owned and configured by some other
-	  subsystem and use Linux drivers to configure rest of trace path.
+	  This driver provides support for monitoring and tracing CoreSight
+	  Hardware Event across STM interface. It configures Coresight
+	  Hardware Event mux control registers to select hardware events
+	  based on user input.
 
+config CORESIGHT_DUMMY
+	bool "Dummy driver support"
+	help
+	  Enables support for dummy driver. Dummy driver can be	used for
+	  CoreSight sources/sinks that are owned and configured by some
+	  other subsystem and use Linux drivers to configure rest of trace
+	  path.
+
+config CORESIGHT_REMOTE_ETM
+	bool "Remote processor ETM trace support"
+	depends on QCOM_QMI_HELPERS
+	help
+	  Enables support for ETM trace collection on remote processor using
+	  CoreSight framework. Enabling this will allow turning on ETM
+	  tracing on remote processor via sysfs by configuring the required
+	  CoreSight components.
+
+config CORESIGHT_REMOTE_ETM_DEFAULT_ENABLE
+	int "default enable ETM for Remote processor based on instance id"
+	depends on CORESIGHT_REMOTE_ETM
+	default 0
+	help
+	  Support for enabling separated Remote processor ETM tracing. Depends
+	  on if instance id bit is set.
+
+config CORESIGHT_TGU
+	bool "CoreSight Trigger Generation Unit driver"
+	help
+	  This driver provides support for Trigger Generation Unit that is
+	  used to detect patterns or sequences on a given set of signals.
+	  TGU is used to monitor a particular bus within a given region to
+	  detect illegal transaction sequences or slave responses. It is also
+	  used to monitor a data stream to detect protocol violations and to
+	  provide a trigger point for centering data around a specific event
+	  within the trace data buffer.
+
+config CORESIGHT_LINK_LATE_DISABLE
+	bool "Disable CoreSight link after sink is disabled"
+	depends on CORESIGHT_LINKS_AND_SINKS
+	help
+	  CoreSight link won't be disabled until the sink of trace path is
+	  disabled. Otherwise, link is disabled when it's not active. Enable
+	  this when some CoreSight source holds trace data after disabled.
+	  This data will be flushed out when CoreSight sink is disabled.
 endif

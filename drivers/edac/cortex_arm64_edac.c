@@ -1,4 +1,5 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -29,7 +30,8 @@
 #include <asm/cputype.h>
 #include <asm/esr.h>
 
-#include "edac_core.h"
+#include "edac_mc.h"
+#include "edac_device.h"
 
 #define A53_CPUMERRSR_FATAL(a)	((a) & (1LL << 63))
 #define A53_CPUMERRSR_OTHER(a)	(((a) >> 40) & 0xff)
@@ -131,14 +133,13 @@ struct erp_drvdata {
 	struct edac_device_ctl_info *edev_ctl;
 	void __iomem *cci_base;
 	struct notifier_block nb_pm;
-	struct notifier_block nb_cpu;
 	struct notifier_block nb_panic;
 	struct work_struct work;
 	struct perf_event *memerr_counters[NR_CPUS];
 };
 
 static struct erp_drvdata *panic_handler_drvdata;
-
+static struct erp_drvdata *drv;
 struct erp_local_data {
 	struct erp_drvdata *drv;
 	enum error_type err;
@@ -329,11 +330,13 @@ static void kryo2xx_silver_parse_cpumerrsr(struct erp_local_data *ed)
 					 (int) A53_CPUMERRSR_OTHER(cpumerrsr));
 
 	if (ed->err == SBE)
-		errors[KRYO2XX_SILVER_L1_CE].func(ed->drv->edev_ctl, smp_processor_id(),
-					L1_CACHE, errors[KRYO2XX_SILVER_L1_CE].msg);
+		errors[KRYO2XX_SILVER_L1_CE].func(ed->drv->edev_ctl,
+			smp_processor_id(), L1_CACHE,
+			errors[KRYO2XX_SILVER_L1_CE].msg);
 	else if (ed->err == DBE)
-		errors[KRYO2XX_SILVER_L1_UE].func(ed->drv->edev_ctl, smp_processor_id(),
-					L1_CACHE, errors[KRYO2XX_SILVER_L1_UE].msg);
+		errors[KRYO2XX_SILVER_L1_UE].func(ed->drv->edev_ctl,
+			smp_processor_id(), L1_CACHE,
+			errors[KRYO2XX_SILVER_L1_UE].msg);
 	write_cpumerrsr_el1(0);
 }
 
@@ -387,11 +390,13 @@ static void kryo2xx_silver_parse_l2merrsr(struct erp_local_data *ed)
 					 (int) A53_L2MERRSR_OTHER(l2merrsr));
 
 	if (ed->err == SBE)
-		errors[KRYO2XX_SILVER_L2_CE].func(ed->drv->edev_ctl, smp_processor_id(),
-					L2_CACHE, errors[KRYO2XX_SILVER_L2_CE].msg);
+		errors[KRYO2XX_SILVER_L2_CE].func(ed->drv->edev_ctl,
+			smp_processor_id(), L2_CACHE,
+			errors[KRYO2XX_SILVER_L2_CE].msg);
 	else if (ed->err == DBE)
-		errors[KRYO2XX_SILVER_L2_UE].func(ed->drv->edev_ctl, smp_processor_id(),
-					L2_CACHE, errors[KRYO2XX_SILVER_L2_UE].msg);
+		errors[KRYO2XX_SILVER_L2_UE].func(ed->drv->edev_ctl,
+			smp_processor_id(), L2_CACHE,
+			errors[KRYO2XX_SILVER_L2_UE].msg);
 	write_l2merrsr_el1(0);
 }
 
@@ -563,11 +568,13 @@ static void kryo2xx_gold_parse_l2merrsr(struct erp_local_data *ed)
 		(int) KRYO2XX_GOLD_L2MERRSR_OTHER(l2merrsr));
 
 	if (ed->err == SBE) {
-		errors[KRYO2XX_GOLD_L2_CE].func(ed->drv->edev_ctl, smp_processor_id(),
-					L2_CACHE, errors[KRYO2XX_GOLD_L2_CE].msg);
+		errors[KRYO2XX_GOLD_L2_CE].func(ed->drv->edev_ctl,
+			smp_processor_id(), L2_CACHE,
+			errors[KRYO2XX_GOLD_L2_CE].msg);
 	} else if (ed->err == DBE) {
-		errors[KRYO2XX_GOLD_L2_UE].func(ed->drv->edev_ctl, smp_processor_id(),
-					L2_CACHE, errors[KRYO2XX_GOLD_L2_UE].msg);
+		errors[KRYO2XX_GOLD_L2_UE].func(ed->drv->edev_ctl,
+			smp_processor_id(), L2_CACHE,
+			errors[KRYO2XX_GOLD_L2_UE].msg);
 	}
 	write_l2merrsr_el1(0);
 }
@@ -607,7 +614,7 @@ static void arm64_erp_local_handler(void *info)
 	default:
 		edac_printk(KERN_CRIT, EDAC_CPU, "Unknown CPU Part Number in MIDR: %#04x (%#08x)\n",
 						 partnum, cpuid);
-	};
+	}
 
 	/* Acklowledge internal error in L2ECTLR */
 	spin_lock_irqsave(&l2ectlr_lock, flags2);
@@ -774,7 +781,7 @@ static void check_sbe_event(struct erp_drvdata *drv)
 	case ARM_CPU_PART_KRYO2XX_GOLD:
 		kryo2xx_gold_parse_l2merrsr(&errdata);
 	break;
-	};
+	}
 	spin_unlock_irqrestore(&local_handler_lock, flags);
 }
 
@@ -825,22 +832,6 @@ static int arm64_pmu_cpu_pm_notify(struct notifier_block *self,
 	return NOTIFY_OK;
 }
 
-static int arm64_edac_pmu_cpu_notify(struct notifier_block *self,
-					unsigned long action, void *hcpu)
-{
-	struct erp_drvdata *drv = container_of(self, struct erp_drvdata,
-								nb_cpu);
-	unsigned long cpu = (unsigned long)hcpu;
-
-	switch (action & ~CPU_TASKS_FROZEN) {
-	case CPU_ONLINE:
-		create_sbe_counter(cpu, drv);
-		break;
-	};
-
-	return NOTIFY_OK;
-}
-
 #ifndef CONFIG_EDAC_CORTEX_ARM64_DBE_IRQ_ONLY
 void arm64_check_cache_ecc(void *info)
 {
@@ -877,10 +868,15 @@ static void arm64_monitor_cache_errors(struct edac_device_ctl_info *edev)
 	}
 }
 
+static int edac_pmu_cpu_init(unsigned int cpu)
+{
+	create_sbe_counter(cpu, drv);
+	return 0;
+}
+
 static int arm64_cpu_erp_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct erp_drvdata *drv;
 	struct resource *r;
 	int cpu;
 	u32 poll_msec;
@@ -956,8 +952,11 @@ static int arm64_cpu_erp_probe(struct platform_device *pdev)
 	drv->nb_panic.notifier_call = arm64_erp_panic_notify;
 	atomic_notifier_chain_register(&panic_notifier_list,
 				       &drv->nb_panic);
-	drv->nb_cpu.notifier_call = arm64_edac_pmu_cpu_notify;
-	register_cpu_notifier(&drv->nb_cpu);
+	cpuhp_setup_state_nocalls(CPUHP_AP_EDAC_PMU_STARTING,
+		"AP_EDAC_PMU_STARTING", edac_pmu_cpu_init,
+		NULL);
+
+
 	get_online_cpus();
 	for_each_online_cpu(cpu)
 		create_sbe_counter(cpu, drv);
@@ -990,7 +989,6 @@ static struct platform_driver arm64_cpu_erp_driver = {
 	.probe = arm64_cpu_erp_probe,
 	.driver = {
 		.name = "arm64_cpu_cache_erp",
-		.owner = THIS_MODULE,
 		.of_match_table = of_match_ptr(arm64_cpu_erp_match_table),
 	},
 };

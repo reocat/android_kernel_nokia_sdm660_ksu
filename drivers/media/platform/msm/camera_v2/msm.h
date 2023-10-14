@@ -1,4 +1,5 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2012-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -33,7 +34,8 @@
 /* Setting MAX timeout to 6.5seconds considering
  * backend will operate @ .6fps in certain usecases
  * like Long exposure usecase and isp needs max of 2 frames
- * to stop the hardware which will be around 3 seconds*/
+ * to stop the hardware which will be around 3 seconds
+ */
 #define MSM_POST_EVT_TIMEOUT 6500
 #define MSM_POST_EVT_NOTIMEOUT 0xFFFFFFFF
 #define MSM_CAMERA_STREAM_CNT_BITS  32
@@ -87,7 +89,8 @@ struct msm_command_ack {
 
 struct msm_v4l2_subdev {
 	/* FIXME: for session close and error handling such
-	 * as daemon shutdown */
+	 * as daemon shutdown
+	 */
 	int    close_sequence;
 };
 
@@ -103,11 +106,13 @@ struct msm_session {
 	/* ACK by imaging server. Object type of
 	 * struct msm_command_ack per open,
 	 * assumption is application can send
-	 * command on every opened video node */
+	 * command on every opened video node
+	 */
 	struct msm_queue_head command_ack_q;
 
 	/* real streams(either data or metadate) owned by one
-	 * session struct msm_stream */
+	 * session struct msm_stream
+	 */
 	struct msm_queue_head stream_q;
 	struct mutex lock;
 	struct mutex lock_q;

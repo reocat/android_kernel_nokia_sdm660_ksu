@@ -1,17 +1,11 @@
-/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Description: CoreSight Replicator driver
  */
 
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
@@ -41,8 +35,8 @@ static int replicator_enable(struct coresight_device *csdev, int inport,
 {
 	struct replicator_drvdata *drvdata = dev_get_drvdata(csdev->dev.parent);
 
-	pm_runtime_get_sync(drvdata->dev);
-	dev_info(drvdata->dev, "REPLICATOR enabled\n");
+	if (atomic_inc_return(&csdev->refcnt[outport]) == 1)
+		dev_dbg(drvdata->dev, "REPLICATOR enabled\n");
 	return 0;
 }
 
@@ -51,8 +45,8 @@ static void replicator_disable(struct coresight_device *csdev, int inport,
 {
 	struct replicator_drvdata *drvdata = dev_get_drvdata(csdev->dev.parent);
 
-	pm_runtime_put(drvdata->dev);
-	dev_info(drvdata->dev, "REPLICATOR disabled\n");
+	if (atomic_dec_return(&csdev->refcnt[outport]) == 0)
+		dev_dbg(drvdata->dev, "REPLICATOR disabled\n");
 }
 
 static const struct coresight_ops_link replicator_link_ops = {
@@ -70,7 +64,7 @@ static int replicator_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct coresight_platform_data *pdata = NULL;
 	struct replicator_drvdata *drvdata;
-	struct coresight_desc *desc;
+	struct coresight_desc desc = { 0 };
 	struct device_node *np = pdev->dev.of_node;
 
 	if (np) {
@@ -96,18 +90,12 @@ static int replicator_probe(struct platform_device *pdev)
 	pm_runtime_enable(&pdev->dev);
 	platform_set_drvdata(pdev, drvdata);
 
-	desc = devm_kzalloc(dev, sizeof(*desc), GFP_KERNEL);
-	if (!desc) {
-		ret = -ENOMEM;
-		goto out_disable_pm;
-	}
-
-	desc->type = CORESIGHT_DEV_TYPE_LINK;
-	desc->subtype.link_subtype = CORESIGHT_DEV_SUBTYPE_LINK_SPLIT;
-	desc->ops = &replicator_cs_ops;
-	desc->pdata = pdev->dev.platform_data;
-	desc->dev = &pdev->dev;
-	drvdata->csdev = coresight_register(desc);
+	desc.type = CORESIGHT_DEV_TYPE_LINK;
+	desc.subtype.link_subtype = CORESIGHT_DEV_SUBTYPE_LINK_SPLIT;
+	desc.ops = &replicator_cs_ops;
+	desc.pdata = pdev->dev.platform_data;
+	desc.dev = &pdev->dev;
+	drvdata->csdev = coresight_register(&desc);
 	if (IS_ERR(drvdata->csdev)) {
 		ret = PTR_ERR(drvdata->csdev);
 		goto out_disable_pm;
@@ -115,7 +103,6 @@ static int replicator_probe(struct platform_device *pdev)
 
 	pm_runtime_put(&pdev->dev);
 
-	dev_info(dev, "REPLICATOR initialized\n");
 	return 0;
 
 out_disable_pm:
@@ -168,8 +155,4 @@ static struct platform_driver replicator_driver = {
 		.suppress_bind_attrs = true,
 	},
 };
-
 builtin_platform_driver(replicator_driver);
-
-MODULE_LICENSE("GPL v2");
-MODULE_DESCRIPTION("CoreSight Replicator driver");

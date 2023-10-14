@@ -1,15 +1,9 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+// SPDX-License-Identifier: GPL-2.0-only
+
+/*
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  */
+
 #include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/errno.h>
@@ -25,7 +19,6 @@
 #include <linux/of.h>
 #include <linux/uaccess.h>
 
-#include "rpm_stats.h"
 
 #define RPM_MASTERS_BUF_LEN 400
 
@@ -49,6 +42,23 @@
 	 prvdata->master_names[a])
 
 #define GET_FIELD(a) ((strnstr(#a, ".", 80) + 1))
+
+struct msm_rpm_master_stats_platform_data {
+	phys_addr_t phys_addr_base;
+	u32 phys_size;
+	char **masters;
+	/*
+	 * RPM maintains PC stats for each master in MSG RAM,
+	 * it allocates 256 bytes for this use.
+	 * No of masters differs for different targets.
+	 * Based on the number of masters, linux rpm stat
+	 * driver reads (32 * num_masters) bytes to display
+	 * master stats.
+	 */
+	s32 num_masters;
+	u32 master_offset;
+	u32 version;
+};
 
 static DEFINE_MUTEX(msm_rpm_master_stats_mutex);
 
@@ -77,19 +87,7 @@ struct msm_rpm_master_stats_private_data {
 	struct msm_rpm_master_stats_platform_data *platform_data;
 };
 
-//CORE-PK-Show_rpm_master_stats-00+{
-#ifdef CONFIG_FIH_FEATURE_RPM_MASTER_STATS_LOG
-struct msm_rpm_master_stats_private_data *dbg_prvdata;
-
-struct dbg_msm_rpm_master_stats {
-	uint32_t active_cores;
-	uint64_t shutdown_req;
-	uint64_t bringup_ack;
-};
-#endif
-//CORE-PK-Show_rpm_master_stats-00+}
-
-int msm_rpm_master_stats_file_close(struct inode *inode,
+static int msm_rpm_master_stats_file_close(struct inode *inode,
 		struct file *file)
 {
 	struct msm_rpm_master_stats_private_data *private = file->private_data;
@@ -262,103 +260,18 @@ static int msm_rpm_master_copy_stats(
 
 	active_cores = record.active_cores;
 	j = find_first_bit(&active_cores, BITS_PER_LONG);
-	while (j < BITS_PER_LONG) {
+	while (j < (BITS_PER_LONG - 1)) {
 		SNPRINTF(buf, count, "\t\tcore%d\n", j);
-		j = find_next_bit(&active_cores, BITS_PER_LONG, j + 1);
+		j = find_next_bit((const unsigned long *)&active_cores,
+							BITS_PER_LONG, j + 1);
 	}
+
+	if (j == (BITS_PER_LONG - 1))
+		SNPRINTF(buf, count, "\t\tcore%d\n", j);
 
 	master_cnt++;
 	return RPM_MASTERS_BUF_LEN - count;
 }
-
-//CORE-PK-Show_rpm_master_stats-00+{
-#ifdef CONFIG_FIH_FEATURE_RPM_MASTER_STATS_LOG
-static void dbg_msm_rpm_master_copy_stats_v2(
-		struct msm_rpm_master_stats_private_data *prvdata)
-{
-	struct dbg_msm_rpm_master_stats record;
-	struct msm_rpm_master_stats_platform_data *pdata;
-	unsigned long bringup_ack_rem, shutdown_req_rem;
-	int count = 0;
-	int master_cnt = 0;
-	char *buf;
-
-	pdata = prvdata->platform_data;
-	count = RPM_MASTERS_BUF_LEN;
-	buf = prvdata->buf;
-
-	while (master_cnt < prvdata->num_masters) {
-		record.shutdown_req = readq_relaxed(prvdata->reg_base +
-			(master_cnt * pdata->master_offset +
-			offsetof(struct msm_rpm_master_stats, shutdown_req)));
-
-		record.bringup_ack = readq_relaxed(prvdata->reg_base +
-			(master_cnt * pdata->master_offset +
-			offsetof(struct msm_rpm_master_stats, bringup_ack)));
-
-		record.active_cores = readl_relaxed(prvdata->reg_base +
-			(master_cnt * pdata->master_offset) +
-			offsetof(struct msm_rpm_master_stats, active_cores));
-
-		/* tick to ms */
-		(void)do_div(record.bringup_ack, 19200);
-		(void)do_div(record.shutdown_req, 19200);
-		/* ms to s, and remaining. */
-		bringup_ack_rem = do_div(record.bringup_ack, 1000);
-		shutdown_req_rem = do_div(record.shutdown_req, 1000);
-
-		SNPRINTF(buf, count, "[PM] sleep_info_m.%d - %7llu.%-3lu(0x%0x), %7llu.%-3lu s\n",
-			master_cnt,
-			record.bringup_ack,
-			bringup_ack_rem,
-			record.active_cores,
-			record.shutdown_req,
-			shutdown_req_rem );
-
-		master_cnt++;
-	}
-}
-
-void msm_show_rpm_master_stats(void)
-{
-	if (dbg_prvdata) {
-		dbg_msm_rpm_master_copy_stats_v2(dbg_prvdata);
-		pr_info("%s", dbg_prvdata->buf);
-	} else {
-		pr_err("%s: rpm_master_stats info not ready.", __func__);
-	}
-}
-EXPORT_SYMBOL(msm_show_rpm_master_stats);
-
-static uint64_t dbg_msm_rpm_master_copy_APPS_stats(
-		struct msm_rpm_master_stats_private_data *prvdata)
-{
-	struct dbg_msm_rpm_master_stats record;
-
-		record.shutdown_req = readq_relaxed(prvdata->reg_base +
-			offsetof(struct msm_rpm_master_stats, shutdown_req));
-
-		record.bringup_ack = readq_relaxed(prvdata->reg_base +
-			offsetof(struct msm_rpm_master_stats, bringup_ack));
-
-		/* tick to ms */
-		(void)do_div(record.bringup_ack, 19200);
-		(void)do_div(record.shutdown_req, 19200);
-
-		return (record.bringup_ack - record.shutdown_req);
-}
-
-void get_apss_power_collapse_time(uint64_t *apps_pc_time)
-{
-	if (dbg_prvdata) {
-		*apps_pc_time = dbg_msm_rpm_master_copy_APPS_stats(dbg_prvdata);
-	} else
-		pr_err("%s: rpm_master_stats info not ready.", __func__);
-}
-EXPORT_SYMBOL(get_apss_power_collapse_time);
-
-#endif /* CONFIG_FIH_FEATURE_RPM_MASTER_STATS_LOG */
-//CORE-PK-Show_rpm_master_stats-00+}
 
 static ssize_t msm_rpm_master_stats_file_read(struct file *file,
 				char __user *bufu, size_t count, loff_t *ppos)
@@ -489,16 +402,17 @@ static struct msm_rpm_master_stats_platform_data
 	 */
 	for (i = 0; i < pdata->num_masters; i++) {
 		const char *master_name;
+		size_t master_name_len;
 
 		of_property_read_string_index(node, "qcom,masters",
 							i, &master_name);
+		master_name_len = strlen(master_name);
 		pdata->masters[i] = devm_kzalloc(dev, sizeof(char) *
-				strlen(master_name) + 1, GFP_KERNEL);
+				master_name_len + 1, GFP_KERNEL);
 		if (!pdata->masters[i])
 			goto err;
-
 		strlcpy(pdata->masters[i], master_name,
-					strlen(pdata->masters[i]) + 1);
+					master_name_len + 1);
 	}
 	return pdata;
 err:
@@ -528,7 +442,7 @@ static  int msm_rpm_master_stats_probe(struct platform_device *pdev)
 
 	if (!res) {
 		dev_err(&pdev->dev,
-			"%s: Failed to get IO resource from platform device",
+			"%s: Failed to get IO resource from platform device\n",
 			__func__);
 		return -ENXIO;
 	}
@@ -536,34 +450,7 @@ static  int msm_rpm_master_stats_probe(struct platform_device *pdev)
 	pdata->phys_addr_base = res->start;
 	pdata->phys_size = resource_size(res);
 
-//CORE-PK-Show_rpm_master_stats-00+{
-#ifdef CONFIG_FIH_FEATURE_RPM_MASTER_STATS_LOG
-	dbg_prvdata =
-		kzalloc(sizeof(struct msm_rpm_master_stats_private_data),
-			GFP_KERNEL);
-
-	if (!dbg_prvdata)
-		return -ENOMEM;
-
-	dbg_prvdata->reg_base = ioremap_nocache(pdata->phys_addr_base,
-						pdata->phys_size);
-	if (!dbg_prvdata->reg_base) {
-		kfree(dbg_prvdata);
-		dbg_prvdata = NULL;
-		pr_err("%s: ERROR could not ioremap start=%p, len=%u\n",
-			__func__, (void *)pdata->phys_addr_base,
-			pdata->phys_size);
-		return -EBUSY;
-	}
-
-	dbg_prvdata->len = 0;
-	dbg_prvdata->num_masters = pdata->num_masters;
-	dbg_prvdata->master_names = pdata->masters;
-	dbg_prvdata->platform_data = pdata;
-#endif
-//CORE-PK-Show_rpm_master_stats-00+}
-
-	dent = debugfs_create_file("rpm_master_stats", S_IRUGO, NULL,
+	dent = debugfs_create_file("rpm_master_stats", 0444, NULL,
 					pdata, &msm_rpm_master_stats_fops);
 
 	if (!dent) {
@@ -596,7 +483,6 @@ static struct platform_driver msm_rpm_master_stats_driver = {
 	.remove = msm_rpm_master_stats_remove,
 	.driver = {
 		.name = "msm_rpm_master_stats",
-		.owner = THIS_MODULE,
 		.of_match_table = rpm_master_table,
 	},
 };

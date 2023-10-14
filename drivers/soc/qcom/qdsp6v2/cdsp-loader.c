@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2012-2014, 2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2012-2014, 2017-2018, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/init.h>
@@ -19,8 +11,6 @@
 #include <linux/platform_device.h>
 #include <linux/of_device.h>
 #include <linux/sysfs.h>
-#include <linux/workqueue.h>
-
 #include <soc/qcom/subsystem_restart.h>
 
 #define BOOT_CMD 1
@@ -49,19 +39,17 @@ static struct attribute *attrs[] = {
 
 static u32 cdsp_state = CDSP_SUBSYS_DOWN;
 static struct platform_device *cdsp_private;
-static struct work_struct cdsp_ldr_work;
 static void cdsp_loader_unload(struct platform_device *pdev);
 
-static void cdsp_load_fw(struct work_struct *cdsp_ldr_work)
+static int cdsp_loader_do(struct platform_device *pdev)
 {
-	struct platform_device *pdev = cdsp_private;
 	struct cdsp_loader_private *priv = NULL;
 
 	int rc = 0;
 	const char *img_name;
 
 	if (!pdev) {
-		dev_err(&pdev->dev, "%s: Platform device null\n", __func__);
+		pr_err("%s: Platform device null\n", __func__);
 		goto fail;
 	}
 
@@ -75,7 +63,6 @@ static void cdsp_load_fw(struct work_struct *cdsp_ldr_work)
 	rc = of_property_read_string(pdev->dev.of_node,
 					"qcom,proc-img-to-load",
 					&img_name);
-
 	if (rc)
 		goto fail;
 
@@ -85,14 +72,16 @@ static void cdsp_load_fw(struct work_struct *cdsp_ldr_work)
 			priv = platform_get_drvdata(pdev);
 			if (!priv) {
 				dev_err(&pdev->dev,
-				" %s: Private data get failed\n", __func__);
+				"%s: Private data get failed\n", __func__);
 				goto fail;
 			}
 
+			dev_dbg(&pdev->dev, "%s: calling subsystem_get on %s\n",
+					__func__, img_name);
 			priv->pil_h = subsystem_get("cdsp");
 			if (IS_ERR(priv->pil_h)) {
-				dev_err(&pdev->dev, "%s: pil get failed,\n",
-					__func__);
+				dev_err(&pdev->dev, "%s: subsystem_get failed with error %d\n",
+					__func__, (int)(PTR_ERR(priv->pil_h)));
 				goto fail;
 			}
 
@@ -100,23 +89,22 @@ static void cdsp_load_fw(struct work_struct *cdsp_ldr_work)
 			cdsp_state = CDSP_SUBSYS_LOADED;
 		} else if (cdsp_state == CDSP_SUBSYS_LOADED) {
 			dev_dbg(&pdev->dev,
-			"%s: CDSP state = %x\n", __func__, cdsp_state);
+			"%s: CDSP state = 0x%x\n", __func__, cdsp_state);
 		}
 
 		dev_dbg(&pdev->dev, "%s: CDSP image is loaded\n", __func__);
-		return;
+		return rc;
 	}
 
 fail:
-	dev_err(&pdev->dev, "%s: CDSP image loading failed\n", __func__);
-	return;
+	if (pdev)
+		dev_err(&pdev->dev,
+			"%s: CDSP image loading failed\n", __func__);
+	else
+		pr_err("%s: CDSP image loading failed\n", __func__);
+	return rc;
 }
 
-static void cdsp_loader_do(struct platform_device *pdev)
-{
-	dev_info(&pdev->dev, "%s: scheduling work to load CDSP fw\n", __func__);
-	schedule_work(&cdsp_ldr_work);
-}
 
 static ssize_t cdsp_boot_store(struct kobject *kobj,
 	struct kobj_attribute *attr,
@@ -150,7 +138,7 @@ static void cdsp_loader_unload(struct platform_device *pdev)
 		return;
 
 	if (priv->pil_h) {
-		dev_dbg(&pdev->dev, "%s: calling subsystem put\n", __func__);
+		dev_dbg(&pdev->dev, "%s: calling subsystem_put\n", __func__);
 		subsystem_put(priv->pil_h);
 		priv->pil_h = NULL;
 	}
@@ -246,8 +234,6 @@ static int cdsp_loader_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	INIT_WORK(&cdsp_ldr_work, cdsp_load_fw);
-
 	return 0;
 }
 
@@ -260,7 +246,6 @@ MODULE_DEVICE_TABLE(of, cdsp_loader_dt_match);
 static struct platform_driver cdsp_loader_driver = {
 	.driver = {
 		.name = "cdsp-loader",
-		.owner = THIS_MODULE,
 		.of_match_table = cdsp_loader_dt_match,
 	},
 	.probe = cdsp_loader_probe,

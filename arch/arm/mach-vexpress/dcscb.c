@@ -146,6 +146,7 @@ static int __init dcscb_init(void)
 	if (!node)
 		return -ENODEV;
 	dcscb_base = of_iomap(node, 0);
+	of_node_put(node);
 	if (!dcscb_base)
 		return -EADDRNOTAVAIL;
 	cfg = readl_relaxed(dcscb_base + DCS_CFG_R);
@@ -166,7 +167,7 @@ static int __init dcscb_init(void)
 	 * Future entries into the kernel can now go
 	 * through the cluster entry vectors.
 	 */
-	vexpress_flags_set(virt_to_phys(mcpm_entry_point));
+	vexpress_flags_set(__pa_symbol(mcpm_entry_point));
 
 	return 0;
 }

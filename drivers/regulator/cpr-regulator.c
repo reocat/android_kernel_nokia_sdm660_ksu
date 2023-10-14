@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "%s: " fmt, __func__
@@ -38,8 +30,6 @@
 #include <linux/regulator/machine.h>
 #include <linux/regulator/of_regulator.h>
 #include <linux/regulator/cpr-regulator.h>
-#include <linux/msm_thermal.h>
-#include <linux/msm_tsens.h>
 #include <soc/qcom/scm.h>
 
 /* Register Offsets for RB-CPR and Bit Definitions */
@@ -287,7 +277,6 @@ struct cpr_regulator {
 	int				corner;
 	int				ceiling_max;
 	struct dentry			*debugfs;
-	struct device			*dev;
 
 	/* eFuse parameters */
 	phys_addr_t	efuse_addr;
@@ -318,14 +307,6 @@ struct cpr_regulator {
 
 	/* mem-acc regulator */
 	struct regulator	*mem_acc_vreg;
-
-	/* thermal monitor */
-	int			tsens_id;
-	int			cpr_disable_temp_threshold;
-	int			cpr_enable_temp_threshold;
-	bool			cpr_disable_on_temperature;
-	bool			cpr_thermal_disable;
-	struct threshold_info	tsens_threshold_config;
 
 	/* CPR parameters */
 	u32		num_fuse_corners;
@@ -385,25 +366,19 @@ struct cpr_regulator {
 	u32		num_corners;
 	int		*quot_adjust;
 	int		*mem_acc_corner_map;
+	unsigned int	*vdd_mode_map;
 
 	int			num_adj_cpus;
-	int			online_cpus;
 	int			*adj_cpus;
-	int			**adj_cpus_save_ctl;
-	int			**adj_cpus_save_irq;
-	int			**adj_cpus_last_volt;
-	int			**adj_cpus_quot_adjust;
-	int			**adj_cpus_open_loop_volt;
-	bool			adj_cpus_open_loop_volt_as_ceiling;
-	struct notifier_block	cpu_notifier;
 	cpumask_t		cpu_mask;
 	bool			cpr_disabled_in_pc;
 	struct notifier_block	pm_notifier;
 
 	bool		is_cpr_suspended;
-	bool		skip_voltage_change_during_suspend;
 
 	struct cpr_aging_info	*aging_info;
+
+	struct notifier_block	panic_notifier;
 };
 
 #define CPR_DEBUG_MASK_IRQ	BIT(0)
@@ -417,7 +392,7 @@ static struct dentry *cpr_debugfs_base;
 static DEFINE_MUTEX(cpr_regulator_list_mutex);
 static LIST_HEAD(cpr_regulator_list);
 
-module_param_named(debug_enable, cpr_debug_enable, int, S_IRUGO | S_IWUSR);
+module_param_named(debug_enable, cpr_debug_enable, int, 0644);
 #define cpr_debug(cpr_vreg, message, ...) \
 	do { \
 		if (cpr_debug_enable & CPR_DEBUG_MASK_API) \
@@ -458,6 +433,7 @@ static u64 cpr_read_efuse_row(struct cpr_regulator *cpr_vreg, u32 row_num,
 	int rc;
 	u64 efuse_bits;
 	struct scm_desc desc = {0};
+
 	struct cpr_read_req {
 		u32 row_address;
 		int addr_type;
@@ -476,32 +452,25 @@ static u64 cpr_read_efuse_row(struct cpr_regulator *cpr_vreg, u32 row_num,
 			+ row_num * BYTES_PER_FUSE_ROW);
 		return efuse_bits;
 	}
-
 	desc.args[0] = req.row_address = cpr_vreg->efuse_addr +
 					row_num * BYTES_PER_FUSE_ROW;
 	desc.args[1] = req.addr_type = 0;
 	desc.arginfo = SCM_ARGS(2);
 	efuse_bits = 0;
 
-	if (!is_scm_armv8()) {
-		rc = scm_call(SCM_SVC_FUSE, SCM_FUSE_READ,
-			&req, sizeof(req), &rsp, sizeof(rsp));
-	} else {
-		rc = scm_call2(SCM_SIP_FNID(SCM_SVC_FUSE, SCM_FUSE_READ),
-				&desc);
-		rsp.row_data[0] = desc.ret[0];
-		rsp.row_data[1] = desc.ret[1];
-		rsp.status = desc.ret[2];
-	}
+	rc = scm_call2(SCM_SIP_FNID(SCM_SVC_FUSE, SCM_FUSE_READ),
+		&desc);
+	rsp.row_data[0] = desc.ret[0];
+	rsp.row_data[1] = desc.ret[1];
+	rsp.status = desc.ret[2];
 
 	if (rc) {
 		cpr_err(cpr_vreg, "read row %d failed, err code = %d",
 			row_num, rc);
 	} else {
 		efuse_bits = ((u64)(rsp.row_data[1]) << 32) +
-				(u64)rsp.row_data[0];
+					(u64)rsp.row_data[0];
 	}
-
 	return efuse_bits;
 }
 
@@ -563,8 +532,7 @@ static u64 cpr_read_efuse_param(struct cpr_regulator *cpr_vreg, int row_start,
 
 static bool cpr_is_allowed(struct cpr_regulator *cpr_vreg)
 {
-	if (cpr_vreg->cpr_fuse_disable || !cpr_vreg->enable ||
-				cpr_vreg->cpr_thermal_disable)
+	if (cpr_vreg->cpr_fuse_disable || !cpr_vreg->enable)
 		return false;
 	else
 		return true;
@@ -1438,6 +1406,7 @@ static int cpr_calculate_de_aging_margin(struct cpr_regulator *cpr_vreg)
 	u32 save_ctl, save_irq;
 	cpumask_t tmp_mask;
 	int rc = 0, i;
+	unsigned int current_mode;
 
 	save_ctl = cpr_read(cpr_vreg, REG_RBCPR_CTL);
 	save_irq = cpr_read(cpr_vreg, REG_RBIF_IRQ_EN(cpr_vreg->irq_line));
@@ -1460,6 +1429,13 @@ static int cpr_calculate_de_aging_margin(struct cpr_regulator *cpr_vreg)
 		cpr_err(cpr_vreg, "Unable to set aging reference voltage, rc = %d\n",
 			rc);
 		return rc;
+	}
+
+	current_mode = regulator_get_mode(cpr_vreg->vdd_apc);
+	if (current_mode < 0) {
+		cpr_err(cpr_vreg, "Failed to get vdd-supply mode, error=%d\n",
+			current_mode);
+		return current_mode;
 	}
 
 	/* Force PWM mode */
@@ -1487,10 +1463,10 @@ static int cpr_calculate_de_aging_margin(struct cpr_regulator *cpr_vreg)
 	put_online_cpus();
 
 	/* Set to initial mode */
-	rc = regulator_set_mode(cpr_vreg->vdd_apc, REGULATOR_MODE_IDLE);
+	rc = regulator_set_mode(cpr_vreg->vdd_apc, current_mode);
 	if (rc) {
 		cpr_err(cpr_vreg, "unable to configure vdd-supply for mode=%u, rc=%d\n",
-			REGULATOR_MODE_IDLE, rc);
+			current_mode, rc);
 		return rc;
 	}
 
@@ -1551,6 +1527,17 @@ static int cpr_regulator_set_voltage(struct regulator_dev *rdev,
 	if (rc)
 		return rc;
 
+	if (cpr_vreg->vdd_mode_map) {
+		rc = regulator_set_mode(cpr_vreg->vdd_apc,
+					cpr_vreg->vdd_mode_map[corner]);
+		if (rc) {
+			cpr_err(cpr_vreg, "unable to configure vdd-supply for mode=%u, rc=%d\n",
+				cpr_vreg->vdd_mode_map[corner], rc);
+			return rc;
+		}
+	}
+
+
 	if (cpr_is_allowed(cpr_vreg) && cpr_vreg->vreg_enabled) {
 		cpr_irq_clr(cpr_vreg);
 		if (reset_quot)
@@ -1566,7 +1553,7 @@ static int cpr_regulator_set_voltage(struct regulator_dev *rdev,
 }
 
 static int cpr_regulator_set_voltage_op(struct regulator_dev *rdev,
-		int corner, int corner_max, unsigned *selector)
+		int corner, int corner_max, unsigned int *selector)
 {
 	struct cpr_regulator *cpr_vreg = rdev_get_drvdata(rdev);
 	int rc;
@@ -1904,10 +1891,8 @@ static int cpr_pvs_per_corner_init(struct device_node *of_node,
 		return -EINVAL;
 	}
 	fuse_sel = kzalloc(sizeof(u32) * size, GFP_KERNEL);
-	if (!fuse_sel) {
-		cpr_err(cpr_vreg, "memory alloc failed.\n");
+	if (!fuse_sel)
 		return -ENOMEM;
-	}
 	rc = of_property_read_u32_array(of_node, init_volt_str,
 							fuse_sel, size);
 	if (rc < 0) {
@@ -1928,8 +1913,6 @@ static int cpr_pvs_per_corner_init(struct device_node *of_node,
 	ref_uv = kzalloc((cpr_vreg->num_fuse_corners + 1) * sizeof(*ref_uv),
 			GFP_KERNEL);
 	if (!ref_uv) {
-		cpr_err(cpr_vreg,
-			"Could not allocate memory for reference voltages\n");
 		kfree(fuse_sel);
 		return -ENOMEM;
 	}
@@ -2041,10 +2024,8 @@ static int cpr_pvs_single_bin_init(struct device_node *of_node,
 	pvs_bins = 1 << pvs_fuse[2];
 	stripe_size = cpr_vreg->num_fuse_corners;
 	tmp = kzalloc(sizeof(u32) * pvs_bins * stripe_size, GFP_KERNEL);
-	if (!tmp) {
-		cpr_err(cpr_vreg, "memory alloc failed\n");
+	if (!tmp)
 		return -ENOMEM;
-	}
 
 	rc = of_property_read_u32_array(of_node, "qcom,pvs-voltage-table",
 						tmp, pvs_bins * stripe_size);
@@ -2126,11 +2107,8 @@ static int cpr_parse_vdd_mx_parameters(struct platform_device *pdev,
 	cpr_vreg->vdd_mx_corner_map = devm_kzalloc(&pdev->dev,
 		(corner_map_len + 1) * sizeof(*cpr_vreg->vdd_mx_corner_map),
 			GFP_KERNEL);
-	if (!cpr_vreg->vdd_mx_corner_map) {
-		cpr_err(cpr_vreg,
-			"Can't allocate memory for cpr_vreg->vdd_mx_corner_map\n");
+	if (!cpr_vreg->vdd_mx_corner_map)
 		return -ENOMEM;
-	}
 
 	rc = of_property_read_u32_array(of_node,
 				"qcom,vdd-mx-corner-map",
@@ -2224,7 +2202,7 @@ static int cpr_pvs_init(struct platform_device *pdev,
 		= cpr_vreg->fuse_ceiling_volt[highest_fuse_corner];
 
 	/*
-	 * Log ceiling, floor, and inital voltages since they are critical for
+	 * Log ceiling, floor, and initial voltages since they are critical for
 	 * all CPR debugging.
 	 */
 	buflen = cpr_vreg->num_fuse_corners * (MAX_CHARS_PER_INT + 2)
@@ -2379,11 +2357,8 @@ static int cpr_get_open_loop_voltage(struct cpr_regulator *cpr_vreg,
 
 	cpr_vreg->open_loop_volt = devm_kzalloc(dev,
 			sizeof(int) * (cpr_vreg->num_corners + 1), GFP_KERNEL);
-	if (!cpr_vreg->open_loop_volt) {
-		cpr_err(cpr_vreg,
-			"Can't allocate memory for cpr_vreg->open_loop_volt\n");
+	if (!cpr_vreg->open_loop_volt)
 		return -ENOMEM;
-	}
 
 	/*
 	 * Set open loop voltage to be equal to per-fuse-corner initial voltage
@@ -2406,10 +2381,8 @@ static int cpr_get_open_loop_voltage(struct cpr_regulator *cpr_vreg,
 	max_factor
 	       = kzalloc(sizeof(*max_factor) * (cpr_vreg->num_fuse_corners + 1),
 			 GFP_KERNEL);
-	if (!max_factor) {
-		cpr_err(cpr_vreg, "Could not allocate memory for max_factor array\n");
+	if (!max_factor)
 		return -ENOMEM;
-	}
 
 	rc = of_property_read_u32_array(dev->of_node,
 			"qcom,cpr-voltage-scaling-factor-max",
@@ -2610,19 +2583,17 @@ static int cpr_get_fuse_quot_offset(struct cpr_regulator *cpr_vreg,
 	if (!prop) {
 		cpr_debug(cpr_vreg, "%s not present\n", quot_offset_str);
 		return 0;
-	} else {
-		size = prop->length / sizeof(u32);
-		if (size != cpr_vreg->num_fuse_corners * 4) {
-			cpr_err(cpr_vreg, "fuse position for quot offset is invalid\n");
-			return -EINVAL;
-		}
+	}
+
+	size = prop->length / sizeof(u32);
+	if (size != cpr_vreg->num_fuse_corners * 4) {
+		cpr_err(cpr_vreg, "fuse position for quot offset is invalid\n");
+		return -EINVAL;
 	}
 
 	fuse_sel = kzalloc(sizeof(u32) * size, GFP_KERNEL);
-	if (!fuse_sel) {
-		cpr_err(cpr_vreg, "memory alloc failed.\n");
+	if (!fuse_sel)
 		return -ENOMEM;
-	}
 
 	rc = of_property_read_u32_array(dev->of_node, quot_offset_str,
 			fuse_sel, size);
@@ -2638,7 +2609,6 @@ static int cpr_get_fuse_quot_offset(struct cpr_regulator *cpr_vreg,
 			sizeof(u32) * (cpr_vreg->num_fuse_corners + 1),
 			GFP_KERNEL);
 	if (!cpr_vreg->fuse_quot_offset) {
-		cpr_err(cpr_vreg, "Can't allocate memory for cpr_vreg->fuse_quot_offset\n");
 		kfree(fuse_sel);
 		return -ENOMEM;
 	}
@@ -2657,7 +2627,6 @@ static int cpr_get_fuse_quot_offset(struct cpr_regulator *cpr_vreg,
 					* (cpr_vreg->num_fuse_corners + 1),
 					GFP_KERNEL);
 		if (!offset_multiplier) {
-			cpr_err(cpr_vreg, "memory alloc failed.\n");
 			kfree(fuse_sel);
 			return -ENOMEM;
 		}
@@ -2843,21 +2812,15 @@ static int cpr_get_corner_quot_adjustment(struct cpr_regulator *cpr_vreg,
 
 	cpr_vreg->corner_map = devm_kzalloc(dev, sizeof(int) * (size + 1),
 					GFP_KERNEL);
-	if (!cpr_vreg->corner_map) {
-		cpr_err(cpr_vreg,
-			"Can't allocate memory for cpr_vreg->corner_map\n");
+	if (!cpr_vreg->corner_map)
 		return -ENOMEM;
-	}
 	cpr_vreg->num_corners = size;
 
 	cpr_vreg->quot_adjust = devm_kzalloc(dev,
 			sizeof(u32) * (cpr_vreg->num_corners + 1),
 			GFP_KERNEL);
-	if (!cpr_vreg->quot_adjust) {
-		cpr_err(cpr_vreg,
-			"Can't allocate memory for cpr_vreg->quot_adjust\n");
+	if (!cpr_vreg->quot_adjust)
 		return -ENOMEM;
-	}
 
 	if (!corners_mapped) {
 		for (i = CPR_FUSE_CORNER_MIN; i <= cpr_vreg->num_fuse_corners;
@@ -2898,11 +2861,10 @@ static int cpr_get_corner_quot_adjustment(struct cpr_regulator *cpr_vreg,
 	}
 
 	size = prop->length / sizeof(u32);
-	tmp = kzalloc(size * sizeof(u32), GFP_KERNEL);
-	if (!tmp) {
-		cpr_err(cpr_vreg, "memory alloc failed\n");
+	tmp = kcalloc(size, sizeof(*tmp), GFP_KERNEL);
+	if (!tmp)
 		return -ENOMEM;
-	}
+
 	rc = of_property_read_u32_array(dev->of_node,
 		"qcom,cpr-speed-bin-max-corners", tmp, size);
 	if (rc < 0) {
@@ -2912,12 +2874,11 @@ static int cpr_get_corner_quot_adjustment(struct cpr_regulator *cpr_vreg,
 		return rc;
 	}
 
-	corner_max = kzalloc((cpr_vreg->num_fuse_corners + 1)
-				* sizeof(*corner_max), GFP_KERNEL);
-	freq_max = kzalloc((cpr_vreg->num_fuse_corners + 1) * sizeof(*freq_max),
+	corner_max = kcalloc((cpr_vreg->num_fuse_corners + 1),
+				sizeof(*corner_max), GFP_KERNEL);
+	freq_max = kcalloc((cpr_vreg->num_fuse_corners + 1), sizeof(*freq_max),
 				GFP_KERNEL);
 	if (corner_max == NULL || freq_max == NULL) {
-		cpr_err(cpr_vreg, "Could not allocate memory for quotient scaling arrays\n");
 		kfree(tmp);
 		rc = -ENOMEM;
 		goto free_arrays;
@@ -2980,9 +2941,8 @@ static int cpr_get_corner_quot_adjustment(struct cpr_regulator *cpr_vreg,
 	}
 
 	size = prop->length / sizeof(u32);
-	tmp = kzalloc(sizeof(u32) * size, GFP_KERNEL);
+	tmp = kcalloc(size, sizeof(*tmp), GFP_KERNEL);
 	if (!tmp) {
-		cpr_err(cpr_vreg, "memory alloc failed\n");
 		rc = -ENOMEM;
 		goto free_arrays;
 	}
@@ -2994,10 +2954,9 @@ static int cpr_get_corner_quot_adjustment(struct cpr_regulator *cpr_vreg,
 		kfree(tmp);
 		goto free_arrays;
 	}
-	freq_map = kzalloc(sizeof(u32) * (cpr_vreg->num_corners + 1),
+	freq_map = kcalloc(cpr_vreg->num_corners + 1, sizeof(*freq_map),
 			GFP_KERNEL);
 	if (!freq_map) {
-		cpr_err(cpr_vreg, "memory alloc for freq_map failed!\n");
 		kfree(tmp);
 		rc = -ENOMEM;
 		goto free_arrays;
@@ -3033,10 +2992,9 @@ static int cpr_get_corner_quot_adjustment(struct cpr_regulator *cpr_vreg,
 		goto free_arrays;
 	}
 
-	max_factor = kzalloc(sizeof(u32) * (cpr_vreg->num_fuse_corners + 1),
-			GFP_KERNEL);
+	max_factor = kcalloc(cpr_vreg->num_fuse_corners + 1,
+				sizeof(*max_factor), GFP_KERNEL);
 	if (!max_factor) {
-		cpr_err(cpr_vreg, "Could not allocate memory for max_factor array\n");
 		rc = -ENOMEM;
 		goto free_arrays;
 	}
@@ -3079,10 +3037,9 @@ static int cpr_get_corner_quot_adjustment(struct cpr_regulator *cpr_vreg,
 			goto free_arrays;
 		}
 	}
-	scaling = kzalloc((cpr_vreg->num_fuse_corners + 1) * sizeof(*scaling),
+	scaling = kcalloc(cpr_vreg->num_fuse_corners + 1, sizeof(*scaling),
 			GFP_KERNEL);
 	if (!scaling) {
-		cpr_err(cpr_vreg, "Could not allocate memory for scaling array\n");
 		rc = -ENOMEM;
 		goto free_arrays;
 	}
@@ -3240,10 +3197,8 @@ static int cpr_read_ro_select(struct platform_device *pdev,
 	bp_ro_sel
 		= kzalloc((cpr_vreg->num_fuse_corners + 1) * sizeof(*bp_ro_sel),
 			GFP_KERNEL);
-	if (!bp_ro_sel) {
-		cpr_err(cpr_vreg, "could not allocate memory for temp array\n");
+	if (!bp_ro_sel)
 		return -ENOMEM;
-	}
 
 	if (cpr_vreg->cpr_fuse_redundant) {
 		rc = of_property_read_u32_array(of_node,
@@ -3304,10 +3259,8 @@ static int cpr_find_fuse_map_match(struct platform_device *pdev,
 	}
 
 	tmp = kzalloc(len, GFP_KERNEL);
-	if (!tmp) {
-		cpr_err(cpr_vreg, "could not allocate memory for temp array\n");
+	if (!tmp)
 		return -ENOMEM;
-	}
 
 	rc = of_property_read_u32_array(of_node, "qcom,cpr-fuse-version-map",
 				tmp, cpr_vreg->cpr_fuse_map_count * tuple_size);
@@ -3391,12 +3344,10 @@ static int cpr_minimum_quot_difference_adjustment(struct platform_device *pdev,
 		return -EINVAL;
 	}
 
-	min_diff_quot = kzalloc(cpr_vreg->num_fuse_corners * sizeof(u32),
-							GFP_KERNEL);
-	if (!min_diff_quot) {
-		cpr_err(cpr_vreg, "memory alloc failed\n");
+	min_diff_quot = kcalloc(cpr_vreg->num_fuse_corners,
+				sizeof(*min_diff_quot), GFP_KERNEL);
+	if (!min_diff_quot)
 		return -ENOMEM;
-	}
 
 	rc = of_property_read_u32_array(of_node, "qcom,cpr-fuse-min-quot-diff",
 						min_diff_quot,
@@ -3428,7 +3379,7 @@ static int cpr_minimum_quot_difference_adjustment(struct platform_device *pdev,
 					+ adjust_quot;
 			cpr_info(cpr_vreg, "Corner[%d]: revised adjusted quotient = %d\n",
 					i, cpr_vreg->cpr_fuse_target_quot[i]);
-		};
+		}
 	}
 
 error:
@@ -3870,13 +3821,11 @@ static int cpr_init_cpr_efuse(struct platform_device *pdev,
 
 	len = cpr_vreg->num_fuse_corners + 1;
 
-	bp_target_quot = kzalloc(len * sizeof(*bp_target_quot), GFP_KERNEL);
-	target_quot_size = kzalloc(len * sizeof(*target_quot_size), GFP_KERNEL);
-	quot_scale = kzalloc(len * sizeof(*quot_scale), GFP_KERNEL);
+	bp_target_quot = kcalloc(len, sizeof(*bp_target_quot), GFP_KERNEL);
+	target_quot_size = kcalloc(len, sizeof(*target_quot_size), GFP_KERNEL);
+	quot_scale = kcalloc(len, sizeof(*quot_scale), GFP_KERNEL);
 
 	if (!bp_target_quot || !target_quot_size || !quot_scale) {
-		cpr_err(cpr_vreg,
-			"Could not allocate memory for fuse parsing arrays\n");
 		rc = -ENOMEM;
 		goto error;
 	}
@@ -4195,11 +4144,9 @@ static int cpr_fill_override_voltage(struct cpr_regulator *cpr_vreg,
 		goto use_fuse_corner_limits;
 	}
 
-	tmp = kzalloc(size * sizeof(u32), GFP_KERNEL);
-	if (!tmp) {
-		cpr_err(cpr_vreg, "memory alloc failed\n");
+	tmp = kcalloc(size, sizeof(*tmp), GFP_KERNEL);
+	if (!tmp)
 		return -ENOMEM;
-	}
 	rc = of_property_read_u32_array(dev->of_node, prop_name, tmp, size);
 	if (rc < 0) {
 		kfree(tmp);
@@ -4526,90 +4473,6 @@ static int cpr_init_cpr_parameters(struct platform_device *pdev,
 	return 0;
 }
 
-static void cpr_regulator_switch_adj_cpus(struct cpr_regulator *cpr_vreg)
-{
-	cpr_vreg->last_volt = cpr_vreg->adj_cpus_last_volt
-					[cpr_vreg->online_cpus];
-	cpr_vreg->save_ctl = cpr_vreg->adj_cpus_save_ctl[cpr_vreg->online_cpus];
-	cpr_vreg->save_irq = cpr_vreg->adj_cpus_save_irq[cpr_vreg->online_cpus];
-
-	if (cpr_vreg->adj_cpus_quot_adjust)
-		cpr_vreg->quot_adjust = cpr_vreg->adj_cpus_quot_adjust
-						[cpr_vreg->online_cpus];
-	if (cpr_vreg->adj_cpus_open_loop_volt)
-		cpr_vreg->open_loop_volt
-			= cpr_vreg->adj_cpus_open_loop_volt
-				[cpr_vreg->online_cpus];
-	if (cpr_vreg->adj_cpus_open_loop_volt_as_ceiling)
-		cpr_vreg->ceiling_volt = cpr_vreg->open_loop_volt;
-}
-
-static void cpr_regulator_set_online_cpus(struct cpr_regulator *cpr_vreg)
-{
-	int i, j;
-
-	cpr_vreg->online_cpus = 0;
-	get_online_cpus();
-	for_each_online_cpu(i)
-		for (j = 0; j < cpr_vreg->num_adj_cpus; j++)
-			if (i == cpr_vreg->adj_cpus[j])
-				cpr_vreg->online_cpus++;
-	put_online_cpus();
-}
-
-static int cpr_regulator_cpu_callback(struct notifier_block *nb,
-					    unsigned long action, void *data)
-{
-	struct cpr_regulator *cpr_vreg = container_of(nb, struct cpr_regulator,
-					cpu_notifier);
-	int cpu = (long)data;
-	int prev_online_cpus, rc, i;
-
-	action &= ~CPU_TASKS_FROZEN;
-
-	if (action != CPU_UP_PREPARE && action != CPU_UP_CANCELED
-	    && action != CPU_DEAD)
-		return NOTIFY_OK;
-
-	mutex_lock(&cpr_vreg->cpr_mutex);
-
-	if (cpr_vreg->skip_voltage_change_during_suspend
-	    && cpr_vreg->is_cpr_suspended) {
-		/* Do nothing during system suspend/resume */
-		goto done;
-	}
-
-	prev_online_cpus = cpr_vreg->online_cpus;
-	cpr_regulator_set_online_cpus(cpr_vreg);
-
-	if (action == CPU_UP_PREPARE)
-		for (i = 0; i < cpr_vreg->num_adj_cpus; i++)
-			if (cpu == cpr_vreg->adj_cpus[i]) {
-				cpr_vreg->online_cpus++;
-				break;
-			}
-
-	if (cpr_vreg->online_cpus == prev_online_cpus)
-		goto done;
-
-	cpr_debug(cpr_vreg, "adjusting corner %d quotient for %d cpus\n",
-		cpr_vreg->corner, cpr_vreg->online_cpus);
-
-	cpr_regulator_switch_adj_cpus(cpr_vreg);
-
-	if (cpr_vreg->corner) {
-		rc = cpr_regulator_set_voltage(cpr_vreg->rdev,
-				cpr_vreg->corner, true);
-		if (rc)
-			cpr_err(cpr_vreg, "could not update quotient, rc=%d\n",
-				rc);
-	}
-
-done:
-	mutex_unlock(&cpr_vreg->cpr_mutex);
-	return NOTIFY_OK;
-}
-
 static void cpr_pm_disable(struct cpr_regulator *cpr_vreg, bool disable)
 {
 	u32 reg_val;
@@ -4658,316 +4521,6 @@ static int cpr_pm_callback(struct notifier_block *nb,
 	}
 
 	return NOTIFY_OK;
-}
-
-static int cpr_parse_adj_cpus_init_voltage(struct cpr_regulator *cpr_vreg,
-		struct device *dev)
-{
-	int rc, i, j, k, tuple_count, tuple_match, len, offset;
-	int *temp;
-
-	if (!of_find_property(dev->of_node,
-		   "qcom,cpr-online-cpu-virtual-corner-init-voltage-adjustment",
-		   NULL))
-		return 0;
-
-	if (cpr_vreg->cpr_fuse_map_count) {
-		if (cpr_vreg->cpr_fuse_map_match == FUSE_MAP_NO_MATCH) {
-			/* No matching index to use for voltage adjustment. */
-			return 0;
-		}
-		tuple_count = cpr_vreg->cpr_fuse_map_count;
-		tuple_match = cpr_vreg->cpr_fuse_map_match;
-	} else {
-		tuple_count = 1;
-		tuple_match = 0;
-	}
-
-	len = (cpr_vreg->num_adj_cpus + 1) * tuple_count
-		* cpr_vreg->num_corners;
-
-	temp = kzalloc(sizeof(int) * len, GFP_KERNEL);
-	if (!temp) {
-		cpr_err(cpr_vreg, "Could not allocate memory\n");
-		return -ENOMEM;
-	}
-
-	cpr_vreg->adj_cpus_open_loop_volt = devm_kzalloc(dev,
-				sizeof(int *) * (cpr_vreg->num_adj_cpus + 1),
-				GFP_KERNEL);
-	if (!cpr_vreg->adj_cpus_open_loop_volt) {
-		cpr_err(cpr_vreg, "Could not allocate memory\n");
-		rc = -ENOMEM;
-		goto done;
-	}
-
-	cpr_vreg->adj_cpus_open_loop_volt[0] = devm_kzalloc(dev,
-				sizeof(int) * (cpr_vreg->num_adj_cpus + 1)
-				* (cpr_vreg->num_corners + 1),
-				GFP_KERNEL);
-	if (!cpr_vreg->adj_cpus_open_loop_volt[0]) {
-		cpr_err(cpr_vreg, "Could not allocate memory\n");
-		rc = -ENOMEM;
-		goto done;
-	}
-	for (i = 1; i <= cpr_vreg->num_adj_cpus; i++)
-		cpr_vreg->adj_cpus_open_loop_volt[i] =
-			cpr_vreg->adj_cpus_open_loop_volt[0] +
-			i * (cpr_vreg->num_corners + 1);
-
-	rc = of_property_read_u32_array(dev->of_node,
-		"qcom,cpr-online-cpu-virtual-corner-init-voltage-adjustment",
-		temp, len);
-	if (rc) {
-		cpr_err(cpr_vreg, "failed to read qcom,cpr-online-cpu-virtual-corner-init-voltage-adjustment, rc=%d\n",
-			rc);
-		goto done;
-	}
-
-	cpr_debug(cpr_vreg, "Open loop voltage based on number of online CPUs:\n");
-	offset = tuple_match * cpr_vreg->num_corners *
-			(cpr_vreg->num_adj_cpus + 1);
-
-	for (i = 0; i <= cpr_vreg->num_adj_cpus; i++) {
-		for (j = CPR_CORNER_MIN; j <= cpr_vreg->num_corners; j++) {
-			k = j - 1 + offset;
-
-			cpr_vreg->adj_cpus_open_loop_volt[i][j]
-				= cpr_vreg->open_loop_volt[j] + temp[k];
-			cpr_vreg->adj_cpus_open_loop_volt[i][j]
-			    = DIV_ROUND_UP(cpr_vreg->
-					adj_cpus_open_loop_volt[i][j],
-				cpr_vreg->step_volt) * cpr_vreg->step_volt;
-
-			if (cpr_vreg->adj_cpus_open_loop_volt[i][j]
-					> cpr_vreg->ceiling_volt[j])
-				cpr_vreg->adj_cpus_open_loop_volt[i][j]
-					= cpr_vreg->ceiling_volt[j];
-			if (cpr_vreg->adj_cpus_open_loop_volt[i][j]
-					< cpr_vreg->floor_volt[j])
-				cpr_vreg->adj_cpus_open_loop_volt[i][j]
-					= cpr_vreg->floor_volt[j];
-
-			cpr_debug(cpr_vreg, "cpus=%d, corner=%d, volt=%d\n",
-				i, j, cpr_vreg->adj_cpus_open_loop_volt[i][j]);
-		}
-		offset += cpr_vreg->num_corners;
-	}
-
-	cpr_vreg->adj_cpus_open_loop_volt_as_ceiling
-		= of_property_read_bool(dev->of_node,
-			"qcom,cpr-online-cpu-init-voltage-as-ceiling");
-done:
-	kfree(temp);
-	return rc;
-}
-
-static int cpr_parse_adj_cpus_target_quot(struct cpr_regulator *cpr_vreg,
-		struct device *dev)
-{
-	int rc, i, j, k, tuple_count, tuple_match, len, offset;
-	int *temp;
-
-	if (!of_find_property(dev->of_node,
-		   "qcom,cpr-online-cpu-virtual-corner-quotient-adjustment",
-		   NULL))
-		return 0;
-
-	if (cpr_vreg->cpr_fuse_map_count) {
-		if (cpr_vreg->cpr_fuse_map_match == FUSE_MAP_NO_MATCH) {
-			/* No matching index to use for quotient adjustment. */
-			return 0;
-		}
-		tuple_count = cpr_vreg->cpr_fuse_map_count;
-		tuple_match = cpr_vreg->cpr_fuse_map_match;
-	} else {
-		tuple_count = 1;
-		tuple_match = 0;
-	}
-
-	len = (cpr_vreg->num_adj_cpus + 1) * tuple_count
-		* cpr_vreg->num_corners;
-
-	temp = kzalloc(sizeof(int) * len, GFP_KERNEL);
-	if (!temp) {
-		cpr_err(cpr_vreg, "Could not allocate memory\n");
-		return -ENOMEM;
-	}
-
-	cpr_vreg->adj_cpus_quot_adjust = devm_kzalloc(dev,
-				sizeof(int *) * (cpr_vreg->num_adj_cpus + 1),
-				GFP_KERNEL);
-	if (!cpr_vreg->adj_cpus_quot_adjust) {
-		cpr_err(cpr_vreg, "Could not allocate memory\n");
-		rc = -ENOMEM;
-		goto done;
-	}
-
-	cpr_vreg->adj_cpus_quot_adjust[0] = devm_kzalloc(dev,
-				sizeof(int) * (cpr_vreg->num_adj_cpus + 1)
-				* (cpr_vreg->num_corners + 1),
-				GFP_KERNEL);
-	if (!cpr_vreg->adj_cpus_quot_adjust[0]) {
-		cpr_err(cpr_vreg, "Could not allocate memory\n");
-		rc = -ENOMEM;
-		goto done;
-	}
-	for (i = 1; i <= cpr_vreg->num_adj_cpus; i++)
-		cpr_vreg->adj_cpus_quot_adjust[i] =
-			cpr_vreg->adj_cpus_quot_adjust[0] +
-			i * (cpr_vreg->num_corners + 1);
-
-
-	rc = of_property_read_u32_array(dev->of_node,
-		"qcom,cpr-online-cpu-virtual-corner-quotient-adjustment",
-		temp, len);
-	if (rc) {
-		cpr_err(cpr_vreg, "failed to read qcom,cpr-online-cpu-virtual-corner-quotient-adjustment, rc=%d\n",
-			rc);
-		goto done;
-	}
-
-	cpr_debug(cpr_vreg, "Target quotients based on number of online CPUs:\n");
-	offset = tuple_match * cpr_vreg->num_corners *
-			(cpr_vreg->num_adj_cpus + 1);
-
-	for (i = 0; i <= cpr_vreg->num_adj_cpus; i++) {
-		for (j = CPR_CORNER_MIN; j <= cpr_vreg->num_corners; j++) {
-			k = j - 1 + offset;
-
-			cpr_vreg->adj_cpus_quot_adjust[i][j] =
-					cpr_vreg->quot_adjust[j] - temp[k];
-
-			cpr_debug(cpr_vreg, "cpus=%d, corner=%d, quot=%d\n",
-				i, j,
-				cpr_vreg->cpr_fuse_target_quot[
-							cpr_vreg->corner_map[j]]
-					- cpr_vreg->adj_cpus_quot_adjust[i][j]);
-		}
-		offset += cpr_vreg->num_corners;
-	}
-
-done:
-	kfree(temp);
-	return rc;
-}
-
-static int cpr_init_per_cpu_adjustments(struct cpr_regulator *cpr_vreg,
-		struct device *dev)
-{
-	int rc, i, j;
-
-	if (!of_find_property(dev->of_node,
-		   "qcom,cpr-online-cpu-virtual-corner-init-voltage-adjustment",
-		   NULL)
-	    && !of_find_property(dev->of_node,
-		   "qcom,cpr-online-cpu-virtual-corner-quotient-adjustment",
-		   NULL)) {
-		/* No per-online CPU adjustment needed */
-		return 0;
-	}
-
-	if (!cpr_vreg->num_adj_cpus) {
-		cpr_err(cpr_vreg, "qcom,cpr-cpus property missing\n");
-		return -EINVAL;
-	}
-
-	rc = cpr_parse_adj_cpus_init_voltage(cpr_vreg, dev);
-	if (rc) {
-		cpr_err(cpr_vreg, "cpr_parse_adj_cpus_init_voltage failed: rc =%d\n",
-			rc);
-		return rc;
-	}
-
-	rc = cpr_parse_adj_cpus_target_quot(cpr_vreg, dev);
-	if (rc) {
-		cpr_err(cpr_vreg, "cpr_parse_adj_cpus_target_quot failed: rc =%d\n",
-			rc);
-		return rc;
-	}
-
-	cpr_vreg->adj_cpus_last_volt = devm_kzalloc(dev,
-				sizeof(int *) * (cpr_vreg->num_adj_cpus + 1),
-				GFP_KERNEL);
-	cpr_vreg->adj_cpus_save_ctl = devm_kzalloc(dev,
-				sizeof(int *) * (cpr_vreg->num_adj_cpus + 1),
-				GFP_KERNEL);
-	cpr_vreg->adj_cpus_save_irq = devm_kzalloc(dev,
-				sizeof(int *) * (cpr_vreg->num_adj_cpus + 1),
-				GFP_KERNEL);
-	if (!cpr_vreg->adj_cpus_last_volt || !cpr_vreg->adj_cpus_save_ctl ||
-		!cpr_vreg->adj_cpus_save_irq) {
-		cpr_err(cpr_vreg, "Could not allocate memory\n");
-		return -ENOMEM;
-	}
-
-	cpr_vreg->adj_cpus_last_volt[0] = devm_kzalloc(dev,
-				sizeof(int) * (cpr_vreg->num_adj_cpus + 1)
-				* (cpr_vreg->num_corners + 1),
-				GFP_KERNEL);
-	cpr_vreg->adj_cpus_save_ctl[0] = devm_kzalloc(dev,
-				sizeof(int) * (cpr_vreg->num_adj_cpus + 1)
-				* (cpr_vreg->num_corners + 1),
-				GFP_KERNEL);
-	cpr_vreg->adj_cpus_save_irq[0] = devm_kzalloc(dev,
-				sizeof(int) * (cpr_vreg->num_adj_cpus + 1)
-				* (cpr_vreg->num_corners + 1),
-				GFP_KERNEL);
-	if (!cpr_vreg->adj_cpus_last_volt[0] ||
-		!cpr_vreg->adj_cpus_save_ctl[0] ||
-		!cpr_vreg->adj_cpus_save_irq[0]) {
-		cpr_err(cpr_vreg, "Could not allocate memory\n");
-		return -ENOMEM;
-	}
-	for (i = 1; i <= cpr_vreg->num_adj_cpus; i++) {
-		j = i * (cpr_vreg->num_corners + 1);
-		cpr_vreg->adj_cpus_last_volt[i] =
-			cpr_vreg->adj_cpus_last_volt[0] + j;
-		cpr_vreg->adj_cpus_save_ctl[i] =
-			cpr_vreg->adj_cpus_save_ctl[0] + j;
-		cpr_vreg->adj_cpus_save_irq[i] =
-			cpr_vreg->adj_cpus_save_irq[0] + j;
-	}
-
-
-	for (i = 0; i <= cpr_vreg->num_adj_cpus; i++) {
-		for (j = CPR_CORNER_MIN; j <= cpr_vreg->num_corners; j++) {
-
-			cpr_vreg->adj_cpus_save_ctl[i][j] =
-				cpr_vreg->save_ctl[j];
-			cpr_vreg->adj_cpus_save_irq[i][j] =
-				cpr_vreg->save_irq[j];
-
-			cpr_vreg->adj_cpus_last_volt[i][j]
-				= cpr_vreg->adj_cpus_open_loop_volt
-				? cpr_vreg->adj_cpus_open_loop_volt[i][j]
-					: cpr_vreg->open_loop_volt[j];
-		}
-	}
-
-	cpr_regulator_set_online_cpus(cpr_vreg);
-	cpr_debug(cpr_vreg, "%d cpus online\n", cpr_vreg->online_cpus);
-
-	devm_kfree(dev, cpr_vreg->last_volt);
-	devm_kfree(dev, cpr_vreg->save_ctl);
-	devm_kfree(dev, cpr_vreg->save_irq);
-	if (cpr_vreg->adj_cpus_quot_adjust)
-		devm_kfree(dev, cpr_vreg->quot_adjust);
-	if (cpr_vreg->adj_cpus_open_loop_volt)
-		devm_kfree(dev, cpr_vreg->open_loop_volt);
-	if (cpr_vreg->adj_cpus_open_loop_volt_as_ceiling)
-		devm_kfree(dev, cpr_vreg->ceiling_volt);
-
-	cpr_regulator_switch_adj_cpus(cpr_vreg);
-
-	cpr_vreg->skip_voltage_change_during_suspend
-			= of_property_read_bool(dev->of_node,
-				"qcom,cpr-skip-voltage-change-during-suspend");
-
-	cpr_vreg->cpu_notifier.notifier_call = cpr_regulator_cpu_callback;
-	register_hotcpu_notifier(&cpr_vreg->cpu_notifier);
-
-	return rc;
 }
 
 static int cpr_init_pm_notification(struct cpr_regulator *cpr_vreg)
@@ -5022,16 +4575,52 @@ static int cpr_rpm_apc_init(struct platform_device *pdev,
 	cpr_vreg->rpm_apc_corner_map = devm_kzalloc(&pdev->dev,
 		(cpr_vreg->num_corners + 1) *
 		sizeof(*cpr_vreg->rpm_apc_corner_map), GFP_KERNEL);
-	if (!cpr_vreg->rpm_apc_corner_map) {
-		cpr_err(cpr_vreg, "Can't allocate memory for cpr_vreg->rpm_apc_corner_map\n");
-			return -ENOMEM;
-	}
+	if (!cpr_vreg->rpm_apc_corner_map)
+		return -ENOMEM;
 
 	rc = of_property_read_u32_array(of_node, "qcom,rpm-apc-corner-map",
 		&cpr_vreg->rpm_apc_corner_map[1], cpr_vreg->num_corners);
 	if (rc)
 		cpr_err(cpr_vreg, "read qcom,rpm-apc-corner-map failed, rc = %d\n",
 				rc);
+
+	return rc;
+}
+
+static int cpr_parse_vdd_mode_config(struct platform_device *pdev,
+			       struct cpr_regulator *cpr_vreg)
+{
+	int rc, len = 0, i, mode;
+	struct device_node *of_node = pdev->dev.of_node;
+	const char *prop_str = "qcom,cpr-vdd-mode-map";
+
+	if (!of_find_property(of_node, prop_str, &len))
+		return 0;
+
+	if (len != cpr_vreg->num_corners * sizeof(u32)) {
+		cpr_err(cpr_vreg, "%s length=%d is invalid: required:%d\n",
+			prop_str, len, cpr_vreg->num_corners);
+		return -EINVAL;
+	}
+
+	cpr_vreg->vdd_mode_map = devm_kcalloc(&pdev->dev,
+						cpr_vreg->num_corners + 1,
+						sizeof(*cpr_vreg->vdd_mode_map),
+						GFP_KERNEL);
+	if (!cpr_vreg->vdd_mode_map)
+		return -ENOMEM;
+
+	for (i = 0; i < cpr_vreg->num_corners; i++) {
+		rc = of_property_read_u32_index(of_node, prop_str, i, &mode);
+		if (rc) {
+			cpr_err(cpr_vreg, "read %s index %d failed, rc = %d\n",
+				prop_str, i, rc);
+			return rc;
+		}
+		cpr_vreg->vdd_mode_map[i + CPR_CORNER_MIN]
+					= mode ? REGULATOR_MODE_NORMAL
+						: REGULATOR_MODE_IDLE;
+	}
 
 	return rc;
 }
@@ -5098,145 +4687,6 @@ static int cpr_vsens_init(struct platform_device *pdev,
 	}
 
 	return rc;
-}
-
-static int cpr_disable_on_temp(struct cpr_regulator *cpr_vreg, bool disable)
-{
-	int rc = 0;
-
-	mutex_lock(&cpr_vreg->cpr_mutex);
-
-	if (cpr_vreg->cpr_fuse_disable ||
-		(cpr_vreg->cpr_thermal_disable == disable))
-		goto out;
-
-	cpr_vreg->cpr_thermal_disable = disable;
-
-	if (cpr_vreg->enable && cpr_vreg->corner) {
-		if (disable) {
-			cpr_debug(cpr_vreg, "Disabling CPR - below temperature threshold [%d]\n",
-					cpr_vreg->cpr_disable_temp_threshold);
-			/* disable CPR and force open-loop */
-			cpr_ctl_disable(cpr_vreg);
-			rc = cpr_regulator_set_voltage(cpr_vreg->rdev,
-						cpr_vreg->corner, false);
-			if (rc < 0)
-				cpr_err(cpr_vreg, "Failed to set voltage, rc=%d\n",
-						rc);
-		} else {
-			/* enable CPR */
-			cpr_debug(cpr_vreg, "Enabling CPR - above temperature thresold [%d]\n",
-					cpr_vreg->cpr_enable_temp_threshold);
-			rc = cpr_regulator_set_voltage(cpr_vreg->rdev,
-						cpr_vreg->corner, true);
-			if (rc < 0)
-				cpr_err(cpr_vreg, "Failed to set voltage, rc=%d\n",
-						rc);
-		}
-	}
-out:
-	mutex_unlock(&cpr_vreg->cpr_mutex);
-	return rc;
-}
-
-static void tsens_threshold_notify(struct therm_threshold *tsens_cb_data)
-{
-	struct threshold_info *info = tsens_cb_data->parent;
-	struct cpr_regulator *cpr_vreg = container_of(info,
-			struct cpr_regulator, tsens_threshold_config);
-	int rc = 0;
-
-	cpr_debug(cpr_vreg, "Triggered tsens-notification trip_type=%d for thermal_zone_id=%d\n",
-		tsens_cb_data->trip_triggered, tsens_cb_data->sensor_id);
-
-	switch (tsens_cb_data->trip_triggered) {
-	case THERMAL_TRIP_CONFIGURABLE_HI:
-		rc = cpr_disable_on_temp(cpr_vreg, false);
-		if (rc < 0)
-			cpr_err(cpr_vreg, "Failed to enable CPR, rc=%d\n", rc);
-		break;
-	case THERMAL_TRIP_CONFIGURABLE_LOW:
-		rc = cpr_disable_on_temp(cpr_vreg, true);
-		if (rc < 0)
-			cpr_err(cpr_vreg, "Failed to disable CPR, rc=%d\n", rc);
-		break;
-	default:
-		cpr_debug(cpr_vreg, "trip-type %d not supported\n",
-				tsens_cb_data->trip_triggered);
-		break;
-	}
-
-	if (tsens_cb_data->cur_state != tsens_cb_data->trip_triggered) {
-		rc = sensor_mgr_set_threshold(tsens_cb_data->sensor_id,
-						tsens_cb_data->threshold);
-		if (rc < 0)
-			cpr_err(cpr_vreg,
-			"Failed to set temp. threshold, rc=%d\n", rc);
-		else
-			tsens_cb_data->cur_state =
-				tsens_cb_data->trip_triggered;
-	}
-}
-
-static int cpr_check_tsens(struct cpr_regulator *cpr_vreg)
-{
-	int rc = 0;
-	struct tsens_device tsens_dev;
-	unsigned long temp = 0;
-	bool disable;
-
-	if (tsens_is_ready() > 0) {
-		tsens_dev.sensor_num = cpr_vreg->tsens_id;
-		rc = tsens_get_temp(&tsens_dev, &temp);
-		if (rc < 0) {
-			cpr_err(cpr_vreg, "Faled to read tsens, rc=%d\n", rc);
-			return rc;
-		}
-
-		disable = (int) temp <= cpr_vreg->cpr_disable_temp_threshold;
-		rc = cpr_disable_on_temp(cpr_vreg, disable);
-		if (rc)
-			cpr_err(cpr_vreg, "Failed to %s CPR, rc=%d\n",
-					disable ? "disable" : "enable", rc);
-	}
-
-	return rc;
-}
-
-static int cpr_thermal_init(struct cpr_regulator *cpr_vreg)
-{
-	int rc;
-	struct device_node *of_node = cpr_vreg->dev->of_node;
-
-	if (!of_find_property(of_node, "qcom,cpr-thermal-sensor-id", NULL))
-		return 0;
-
-	CPR_PROP_READ_U32(cpr_vreg, of_node, "cpr-thermal-sensor-id",
-			  &cpr_vreg->tsens_id, rc);
-	if (rc < 0)
-		return rc;
-
-	CPR_PROP_READ_U32(cpr_vreg, of_node, "cpr-disable-temp-threshold",
-			  &cpr_vreg->cpr_disable_temp_threshold, rc);
-	if (rc < 0)
-		return rc;
-
-	CPR_PROP_READ_U32(cpr_vreg, of_node, "cpr-enable-temp-threshold",
-			  &cpr_vreg->cpr_enable_temp_threshold, rc);
-	if (rc < 0)
-		return rc;
-
-	if (cpr_vreg->cpr_disable_temp_threshold >=
-				cpr_vreg->cpr_enable_temp_threshold) {
-		cpr_err(cpr_vreg, "Invalid temperature threshold cpr_disable_temp[%d] >= cpr_enable_temp[%d]\n",
-				cpr_vreg->cpr_disable_temp_threshold,
-				cpr_vreg->cpr_enable_temp_threshold);
-		return -EINVAL;
-	}
-
-	cpr_vreg->cpr_disable_on_temperature = true;
-
-	return 0;
 }
 
 static int cpr_init_cpr(struct platform_device *pdev,
@@ -5362,10 +4812,8 @@ static int cpr_remap_efuse_data(struct platform_device *pdev,
 	}
 
 	temp = kzalloc(sizeof(*temp) * size * 4, GFP_KERNEL);
-	if (!temp) {
-		cpr_err(cpr_vreg, "temp memory allocation failed\n");
+	if (!temp)
 		return -ENOMEM;
-	}
 
 	rc = of_property_read_u32_array(of_node, "qcom,fuse-remap-source", temp,
 					size * 4);
@@ -5387,7 +4835,6 @@ static int cpr_remap_efuse_data(struct platform_device *pdev,
 		sizeof(*cpr_vreg->remapped_row) * cpr_vreg->num_remapped_rows,
 		GFP_KERNEL);
 	if (!cpr_vreg->remapped_row) {
-		cpr_err(cpr_vreg, "remapped_row memory allocation failed\n");
 		rc = -ENOMEM;
 		goto done;
 	}
@@ -5444,7 +4891,7 @@ static int cpr_efuse_init(struct platform_device *pdev,
 	}
 
 	cpr_vreg->efuse_addr = res->start;
-	len = res->end - res->start + 1;
+	len = resource_size(res);
 
 	cpr_info(cpr_vreg, "efuse_addr = %pa (len=0x%x)\n", &res->start, len);
 
@@ -5581,10 +5028,8 @@ static int cpr_fuse_corner_array_alloc(struct device *dev,
 	    || cpr_vreg->fuse_ceiling_volt == NULL
 	    || cpr_vreg->fuse_floor_volt == NULL
 	    || cpr_vreg->cpr_fuse_target_quot == NULL
-	    || cpr_vreg->step_quotient == NULL) {
-		cpr_err(cpr_vreg, "Could not allocate memory for CPR arrays\n");
+	    || cpr_vreg->step_quotient == NULL)
 		return -ENOMEM;
-	}
 
 	return 0;
 }
@@ -5746,7 +5191,7 @@ static int cpr_get_cpr_ceiling(void *data, u64 *val)
 
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(cpr_ceiling_fops, cpr_get_cpr_ceiling, NULL,
+DEFINE_DEBUGFS_ATTRIBUTE(cpr_ceiling_fops, cpr_get_cpr_ceiling, NULL,
 			"%llu\n");
 
 static int cpr_get_cpr_floor(void *data, u64 *val)
@@ -5757,7 +5202,7 @@ static int cpr_get_cpr_floor(void *data, u64 *val)
 
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(cpr_floor_fops, cpr_get_cpr_floor, NULL,
+DEFINE_DEBUGFS_ATTRIBUTE(cpr_floor_fops, cpr_get_cpr_floor, NULL,
 			"%llu\n");
 
 static int cpr_get_cpr_max_ceiling(void *data, u64 *val)
@@ -5768,15 +5213,8 @@ static int cpr_get_cpr_max_ceiling(void *data, u64 *val)
 
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(cpr_max_ceiling_fops, cpr_get_cpr_max_ceiling, NULL,
+DEFINE_DEBUGFS_ATTRIBUTE(cpr_max_ceiling_fops, cpr_get_cpr_max_ceiling, NULL,
 			"%llu\n");
-
-static int cpr_debug_info_open(struct inode *inode, struct file *file)
-{
-	file->private_data = inode->i_private;
-
-	return 0;
-}
 
 static ssize_t cpr_debug_info_read(struct file *file, char __user *buff,
 				size_t count, loff_t *ppos)
@@ -5796,65 +5234,65 @@ static ssize_t cpr_debug_info_read(struct file *file, char __user *buff,
 
 	fuse_corner = cpr_vreg->corner_map[cpr_vreg->corner];
 
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 		"corner = %d, current_volt = %d uV\n",
 		cpr_vreg->corner, cpr_vreg->last_volt[cpr_vreg->corner]);
 	ret += len;
 
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			"fuse_corner = %d, current_volt = %d uV\n",
 			fuse_corner, cpr_vreg->last_volt[cpr_vreg->corner]);
 	ret += len;
 
 	ro_sel = cpr_vreg->cpr_fuse_ro_sel[fuse_corner];
 	gcnt = cpr_read(cpr_vreg, REG_RBCPR_GCNT_TARGET(ro_sel));
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			"rbcpr_gcnt_target (%u) = 0x%02X\n", ro_sel, gcnt);
 	ret += len;
 
 	ctl = cpr_read(cpr_vreg, REG_RBCPR_CTL);
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			"rbcpr_ctl = 0x%02X\n", ctl);
 	ret += len;
 
 	irq_status = cpr_read(cpr_vreg, REG_RBIF_IRQ_STATUS);
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			"rbcpr_irq_status = 0x%02X\n", irq_status);
 	ret += len;
 
 	reg = cpr_read(cpr_vreg, REG_RBCPR_RESULT_0);
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			"rbcpr_result_0 = 0x%02X\n", reg);
 	ret += len;
 
 	step_dn = reg & 0x01;
 	step_up = (reg >> RBCPR_RESULT0_STEP_UP_SHIFT) & 0x01;
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			"  [step_dn = %u", step_dn);
 	ret += len;
 
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			", step_up = %u", step_up);
 	ret += len;
 
 	error_steps = (reg >> RBCPR_RESULT0_ERROR_STEPS_SHIFT)
 				& RBCPR_RESULT0_ERROR_STEPS_MASK;
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			", error_steps = %u", error_steps);
 	ret += len;
 
 	error = (reg >> RBCPR_RESULT0_ERROR_SHIFT) & RBCPR_RESULT0_ERROR_MASK;
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			", error = %u", error);
 	ret += len;
 
 	error_lt0 = (reg >> RBCPR_RESULT0_ERROR_LT0_SHIFT) & 0x01;
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			", error_lt_0 = %u", error_lt0);
 	ret += len;
 
 	busy = (reg >> RBCPR_RESULT0_BUSY_SHIFT) & 0x01;
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			", busy = %u]\n", busy);
 	ret += len;
 	mutex_unlock(&cpr_vreg->cpr_mutex);
@@ -5865,16 +5303,9 @@ static ssize_t cpr_debug_info_read(struct file *file, char __user *buff,
 }
 
 static const struct file_operations cpr_debug_info_fops = {
-	.open = cpr_debug_info_open,
+	.open = simple_open,
 	.read = cpr_debug_info_read,
 };
-
-static int cpr_aging_debug_info_open(struct inode *inode, struct file *file)
-{
-	file->private_data = inode->i_private;
-
-	return 0;
-}
 
 static ssize_t cpr_aging_debug_info_read(struct file *file, char __user *buff,
 				size_t count, loff_t *ppos)
@@ -5891,26 +5322,26 @@ static ssize_t cpr_aging_debug_info_read(struct file *file, char __user *buff,
 
 	mutex_lock(&cpr_vreg->cpr_mutex);
 
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			"aging_adj_volt = [");
 	ret += len;
 
 	for (i = CPR_FUSE_CORNER_MIN; i <= cpr_vreg->num_fuse_corners; i++) {
-		len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+		len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 				" %d", aging_info->voltage_adjust[i]);
 		ret += len;
 	}
 
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			" ]uV\n");
 	ret += len;
 
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			"aging_measurement_done = %s\n",
 			aging_info->cpr_aging_done ? "true" : "false");
 	ret += len;
 
-	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+	len = scnprintf(debugfs_buf + ret, PAGE_SIZE - ret,
 			"aging_measurement_error = %s\n",
 			aging_info->cpr_aging_error ? "true" : "false");
 	ret += len;
@@ -5923,7 +5354,7 @@ static ssize_t cpr_aging_debug_info_read(struct file *file, char __user *buff,
 }
 
 static const struct file_operations cpr_aging_debug_info_fops = {
-	.open = cpr_aging_debug_info_open,
+	.open = simple_open,
 	.read = cpr_aging_debug_info_read,
 };
 
@@ -5943,43 +5374,43 @@ static void cpr_debugfs_init(struct cpr_regulator *cpr_vreg)
 		return;
 	}
 
-	temp = debugfs_create_file("debug_info", S_IRUGO, cpr_vreg->debugfs,
+	temp = debugfs_create_file("debug_info", 0444, cpr_vreg->debugfs,
 					cpr_vreg, &cpr_debug_info_fops);
 	if (IS_ERR_OR_NULL(temp)) {
 		cpr_err(cpr_vreg, "debug_info node creation failed\n");
 		return;
 	}
 
-	temp = debugfs_create_file("cpr_enable", S_IRUGO | S_IWUSR,
-			cpr_vreg->debugfs, cpr_vreg, &cpr_enable_fops);
+	temp = debugfs_create_file("cpr_enable", 0644, cpr_vreg->debugfs,
+					cpr_vreg, &cpr_enable_fops);
 	if (IS_ERR_OR_NULL(temp)) {
 		cpr_err(cpr_vreg, "cpr_enable node creation failed\n");
 		return;
 	}
 
-	temp = debugfs_create_file("cpr_ceiling", S_IRUGO,
-			cpr_vreg->debugfs, cpr_vreg, &cpr_ceiling_fops);
+	temp = debugfs_create_file("cpr_ceiling", 0444, cpr_vreg->debugfs,
+					cpr_vreg, &cpr_ceiling_fops);
 	if (IS_ERR_OR_NULL(temp)) {
 		cpr_err(cpr_vreg, "cpr_ceiling node creation failed\n");
 		return;
 	}
 
-	temp = debugfs_create_file("cpr_floor", S_IRUGO,
-			cpr_vreg->debugfs, cpr_vreg, &cpr_floor_fops);
+	temp = debugfs_create_file("cpr_floor", 0444, cpr_vreg->debugfs,
+					cpr_vreg, &cpr_floor_fops);
 	if (IS_ERR_OR_NULL(temp)) {
 		cpr_err(cpr_vreg, "cpr_floor node creation failed\n");
 		return;
 	}
 
-	temp = debugfs_create_file("cpr_max_ceiling", S_IRUGO,
-			cpr_vreg->debugfs, cpr_vreg, &cpr_max_ceiling_fops);
+	temp = debugfs_create_file("cpr_max_ceiling", 0444, cpr_vreg->debugfs,
+					cpr_vreg, &cpr_max_ceiling_fops);
 	if (IS_ERR_OR_NULL(temp)) {
 		cpr_err(cpr_vreg, "cpr_max_ceiling node creation failed\n");
 		return;
 	}
 
 	if (cpr_vreg->aging_info) {
-		temp = debugfs_create_file("aging_debug_info", S_IRUGO,
+		temp = debugfs_create_file("aging_debug_info", 0444,
 					cpr_vreg->debugfs, cpr_vreg,
 					&cpr_aging_debug_info_fops);
 		if (IS_ERR_OR_NULL(temp)) {
@@ -6022,6 +5453,35 @@ static void cpr_debugfs_base_remove(void)
 
 #endif
 
+/**
+ * cpr_panic_callback() - panic notification callback function. This function
+ *		is invoked when a kernel panic occurs.
+ * @nfb:	Notifier block pointer of CPR regulator
+ * @event:	Value passed unmodified to notifier function
+ * @data:	Pointer passed unmodified to notifier function
+ *
+ * Return: NOTIFY_OK
+ */
+static int cpr_panic_callback(struct notifier_block *nfb,
+			unsigned long event, void *data)
+{
+	struct cpr_regulator *cpr_vreg = container_of(nfb,
+				struct cpr_regulator, panic_notifier);
+	int corner, fuse_corner, volt;
+
+	corner = cpr_vreg->corner;
+	fuse_corner = cpr_vreg->corner_map[corner];
+	if (cpr_is_allowed(cpr_vreg))
+		volt = cpr_vreg->last_volt[corner];
+	else
+		volt = cpr_vreg->open_loop_volt[corner];
+
+	cpr_err(cpr_vreg, "[corner:%d, fuse_corner:%d] = %d uV\n",
+		corner, fuse_corner, volt);
+
+	return NOTIFY_OK;
+}
+
 static int cpr_regulator_probe(struct platform_device *pdev)
 {
 	struct regulator_config reg_config = {};
@@ -6036,25 +5496,21 @@ static int cpr_regulator_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	init_data = of_get_regulator_init_data(&pdev->dev, pdev->dev.of_node);
+	cpr_vreg = devm_kzalloc(&pdev->dev, sizeof(struct cpr_regulator),
+				GFP_KERNEL);
+	if (!cpr_vreg)
+		return -ENOMEM;
+
+	init_data = of_get_regulator_init_data(&pdev->dev, pdev->dev.of_node,
+						&cpr_vreg->rdesc);
 	if (!init_data) {
 		dev_err(dev, "regulator init data is missing\n");
 		return -EINVAL;
-	} else {
-		init_data->constraints.input_uV
-			= init_data->constraints.max_uV;
-		init_data->constraints.valid_ops_mask
-			|= REGULATOR_CHANGE_VOLTAGE | REGULATOR_CHANGE_STATUS;
 	}
+	init_data->constraints.input_uV = init_data->constraints.max_uV;
+	init_data->constraints.valid_ops_mask
+		|= REGULATOR_CHANGE_VOLTAGE | REGULATOR_CHANGE_STATUS;
 
-	cpr_vreg = devm_kzalloc(&pdev->dev, sizeof(struct cpr_regulator),
-				GFP_KERNEL);
-	if (!cpr_vreg) {
-		dev_err(dev, "Can't allocate cpr_regulator memory\n");
-		return -ENOMEM;
-	}
-
-	cpr_vreg->dev = &pdev->dev;
 	cpr_vreg->rdesc.name = init_data->constraints.name;
 	if (cpr_vreg->rdesc.name == NULL) {
 		dev_err(dev, "regulator-name missing\n");
@@ -6067,7 +5523,7 @@ static int cpr_regulator_probe(struct platform_device *pdev)
 
 	rc = cpr_mem_acc_init(pdev, cpr_vreg);
 	if (rc) {
-		cpr_err(cpr_vreg, "mem_acc intialization error rc=%d\n", rc);
+		cpr_err(cpr_vreg, "mem_acc initialization error rc=%d\n", rc);
 		return rc;
 	}
 
@@ -6151,9 +5607,9 @@ static int cpr_regulator_probe(struct platform_device *pdev)
 		return rc;
 	}
 
-	rc = cpr_thermal_init(cpr_vreg);
+	rc = cpr_parse_vdd_mode_config(pdev, cpr_vreg);
 	if (rc) {
-		cpr_err(cpr_vreg, "Thermal intialization failed rc=%d\n", rc);
+		cpr_err(cpr_vreg, "vdd-mode parsing failed, rc=%d\n", rc);
 		return rc;
 	}
 
@@ -6165,14 +5621,6 @@ static int cpr_regulator_probe(struct platform_device *pdev)
 				"cpr_init_pm_notification failed rc=%d\n", rc);
 			return rc;
 		}
-	}
-
-	/* Load per-online CPU adjustment data */
-	rc = cpr_init_per_cpu_adjustments(cpr_vreg, &pdev->dev);
-	if (rc) {
-		cpr_err(cpr_vreg, "cpr_init_per_cpu_adjustments failed: rc=%d\n",
-			rc);
-		goto err_out;
 	}
 
 	/* Parse dependency parameters */
@@ -6216,16 +5664,10 @@ static int cpr_regulator_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, cpr_vreg);
 	cpr_debugfs_init(cpr_vreg);
 
-	if (cpr_vreg->cpr_disable_on_temperature) {
-		rc = cpr_check_tsens(cpr_vreg);
-		if (rc < 0) {
-			cpr_err(cpr_vreg, "Unable to config CPR on tsens, rc=%d\n",
-									rc);
-			cpr_apc_exit(cpr_vreg);
-			cpr_debugfs_remove(cpr_vreg);
-			return rc;
-		}
-	}
+	/* Register panic notification call back */
+	cpr_vreg->panic_notifier.notifier_call = cpr_panic_callback;
+	atomic_notifier_chain_register(&panic_notifier_list,
+			&cpr_vreg->panic_notifier);
 
 	mutex_lock(&cpr_regulator_list_mutex);
 	list_add(&cpr_vreg->list, &cpr_regulator_list);
@@ -6254,12 +5696,8 @@ static int cpr_regulator_remove(struct platform_device *pdev)
 		list_del(&cpr_vreg->list);
 		mutex_unlock(&cpr_regulator_list_mutex);
 
-		if (cpr_vreg->cpu_notifier.notifier_call)
-			unregister_hotcpu_notifier(&cpr_vreg->cpu_notifier);
-
-		if (cpr_vreg->cpr_disable_on_temperature)
-			sensor_mgr_remove_threshold(
-				&cpr_vreg->tsens_threshold_config);
+		atomic_notifier_chain_unregister(&panic_notifier_list,
+			&cpr_vreg->panic_notifier);
 
 		cpr_apc_exit(cpr_vreg);
 		cpr_debugfs_remove(cpr_vreg);
@@ -6269,72 +5707,22 @@ static int cpr_regulator_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id cpr_regulator_match_table[] = {
+static const struct of_device_id cpr_regulator_match_table[] = {
 	{ .compatible = CPR_REGULATOR_DRIVER_NAME, },
 	{}
 };
+MODULE_DEVICE_TABLE(of, cpr_regulator_match_table);
 
 static struct platform_driver cpr_regulator_driver = {
 	.driver		= {
 		.name	= CPR_REGULATOR_DRIVER_NAME,
 		.of_match_table = cpr_regulator_match_table,
-		.owner = THIS_MODULE,
 	},
 	.probe		= cpr_regulator_probe,
 	.remove		= cpr_regulator_remove,
 	.suspend	= cpr_regulator_suspend,
 	.resume		= cpr_regulator_resume,
 };
-
-static int initialize_tsens_monitor(struct cpr_regulator *cpr_vreg)
-{
-	int rc;
-
-	rc = cpr_check_tsens(cpr_vreg);
-	if (rc < 0) {
-		cpr_err(cpr_vreg, "Unable to check tsens, rc=%d\n", rc);
-		return rc;
-	}
-
-	rc = sensor_mgr_init_threshold(&cpr_vreg->tsens_threshold_config,
-				cpr_vreg->tsens_id,
-				cpr_vreg->cpr_enable_temp_threshold, /* high */
-				cpr_vreg->cpr_disable_temp_threshold, /* low */
-				tsens_threshold_notify);
-	if (rc < 0) {
-		cpr_err(cpr_vreg, "Failed to init tsens monitor, rc=%d\n", rc);
-		return rc;
-	}
-
-	rc = sensor_mgr_convert_id_and_set_threshold(
-			&cpr_vreg->tsens_threshold_config);
-	if (rc < 0)
-		cpr_err(cpr_vreg, "Failed to set tsens threshold, rc=%d\n",
-					rc);
-
-	return rc;
-}
-
-int __init cpr_regulator_late_init(void)
-{
-	int rc;
-	struct cpr_regulator *cpr_vreg;
-
-	mutex_lock(&cpr_regulator_list_mutex);
-
-	list_for_each_entry(cpr_vreg, &cpr_regulator_list, list) {
-		if (cpr_vreg->cpr_disable_on_temperature) {
-			rc = initialize_tsens_monitor(cpr_vreg);
-			if (rc)
-				cpr_err(cpr_vreg, "Failed to initialize temperature monitor, rc=%d\n",
-					rc);
-		}
-	}
-
-	mutex_unlock(&cpr_regulator_list_mutex);
-	return 0;
-}
-late_initcall(cpr_regulator_late_init);
 
 /**
  * cpr_regulator_init() - register cpr-regulator driver
@@ -6348,9 +5736,8 @@ int __init cpr_regulator_init(void)
 
 	if (initialized)
 		return 0;
-	else
-		initialized = true;
 
+	initialized = true;
 	cpr_debugfs_base_init();
 	return platform_driver_register(&cpr_regulator_driver);
 }

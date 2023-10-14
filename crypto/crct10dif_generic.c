@@ -104,10 +104,7 @@ static struct shash_alg alg = {
 
 static int __init crct10dif_mod_init(void)
 {
-	int ret;
-
-	ret = crypto_register_shash(&alg);
-	return ret;
+	return crypto_register_shash(&alg);
 }
 
 static void __exit crct10dif_mod_fini(void)

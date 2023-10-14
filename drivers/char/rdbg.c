@@ -1,5 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,9 +19,12 @@
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/of_gpio.h>
-#include <soc/qcom/smsm.h>
+#include <linux/soc/qcom/smem.h>
 #include <linux/uaccess.h>
 #include <linux/interrupt.h>
+#include <linux/soc/qcom/smem_state.h>
+#include <linux/of_irq.h>
+#include <linux/of_platform.h>
 
 #define SMP2P_NUM_PROCS				16
 #define MAX_RETRIES				20
@@ -31,6 +35,8 @@
 #define SMQ_MAGIC_INIT				0xFF00FF00
 #define SMQ_MAGIC_PRODUCER			(SMQ_MAGIC_INIT | 0x1)
 #define SMQ_MAGIC_CONSUMER			(SMQ_MAGIC_INIT | 0x2)
+
+#define SMEM_LC_DEBUGGER 470
 
 enum SMQ_STATUS {
 	SMQ_SUCCESS    =  0,
@@ -101,6 +107,8 @@ struct smq {
 struct gpio_info {
 	int gpio_base_id;
 	int irq_base_id;
+	unsigned int smem_bit;
+	struct qcom_smem_state *smem_state;
 };
 
 struct rdbg_data {
@@ -126,12 +134,13 @@ struct rdbg_device {
 	struct rdbg_data *rdbg_data;
 };
 
+
+int registers[32] = {0};
 static struct rdbg_device g_rdbg_instance = {
-	{ {0} },
-	NULL,
-	0,
-	SMP2P_NUM_PROCS,
-	NULL
+	.class = NULL,
+	.dev_no = 0,
+	.num_devices = SMP2P_NUM_PROCS,
+	.rdbg_data = NULL,
 };
 
 struct processor_specific_info {
@@ -156,7 +165,7 @@ static struct processor_specific_info proc_info[SMP2P_NUM_PROCS] = {
 		{NULL},	/*EMPTY*/
 		{NULL},	/*EMPTY*/
 		{NULL},	/*EMPTY*/
-		{NULL}		/*SMP2P_REMOTE_MOCK_PROC*/
+		{NULL}	/*SMP2P_REMOTE_MOCK_PROC*/
 };
 
 static int smq_blockmap_get(struct smq_block_map *block_map,
@@ -281,8 +290,8 @@ static int smq_free(struct smq *smq, void *data)
 
 	node.index_block = (uint16_t)index_block;
 	node.num_blocks = 0;
-	*((struct smq_node *)(smq->in->free + smq->in->
-		s.index_free_write)) = node;
+	*((struct smq_node *)(smq->in->free +
+		smq->in->s.index_free_write)) = node;
 
 	smq->in->s.index_free_write = (smq->in->s.index_free_write + 1)
 		% smq->num_blocks;
@@ -320,10 +329,11 @@ static int smq_receive(struct smq *smq, void **pp, int *pnsize, int *pbmore)
 	*pp = smq->blocks + (node->index_block * SM_BLOCKSIZE);
 	*pnsize = SM_BLOCKSIZE * node->num_blocks;
 
-	/* Ensure that the reads and writes are updated in the memory
-	* when they are done and not cached. Also, ensure that the reads
-	* and writes are not reordered as they are shared between two cores.
-	*/
+	/*
+	 * Ensure that the reads and writes are updated in the memory
+	 * when they are done and not cached. Also, ensure that the reads
+	 * and writes are not reordered as they are shared between two cores.
+	 */
 	rmb();
 	if (smq->in->s.index_sent_read != smq->out->s.index_sent_write)
 		more = 1;
@@ -363,12 +373,13 @@ static int smq_alloc_send(struct smq *smq, const uint8_t *pcb, int nsize)
 
 				smq_blockmap_put(&smq->block_map,
 					node->index_block);
-				/* Ensure that the reads and writes are
-				* updated in the memory when they are done
-				* and not cached. Also, ensure that the reads
-				* and writes are not reordered as they are
-				* shared between two cores.
-				*/
+				/*
+				 * Ensure that the reads and writes are
+				 * updated in the memory when they are done
+				 * and not cached. Also, ensure that the reads
+				 * and writes are not reordered as they are
+				 * shared between two cores.
+				 */
 				rmb();
 			}
 		}
@@ -483,7 +494,7 @@ static int check_subsystem_debug_enabled(void *base_addr, int size)
 	smq.in = (struct smq_in *)pb;
 
 	if (smq.in->s.init != SMQ_MAGIC_CONSUMER) {
-		pr_err("%s, smq in consumer not initialized", __func__);
+		pr_err("%s, smq in consumer not initialized\n", __func__);
 		err = -ECOMM;
 	}
 
@@ -726,23 +737,22 @@ bail:
 
 static void send_interrupt_to_subsystem(struct rdbg_data *rdbgdata)
 {
-	int offset = rdbgdata->gpio_out_offset;
-	int val = 1 ^ gpio_get_value(rdbgdata->out.gpio_base_id + offset);
+	unsigned int offset = rdbgdata->gpio_out_offset;
+	unsigned int val;
 
-	gpio_set_value(rdbgdata->out.gpio_base_id + offset, val);
+	val = (registers[offset]) ^ (BIT(rdbgdata->out.smem_bit+offset));
+	qcom_smem_state_update_bits(rdbgdata->out.smem_state,
+				BIT(rdbgdata->out.smem_bit+offset), val);
+	registers[offset] = val;
 	rdbgdata->gpio_out_offset = (offset + 1) % 32;
-
-	dev_dbg(rdbgdata->device, "%s: sent interrupt %d to subsystem",
-		__func__, val);
 }
 
 static irqreturn_t on_interrupt_from(int irq, void *ptr)
 {
 	struct rdbg_data *rdbgdata = (struct rdbg_data *) ptr;
 
-	dev_dbg(rdbgdata->device, "%s: Received interrupt %d from subsystem",
+	dev_dbg(rdbgdata->device, "%s: Received interrupt %d from subsystem\n",
 		__func__, irq);
-
 	complete(&(rdbgdata->work));
 	return IRQ_HANDLED;
 }
@@ -756,7 +766,7 @@ static int initialize_smq(struct rdbg_data *rdbgdata)
 
 	if (smq_ctor(&(rdbgdata->producer_smrb), (void *)(rdbgdata->smem_addr),
 		((rdbgdata->smem_size)/2), PRODUCER, &rdbgdata->write_mutex)) {
-		dev_err(rdbgdata->device, "%s: smq producer allocation failed",
+		dev_err(rdbgdata->device, "%s: smq producer allocation failed\n",
 			__func__);
 		err = -ENOMEM;
 		goto bail;
@@ -764,7 +774,7 @@ static int initialize_smq(struct rdbg_data *rdbgdata)
 
 	if (smq_ctor(&(rdbgdata->consumer_smrb), (void *)smem_consumer_buffer,
 		((rdbgdata->smem_size)/2), CONSUMER, NULL)) {
-		dev_err(rdbgdata->device, "%s: smq conmsumer allocation failed",
+		dev_err(rdbgdata->device, "%s: smq consumer allocation failed\n",
 			__func__);
 		err = -ENOMEM;
 	}
@@ -782,7 +792,7 @@ static int rdbg_open(struct inode *inode, struct file *filp)
 	int err = 0;
 
 	if (!inode || !device->rdbg_data) {
-		pr_err("Memory not allocated yet");
+		pr_err("Memory not allocated yet\n");
 		err = -ENODEV;
 		goto bail;
 	}
@@ -791,7 +801,7 @@ static int rdbg_open(struct inode *inode, struct file *filp)
 	rdbgdata = &device->rdbg_data[device_id];
 
 	if (rdbgdata->device_opened) {
-		dev_err(rdbgdata->device, "%s: Device already opened",
+		dev_err(rdbgdata->device, "%s: Device already opened\n",
 			__func__);
 		err = -EEXIST;
 		goto bail;
@@ -799,73 +809,68 @@ static int rdbg_open(struct inode *inode, struct file *filp)
 
 	rdbgdata->smem_size = proc_info[device_id].smem_buffer_size;
 	if (!rdbgdata->smem_size) {
-		dev_err(rdbgdata->device, "%s: smem not initialized", __func__);
+		dev_err(rdbgdata->device, "%s: smem not initialized\n",
+			 __func__);
 		err = -ENOMEM;
 		goto bail;
 	}
 
-	rdbgdata->smem_addr = smem_find(proc_info[device_id].smem_buffer_addr,
-		rdbgdata->smem_size, 0, SMEM_ANY_HOST_FLAG);
+	rdbgdata->smem_addr = qcom_smem_get(QCOM_SMEM_HOST_ANY,
+			      proc_info[device_id].smem_buffer_addr,
+			      &(rdbgdata->smem_size));
 	if (!rdbgdata->smem_addr) {
-		dev_err(rdbgdata->device, "%s: Could not allocate smem memory",
+		dev_err(rdbgdata->device, "%s: Could not allocate smem memory\n",
 			__func__);
 		err = -ENOMEM;
+		pr_err("rdbg:Could not allocate smem memory\n");
 		goto bail;
 	}
-	dev_dbg(rdbgdata->device, "%s: SMEM address=0x%lx smem_size=%d",
+	dev_dbg(rdbgdata->device, "%s: SMEM address=0x%lx smem_size=%d\n",
 		__func__, (unsigned long)rdbgdata->smem_addr,
 		(unsigned int)rdbgdata->smem_size);
 
 	if (check_subsystem_debug_enabled(rdbgdata->smem_addr,
 		rdbgdata->smem_size/2)) {
-		dev_err(rdbgdata->device, "%s: Subsystem %s is not debug enabled",
+		dev_err(rdbgdata->device, "%s: Subsystem %s is not debug enabled\n",
 			__func__, proc_info[device_id].name);
+		pr_err("rdbg:Sub system debug is not enabled\n");
 		err = -ECOMM;
 		goto bail;
 	}
 
 	init_completion(&rdbgdata->work);
 
-	err = request_irq(rdbgdata->in.irq_base_id, on_interrupt_from,
-			IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
-			proc_info[device_id].name,
-			(void *)&device->rdbg_data[device_id]);
+	err = request_threaded_irq(rdbgdata->in.irq_base_id, NULL,
+	      on_interrupt_from,
+	      IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+	      proc_info[device_id].name, (void *)&device->rdbg_data[device_id]);
 	if (err) {
 		dev_err(rdbgdata->device,
-			"%s: Failed to register interrupt.Err=%d,irqid=%d.",
+			"%s: Failed to register interrupt.Err=%d,irqid=%d.\n",
 			__func__, err, rdbgdata->in.irq_base_id);
-		goto irq_bail;
-	}
-
-	err = enable_irq_wake(rdbgdata->in.irq_base_id);
-	if (err < 0) {
-		dev_dbg(rdbgdata->device, "enable_irq_wake() failed with err=%d",
-			err);
-		err = 0;
+		pr_err("rdbg : Failed to register interrupt %d\n", err);
+		goto bail;
 	}
 
 	mutex_init(&rdbgdata->write_mutex);
 
 	err = initialize_smq(rdbgdata);
 	if (err) {
-		dev_err(rdbgdata->device, "Error initializing smq. Err=%d",
+		dev_err(rdbgdata->device, "Error initializing smq. Err=%d\n",
 			err);
+		pr_err("rdbg: initialize_smq() failed with err %d\n", err);
 		goto smq_bail;
 	}
 
-	rdbgdata->device_opened = 1;
+	rdbgdata->device_opened = true;
 
 	filp->private_data = (void *)rdbgdata;
-
 	return 0;
 
 smq_bail:
 	smq_dtor(&(rdbgdata->producer_smrb));
 	smq_dtor(&(rdbgdata->consumer_smrb));
 	mutex_destroy(&rdbgdata->write_mutex);
-irq_bail:
-	free_irq(rdbgdata->in.irq_base_id, (void *)
-		&device->rdbg_data[device_id]);
 bail:
 	return err;
 }
@@ -878,7 +883,7 @@ static int rdbg_release(struct inode *inode, struct file *filp)
 	int err = 0;
 
 	if (!inode || !rdbgdevice->rdbg_data) {
-		pr_err("Memory not allocated yet");
+		pr_err("Memory not allocated yet\n");
 		err = -ENODEV;
 		goto bail;
 	}
@@ -886,19 +891,17 @@ static int rdbg_release(struct inode *inode, struct file *filp)
 	device_id = MINOR(inode->i_rdev);
 	rdbgdata = &rdbgdevice->rdbg_data[device_id];
 
-	if (rdbgdata->device_opened == 1) {
-		dev_dbg(rdbgdata->device, "%s: Destroying %s.", __func__,
+	if (rdbgdata->device_opened) {
+		dev_dbg(rdbgdata->device, "%s: Destroying %s.\n", __func__,
 			proc_info[device_id].name);
-		rdbgdata->device_opened = 0;
+		rdbgdata->device_opened = false;
 		complete(&(rdbgdata->work));
-		free_irq(rdbgdata->in.irq_base_id, (void *)
-			&rdbgdevice->rdbg_data[device_id]);
 		if (rdbgdevice->rdbg_data[device_id].producer_smrb.initialized)
-			smq_dtor(&(rdbgdevice->rdbg_data[device_id].
-				producer_smrb));
+			smq_dtor(&(
+			rdbgdevice->rdbg_data[device_id].producer_smrb));
 		if (rdbgdevice->rdbg_data[device_id].consumer_smrb.initialized)
-			smq_dtor(&(rdbgdevice->rdbg_data[device_id].
-				consumer_smrb));
+			smq_dtor(&(
+			rdbgdevice->rdbg_data[device_id].consumer_smrb));
 		mutex_destroy(&rdbgdata->write_mutex);
 	}
 
@@ -918,15 +921,15 @@ static ssize_t rdbg_read(struct file *filp, char __user *buf, size_t size,
 	int more = 0;
 
 	if (!rdbgdata) {
-		pr_err("Invalid argument");
+		pr_err("Invalid argument\n");
 		err = -EINVAL;
 		goto bail;
 	}
 
-	dev_dbg(rdbgdata->device, "%s: In receive", __func__);
+	dev_dbg(rdbgdata->device, "%s: In receive\n", __func__);
 	err = wait_for_completion_interruptible(&(rdbgdata->work));
 	if (err) {
-		dev_err(rdbgdata->device, "%s: Error in wait", __func__);
+		dev_err(rdbgdata->device, "%s: Error in wait\n", __func__);
 		goto bail;
 	}
 
@@ -934,24 +937,22 @@ static ssize_t rdbg_read(struct file *filp, char __user *buf, size_t size,
 		&(rdbgdata->producer_smrb));
 	if (smq_receive(&(rdbgdata->consumer_smrb), &p_sent_buffer,
 			&nsize, &more) != SMQ_SUCCESS) {
-		dev_err(rdbgdata->device, "%s: Error in smq_recv(). Err code = %d",
+		dev_err(rdbgdata->device, "%s: Error in smq_recv(). Err code = %d\n",
 			__func__, err);
 		err = -ENODATA;
 		goto bail;
 	}
-
 	size = ((size < nsize) ? size : nsize);
 	err = copy_to_user(buf, p_sent_buffer, size);
 	if (err != 0) {
-		dev_err(rdbgdata->device, "%s: Error in copy_to_user(). Err code = %d",
+		dev_err(rdbgdata->device, "%s: Error in copy_to_user(). Err code = %d\n",
 			__func__, err);
 		err = -ENODATA;
 		goto bail;
 	}
-
 	smq_free(&(rdbgdata->consumer_smrb), p_sent_buffer);
 	err = size;
-	dev_dbg(rdbgdata->device, "%s: Read data to buffer with address 0x%lx",
+	dev_dbg(rdbgdata->device, "%s: Read data to buffer with address 0x%lx\n",
 		__func__, (unsigned long) buf);
 
 bail:
@@ -966,18 +967,19 @@ static ssize_t rdbg_write(struct file *filp, const char __user *buf,
 	struct rdbg_data *rdbgdata = filp->private_data;
 
 	if (!rdbgdata) {
-		pr_err("Invalid argument");
+		pr_err("Invalid argument\n");
 		err = -EINVAL;
 		goto bail;
 	}
 
 	do {
 		err = smq_alloc_send(&(rdbgdata->producer_smrb), buf, size);
-		dev_dbg(rdbgdata->device, "%s, smq_alloc_send returned %d.",
+		dev_dbg(rdbgdata->device, "%s, smq_alloc_send returned %d.\n",
 			__func__, err);
 	} while (err != 0 && num_retries++ < MAX_RETRIES);
 
 	if (err != 0) {
+		pr_err("rdbg: send_interrupt_to_subsystem failed\n");
 		err = -ECOMM;
 		goto bail;
 	}
@@ -990,7 +992,6 @@ bail:
 	return err;
 }
 
-
 static const struct file_operations rdbg_fops = {
 	.open = rdbg_open,
 	.read =  rdbg_read,
@@ -998,61 +999,135 @@ static const struct file_operations rdbg_fops = {
 	.release = rdbg_release,
 };
 
-static int register_smp2p(char *node_name, struct gpio_info *gpio_info_ptr)
+static int register_smp2p_out(struct device *dev, char *node_name,
+			struct gpio_info *gpio_info_ptr)
 {
-	struct device_node *node = NULL;
-	int cnt = 0;
-	int id = 0;
+	struct device_node *node = dev->of_node;
 
-	node = of_find_compatible_node(NULL, NULL, node_name);
-	if (node) {
-		cnt = of_gpio_count(node);
-		if (cnt && gpio_info_ptr) {
-			id = of_get_gpio(node, 0);
-			gpio_info_ptr->gpio_base_id = id;
-			gpio_info_ptr->irq_base_id = gpio_to_irq(id);
-			return 0;
+	if (gpio_info_ptr) {
+		if (of_find_property(node, "qcom,smem-states", NULL)) {
+			gpio_info_ptr->smem_state =
+				    qcom_smem_state_get(dev, "rdbg-smp2p-out",
+						&gpio_info_ptr->smem_bit);
+			if (IS_ERR_OR_NULL(gpio_info_ptr->smem_state))
+				pr_err("rdbg: failed get smem state\n");
 		}
+		return 0;
 	}
 	return -EINVAL;
 }
 
-static int __init rdbg_init(void)
+static int register_smp2p_in(struct device *dev, char *node_name,
+			struct gpio_info *gpio_info_ptr)
 {
-	int err = 0;
+	int id = 0;
+	struct device_node *node = dev->of_node;
+
+	if (gpio_info_ptr) {
+		id = of_irq_get_byname(node, "rdbg-smp2p-in");
+		gpio_info_ptr->gpio_base_id = id;
+		gpio_info_ptr->irq_base_id = id;
+		return 0;
+	}
+	return -EINVAL;
+}
+
+static int rdbg_probe(struct platform_device *pdev)
+{
+	struct device *dev = &pdev->dev;
 	struct rdbg_device *rdbgdevice = &g_rdbg_instance;
 	int minor = 0;
-	int major = 0;
-	int minor_nodes_created = 0;
-
-	char *rdbg_compatible_string = "qcom,smp2pgpio_client_rdbg_";
-	int max_len = strlen(rdbg_compatible_string) + strlen("xx_out");
-
+	int err = 0;
+	char *rdbg_compatible_string = "qcom,smp2p-interrupt-rdbg-";
+	int max_len = strlen(rdbg_compatible_string) + strlen("xx-out");
 	char *node_name = kcalloc(max_len, sizeof(char), GFP_KERNEL);
 
 	if (!node_name) {
 		err = -ENOMEM;
 		goto bail;
 	}
+	for (minor = 0; minor < rdbgdevice->num_devices; minor++) {
+		if (!proc_info[minor].name)
+			continue;
+		if (snprintf(node_name, max_len, "%s%d-out",
+			rdbg_compatible_string, minor) <= 0) {
+			pr_err("Error in snprintf\n");
+			err = -ENOMEM;
+			goto bail;
+		}
+
+		if (of_device_is_compatible(dev->of_node, node_name)) {
+			if (register_smp2p_out(dev, node_name,
+			  &rdbgdevice->rdbg_data[minor].out)) {
+				pr_err("register_smp2p_out failed for %s\n",
+				proc_info[minor].name);
+				err = -EINVAL;
+				goto bail;
+			}
+		}
+		if (snprintf(node_name, max_len, "%s%d-in",
+			rdbg_compatible_string, minor) <= 0) {
+			pr_err("Error in snprintf\n");
+			err = -ENOMEM;
+			goto bail;
+		}
+
+		if (of_device_is_compatible(dev->of_node, node_name)) {
+			if (register_smp2p_in(dev, node_name,
+			    &rdbgdevice->rdbg_data[minor].in)) {
+				pr_err("register_smp2p_in failed for %s\n",
+				proc_info[minor].name);
+			}
+		}
+	}
+bail:
+	kfree(node_name);
+	return err;
+}
+
+static const struct of_device_id rdbg_match_table[] = {
+	{ .compatible = "qcom,smp2p-interrupt-rdbg-2-out", },
+	{ .compatible = "qcom,smp2p-interrupt-rdbg-2-in", },
+	{ .compatible = "qcom,smp2p-interrupt-rdbg-5-out", },
+	{ .compatible = "qcom,smp2p-interrupt-rdbg-5-in", },
+	{}
+};
+
+static struct platform_driver rdbg_driver = {
+	.probe = rdbg_probe,
+	.driver = {
+		.name = "rdbg",
+		.of_match_table = rdbg_match_table,
+	},
+};
+
+static int __init rdbg_init(void)
+{
+	struct rdbg_device *rdbgdevice = &g_rdbg_instance;
+	int minor = 0;
+	int major = 0;
+	int minor_nodes_created = 0;
+	int err = 0;
 
 	if (rdbgdevice->num_devices < 1 ||
 		rdbgdevice->num_devices > SMP2P_NUM_PROCS) {
-		pr_err("rgdb: invalid num_devices");
+		pr_err("rgdb: invalid num_devices\n");
 		err = -EDOM;
-		goto name_bail;
+		goto bail;
 	}
-
 	rdbgdevice->rdbg_data = kcalloc(rdbgdevice->num_devices,
 		sizeof(struct rdbg_data), GFP_KERNEL);
 	if (!rdbgdevice->rdbg_data) {
 		err = -ENOMEM;
-		goto name_bail;
+		goto bail;
 	}
-
+	err = platform_driver_register(&rdbg_driver);
+	if (err)
+		goto bail;
 	err = alloc_chrdev_region(&rdbgdevice->dev_no, 0,
 		rdbgdevice->num_devices, "rdbgctl");
 	if (err) {
-		pr_err("Error in alloc_chrdev_region.");
+		pr_err("Error in alloc_chrdev_region.\n");
 		goto data_bail;
 	}
 	major = MAJOR(rdbgdevice->dev_no);
@@ -1062,72 +1137,39 @@ static int __init rdbg_init(void)
 	err = cdev_add(&rdbgdevice->cdev, MKDEV(major, 0),
 		rdbgdevice->num_devices);
 	if (err) {
-		pr_err("Error in cdev_add");
+		pr_err("Error in cdev_add\n");
 		goto chrdev_bail;
 	}
-
 	rdbgdevice->class = class_create(THIS_MODULE, "rdbg");
 	if (IS_ERR(rdbgdevice->class)) {
 		err = PTR_ERR(rdbgdevice->class);
-		pr_err("Error in class_create");
+		pr_err("Error in class_create\n");
 		goto cdev_bail;
 	}
-
 	for (minor = 0; minor < rdbgdevice->num_devices; minor++) {
 		if (!proc_info[minor].name)
 			continue;
-
-		if (snprintf(node_name, max_len, "%s%d_in",
-			rdbg_compatible_string, minor) <= 0) {
-			pr_err("Error in snprintf");
-			err = -ENOMEM;
-			goto device_bail;
-		}
-
-		if (register_smp2p(node_name,
-			&rdbgdevice->rdbg_data[minor].in)) {
-			pr_debug("No incoming device tree entry found for %s",
-				proc_info[minor].name);
-			continue;
-		}
-
-		if (snprintf(node_name, max_len, "%s%d_out",
-			rdbg_compatible_string, minor) <= 0) {
-			pr_err("Error in snprintf");
-			err = -ENOMEM;
-			goto device_bail;
-		}
-
-		if (register_smp2p(node_name,
-			&rdbgdevice->rdbg_data[minor].out)) {
-			pr_err("No outgoing device tree entry found for %s",
-				proc_info[minor].name);
-			err = -EINVAL;
-			goto device_bail;
-		}
-
 		rdbgdevice->rdbg_data[minor].device = device_create(
 			rdbgdevice->class, NULL, MKDEV(major, minor),
 			NULL, "%s", proc_info[minor].name);
 		if (IS_ERR(rdbgdevice->rdbg_data[minor].device)) {
 			err = PTR_ERR(rdbgdevice->rdbg_data[minor].device);
-			pr_err("Error in device_create");
+			pr_err("Error in device_create\n");
 			goto device_bail;
 		}
-		rdbgdevice->rdbg_data[minor].device_initialized = 1;
+		rdbgdevice->rdbg_data[minor].device_initialized = true;
 		minor_nodes_created++;
 		dev_dbg(rdbgdevice->rdbg_data[minor].device,
-			"%s: created /dev/%s c %d %d'", __func__,
+			"%s: created /dev/%s c %d %d'\n", __func__,
 			proc_info[minor].name, major, minor);
 	}
-
 	if (!minor_nodes_created) {
-		pr_err("No device tree entries found");
+		pr_err("No device tree entries found\n");
 		err = -EINVAL;
 		goto class_bail;
 	}
 
-	goto name_bail;
+	goto bail;
 
 device_bail:
 	for (--minor; minor >= 0; minor--) {
@@ -1143,11 +1185,10 @@ chrdev_bail:
 	unregister_chrdev_region(rdbgdevice->dev_no, rdbgdevice->num_devices);
 data_bail:
 	kfree(rdbgdevice->rdbg_data);
-name_bail:
-	kfree(node_name);
 bail:
 	return err;
 }
+module_init(rdbg_init);
 
 static void __exit rdbg_exit(void)
 {
@@ -1165,8 +1206,6 @@ static void __exit rdbg_exit(void)
 	unregister_chrdev_region(rdbgdevice->dev_no, 1);
 	kfree(rdbgdevice->rdbg_data);
 }
-
-module_init(rdbg_init);
 module_exit(rdbg_exit);
 
 MODULE_DESCRIPTION("rdbg module");

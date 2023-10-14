@@ -1,38 +1,25 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
-#include <linux/uaccess.h>
-#include <linux/ioctl.h>
-
-#include "kgsl.h"
-#include "kgsl_compat.h"
 
 #include "adreno.h"
 #include "adreno_compat.h"
+#include "kgsl_compat.h"
 
 int adreno_getproperty_compat(struct kgsl_device *device,
-				unsigned int type,
-				void __user *value,
-				size_t sizebytes)
+		struct kgsl_device_getproperty *param)
 {
 	int status = -EINVAL;
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 
-	switch (type) {
+	switch (param->type) {
 	case KGSL_PROP_DEVICE_INFO:
 		{
 			struct kgsl_devinfo_compat devinfo;
 
-			if (sizebytes != sizeof(devinfo)) {
+			if (param->sizebytes != sizeof(devinfo)) {
 				status = -EINVAL;
 				break;
 			}
@@ -42,11 +29,12 @@ int adreno_getproperty_compat(struct kgsl_device *device,
 			devinfo.chip_id = adreno_dev->chipid;
 			devinfo.mmu_enabled =
 				MMU_FEATURE(&device->mmu, KGSL_MMU_PAGED);
-			devinfo.gmem_gpubaseaddr = adreno_dev->gmem_base;
-			devinfo.gmem_sizebytes = adreno_dev->gmem_size;
+			devinfo.gmem_gpubaseaddr = 0;
+			devinfo.gmem_sizebytes =
+					adreno_dev->gpucore->gmem_size;
 
-			if (copy_to_user(value, &devinfo, sizeof(devinfo)) !=
-					0) {
+			if (copy_to_user(param->value, &devinfo,
+				sizeof(devinfo))) {
 				status = -EFAULT;
 				break;
 			}
@@ -57,7 +45,7 @@ int adreno_getproperty_compat(struct kgsl_device *device,
 		{
 			struct kgsl_shadowprop_compat shadowprop;
 
-			if (sizebytes != sizeof(shadowprop)) {
+			if (param->sizebytes != sizeof(shadowprop)) {
 				status = -EINVAL;
 				break;
 			}
@@ -81,7 +69,7 @@ int adreno_getproperty_compat(struct kgsl_device *device,
 				shadowprop.flags = KGSL_FLAGS_INITIALIZED |
 					KGSL_FLAGS_PER_CONTEXT_TIMESTAMPS;
 			}
-			if (copy_to_user(value, &shadowprop,
+			if (copy_to_user(param->value, &shadowprop,
 				sizeof(shadowprop))) {
 				status = -EFAULT;
 				break;
@@ -89,61 +77,8 @@ int adreno_getproperty_compat(struct kgsl_device *device,
 			status = 0;
 		}
 		break;
-	case KGSL_PROP_DEVICE_QDSS_STM:
-		{
-			struct kgsl_qdss_stm_prop qdssprop = {0};
-			struct kgsl_memdesc *qdss_desc =
-				kgsl_mmu_get_qdss_global_entry(device);
-
-			if (sizebytes != sizeof(qdssprop)) {
-				status = -EINVAL;
-				break;
-			}
-
-			if (qdss_desc) {
-				qdssprop.gpuaddr = qdss_desc->gpuaddr;
-				qdssprop.size = qdss_desc->size;
-			}
-
-			if (copy_to_user(value, &qdssprop,
-						sizeof(qdssprop))) {
-				status = -EFAULT;
-				break;
-			}
-			status = 0;
-		}
-		break;
-	case KGSL_PROP_DEVICE_QTIMER:
-		{
-			struct kgsl_qtimer_prop qtimerprop = {0};
-			struct kgsl_memdesc *qtimer_desc =
-				kgsl_mmu_get_qtimer_global_entry(device);
-
-			if (sizebytes != sizeof(qtimerprop)) {
-				status = -EINVAL;
-				break;
-			}
-
-			if (qtimer_desc) {
-				qtimerprop.gpuaddr = qtimer_desc->gpuaddr;
-				qtimerprop.size = qtimer_desc->size;
-			}
-
-			if (copy_to_user(value, &qtimerprop,
-						sizeof(qtimerprop))) {
-				status = -EFAULT;
-				break;
-			}
-			status = 0;
-		}
-		break;
 	default:
-		/*
-		 * Call the adreno_getproperty to check if the property type
-		 * was KGSL_PROP_MMU_ENABLE or KGSL_PROP_INTERRUPT_WAITS
-		 */
-		status = device->ftbl->getproperty(device, type, value,
-						sizebytes);
+		status = device->ftbl->getproperty(device, param);
 	}
 
 	return status;
@@ -158,7 +93,8 @@ int adreno_setproperty_compat(struct kgsl_device_private *dev_priv,
 	struct kgsl_device *device = dev_priv->device;
 
 	switch (type) {
-	case KGSL_PROP_PWR_CONSTRAINT: {
+	case KGSL_PROP_PWR_CONSTRAINT:
+	case KGSL_PROP_L3_PWR_CONSTRAINT: {
 			struct kgsl_device_constraint_compat constraint32;
 			struct kgsl_device_constraint constraint;
 			struct kgsl_context *context;
@@ -228,6 +164,14 @@ static long adreno_ioctl_perfcounter_read_compat(
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(dev_priv->device);
 	struct kgsl_perfcounter_read_compat *read32 = data;
 	struct kgsl_perfcounter_read read;
+
+	/*
+	 * When performance counter zapping is enabled, the counters are cleared
+	 * across context switches. Reading the counters when they are zapped is
+	 * not permitted.
+	 */
+	if (!adreno_dev->perfcounter)
+		return -EPERM;
 
 	read.reads = (struct kgsl_perfcounter_read_group __user *)
 		(uintptr_t)read32->reads;

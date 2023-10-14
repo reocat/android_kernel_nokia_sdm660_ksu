@@ -1,14 +1,6 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (c) 2016, The Linux Foundation. All rights reserved.
  */
 
 enum adreno_critical_fixup_buffers {
@@ -215,7 +207,9 @@ static unsigned int _a5xx_critical_pkts[] = {
 	0xFFC00010, /* [0x00B9] A5X_GRAS_SU_POINT_MINMAX_CTX_0 (0xE091)*/
 	0x00000008, /* [0x00BA] A5X_GRAS_SU_POINT_SIZE_CTX_0 (0xE092)*/
 	0x40E09901, /* [0x00BB] == TYPE4 == */
-	0x00000000, /* [0x00BC] A5X_GRAS_SU_CONSERVATIVE_RAS_CNTL_CTX_0 (0xE099)*/
+	0x00000000, /* [0x00BC] A5X_GRAS_SU_CONSERVATIVE_RAS_CNTL_CTX_0
+		     * (0xE099)
+		     */
 	0x48E0A401, /* [0x00BD] == TYPE4 == */
 	0x00000000, /* [0x00BE] A5X_GRAS_SC_SCREEN_SCISSOR_CNTL_CTX_0 (0xE0A4)*/
 	0x48E58A01, /* [0x00BF] == TYPE4 == */
@@ -344,8 +338,12 @@ static unsigned int _a5xx_critical_pkts[] = {
 	0x48E09801, /* [0x013A] == TYPE4 == */
 	0x00000001, /* [0x013B] A5X_GRAS_SU_DEPTH_BUFFER_INFO_CTX_0 (0xE098)*/
 	0x40E24083, /* [0x013C] == TYPE4 == */
-	0x00000000, /* [0x013D] A5X_RB_DEPTH_FLAG_BUFFER_BASE_LO_CTX_0 (0xE240)*/
-	0x00000000, /* [0x013E] A5X_RB_DEPTH_FLAG_BUFFER_BASE_HI_CTX_0 (0xE241)*/
+	0x00000000, /* [0x013D] A5X_RB_DEPTH_FLAG_BUFFER_BASE_LO_CTX_0
+		     * (0xE240)
+		     */
+	0x00000000, /* [0x013E] A5X_RB_DEPTH_FLAG_BUFFER_BASE_HI_CTX_0
+		     * (0xE241)
+		     */
 	0x00000000, /* [0x013F] A5X_RB_DEPTH_FLAG_BUFFER_PITCH_CTX_0 (0xE242)*/
 	0x40E15285, /* [0x0140] == TYPE4 == */
 	0x00001230, /* [0x0141] A5X_RB_MRT_BUFFER_INFO_0_CTX_0 (0xE152)*/
@@ -411,8 +409,12 @@ static unsigned int _a5xx_critical_pkts[] = {
 	0x00000000, /* [0x017D] A5X_GRAS_LRZ_BUFFER_BASE_LO_CTX_0 (0xE101)*/
 	0x00000000, /* [0x017E] A5X_GRAS_LRZ_BUFFER_BASE_HI_CTX_0 (0xE102)*/
 	0x00000001, /* [0x017F] A5X_GRAS_LRZ_BUFFER_PITCH_CTX_0 (0xE103)*/
-	0x00000000, /* [0x0180] A5X_GRAS_LRZ_FAST_CLEAR_BUFFER_BASE_LO_CTX_0 (0xE104)*/
-	0x00000000, /* [0x0181] A5X_GRAS_LRZ_FAST_CLEAR_BUFFER_BASE_HI_CTX_0 (0xE105)*/
+	0x00000000, /* [0x0180] A5X_GRAS_LRZ_FAST_CLEAR_BUFFER_BASE_LO_CTX_0
+		     * (0xE104)
+		     */
+	0x00000000, /* [0x0181] A5X_GRAS_LRZ_FAST_CLEAR_BUFFER_BASE_HI_CTX_0
+		     * (0xE105)
+		     */
 	0x70460001, /* [0x0182] == TYPE7: EVENT_WRITE (46) == */
 	0x00000025, /* [0x0183] */
 	0x70460001, /* [0x0184] == TYPE7: EVENT_WRITE (46) == */
@@ -723,7 +725,9 @@ static unsigned int _a5xx_critical_pkts_mem03[] = {
 	0x40E09583, /* [0x0018] == TYPE4 == */
 	0x00000000, /* [0x0019] A5X_GRAS_SU_POLY_OFFSET_SCALE_CTX_0 (0xE095)*/
 	0x00000000, /* [0x001A] A5X_GRAS_SU_POLY_OFFSET_OFFSET_CTX_0 (0xE096)*/
-	0x00000000, /* [0x001B] A5X_GRAS_SU_POLY_OFFSET_OFFSET_CLAMP_CTX_0 (0xE097)*/
+	0x00000000, /* [0x001B] A5X_GRAS_SU_POLY_OFFSET_OFFSET_CLAMP_CTX_0
+		     * (0xE097)
+		     */
 	0x40E09001, /* [0x001C] == TYPE4 == */
 	0x00000010, /* [0x001D] A5X_GRAS_SU_CNTL_CTX_0 (0xE090)*/
 	0x40E0AA02, /* [0x001E] == TYPE4 == */
@@ -737,8 +741,12 @@ static unsigned int _a5xx_critical_pkts_mem03[] = {
 	0x3EFFFEE0, /* [0x0026] A5X_GRAS_CL_VIEWPORT_ZOFFSET_0_CTX_0 (0xE014)*/
 	0x3EFFFEE0, /* [0x0027] A5X_GRAS_CL_VIEWPORT_ZSCALE_0_CTX_0 (0xE015)*/
 	0x40E0CA02, /* [0x0028] == TYPE4 == */
-	0x00000000, /* [0x0029] A5X_GRAS_SC_VIEWPORT_SCISSOR_TL_0_CTX_0 (0xE0CA)*/
-	0x001F0073, /* [0x002A] A5X_GRAS_SC_VIEWPORT_SCISSOR_BR_0_CTX_0 (0xE0CB)*/
+	0x00000000, /* [0x0029] A5X_GRAS_SC_VIEWPORT_SCISSOR_TL_0_CTX_0
+		     * (0xE0CA)
+		     */
+	0x001F0073, /* [0x002A] A5X_GRAS_SC_VIEWPORT_SCISSOR_BR_0_CTX_0
+		     * (0xE0CB)
+		     */
 	0x40E00601, /* [0x002B] == TYPE4 == */
 	0x0007FDFF, /* [0x002C] A5X_GRAS_CL_GUARDBAND_CLIP_ADJ_CTX_0 (0xE006)*/
 	0x40E70401, /* [0x002D] == TYPE4 == */
@@ -811,8 +819,12 @@ static unsigned int _a5xx_critical_pkts_mem03[] = {
 	0x00000000, /* [0x0070] A5X_GRAS_LRZ_BUFFER_BASE_LO_CTX_0 (0xE101)*/
 	0x00000000, /* [0x0071] A5X_GRAS_LRZ_BUFFER_BASE_HI_CTX_0 (0xE102)*/
 	0x00000001, /* [0x0072] A5X_GRAS_LRZ_BUFFER_PITCH_CTX_0 (0xE103)*/
-	0x00000000, /* [0x0073] A5X_GRAS_LRZ_FAST_CLEAR_BUFFER_BASE_LO_CTX_0 (0xE104)*/
-	0x00000000, /* [0x0074] A5X_GRAS_LRZ_FAST_CLEAR_BUFFER_BASE_HI_CTX_0 (0xE105)*/
+	0x00000000, /* [0x0073] A5X_GRAS_LRZ_FAST_CLEAR_BUFFER_BASE_LO_CTX_0
+		     * (0xE104)
+		     */
+	0x00000000, /* [0x0074] A5X_GRAS_LRZ_FAST_CLEAR_BUFFER_BASE_HI_CTX_0
+		     * (0xE105)
+		     */
 	0x70388003, /* [0x0075] == TYPE7: DRAW_INDX_OFFSET (38) == */
 	0x00200884, /* [0x0076] */
 	0x00000001, /* [0x0077] */

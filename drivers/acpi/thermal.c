@@ -40,7 +40,7 @@
 #include <linux/thermal.h>
 #include <linux/acpi.h>
 #include <linux/workqueue.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #define PREFIX "ACPI: "
 
@@ -189,7 +189,7 @@ struct acpi_thermal {
 	int kelvin_offset;
 	struct work_struct thermal_check_work;
 	struct mutex thermal_check_lock;
-	atomic_t thermal_check_count;
+	refcount_t thermal_check_count;
 };
 
 /* --------------------------------------------------------------------------
@@ -1081,14 +1081,14 @@ static void acpi_thermal_check_fn(struct work_struct *work)
 	 * check some time ago, so allow at least one of them to block on the
 	 * mutex while another one is running the update.
 	 */
-	if (!atomic_add_unless(&tz->thermal_check_count, -1, 1))
+	if (!refcount_dec_not_one(&tz->thermal_check_count))
 		return;
 
 	mutex_lock(&tz->thermal_check_lock);
 
-	thermal_zone_device_update(tz->thermal_zone);
+	thermal_zone_device_update(tz->thermal_zone, THERMAL_EVENT_UNSPECIFIED);
 
-	atomic_inc(&tz->thermal_check_count);
+	refcount_inc(&tz->thermal_check_count);
 
 	mutex_unlock(&tz->thermal_check_lock);
 }
@@ -1122,7 +1122,7 @@ static int acpi_thermal_add(struct acpi_device *device)
 	if (result)
 		goto free_memory;
 
-	atomic_set(&tz->thermal_check_count, 3);
+	refcount_set(&tz->thermal_check_count, 3);
 	mutex_init(&tz->thermal_check_lock);
 	INIT_WORK(&tz->thermal_check_work, acpi_thermal_check_fn);
 
@@ -1172,8 +1172,6 @@ static int acpi_thermal_resume(struct device *dev)
 		return -EINVAL;
 
 	for (i = 0; i < ACPI_THERMAL_MAX_ACTIVE; i++) {
-		if (!(&tz->trips.active[i]))
-			break;
 		if (!tz->trips.active[i].flags.valid)
 			break;
 		tz->trips.active[i].flags.enabled = 1;
@@ -1230,7 +1228,7 @@ static int thermal_psv(const struct dmi_system_id *d) {
 	return 0;
 }
 
-static struct dmi_system_id thermal_dmi_table[] __initdata = {
+static const struct dmi_system_id thermal_dmi_table[] __initconst = {
 	/*
 	 * Award BIOS on this AOpen makes thermal control almost worthless.
 	 * http://bugzilla.kernel.org/show_bug.cgi?id=8842
@@ -1281,7 +1279,8 @@ static int __init acpi_thermal_init(void)
 		return -ENODEV;
 	}
 
-	acpi_thermal_pm_queue = create_workqueue("acpi_thermal_pm");
+	acpi_thermal_pm_queue = alloc_workqueue("acpi_thermal_pm",
+						WQ_HIGHPRI | WQ_MEM_RECLAIM, 0);
 	if (!acpi_thermal_pm_queue)
 		return -ENODEV;
 

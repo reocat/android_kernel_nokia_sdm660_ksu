@@ -1,20 +1,12 @@
-/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2011-2021, The Linux Foundation. All rights reserved.
  */
-
 #ifndef _WCNSS_WLAN_H_
 #define _WCNSS_WLAN_H_
 
 #include <linux/device.h>
+#include <linux/rpmsg.h>
 #include <linux/sched.h>
 
 #define IRIS_REGULATORS		4
@@ -42,10 +34,18 @@ struct wcnss_wlan_config {
 	int	is_pronto_vadc;
 	int	is_pronto_v3;
 	void __iomem	*msm_wcnss_base;
-	int	iris_id;
-	int	vbatt;
+	unsigned int iris_id;
+	u32 vbatt;
 	struct vregs_level pronto_vlevel[PRONTO_REGULATORS];
 	struct vregs_level iris_vlevel[IRIS_REGULATORS];
+};
+
+struct bt_profile_state {
+	bool bt_enabled;
+	bool bt_ble;
+	bool bt_adv;
+	bool bt_a2dp;
+	bool bt_sco;
 };
 
 enum {
@@ -61,6 +61,13 @@ enum {
 	WCNSS_WLAN_SET,
 	WCNSS_WLAN_CLK,
 	WCNSS_WLAN_MAX_GPIO,
+};
+
+enum wcnss_log_type {
+	ERR,
+	WARN,
+	INFO,
+	DBG,
 };
 
 #define WCNSS_VBATT_THRESHOLD           3500000
@@ -92,26 +99,42 @@ enum {
 #define PRONTO_PMU_OFFSET       0x1004
 #define WCNSS_PMU_CFG_GC_BUS_MUX_SEL_TOP   BIT(5)
 
+enum wcnss_driver_state {
+	WCNSS_SMD_OPEN,
+	WCNSS_SMD_CLOSE,
+};
+
+struct wcnss_driver_ops {
+	char *name;
+	void *priv_data;
+	int (*driver_state)(void *priv, enum wcnss_driver_state state);
+	int (*bt_profile_state)(void *priv, struct bt_profile_state *state);
+};
+
 struct device *wcnss_wlan_get_device(void);
 void wcnss_get_monotonic_boottime(struct timespec *ts);
 struct resource *wcnss_wlan_get_memory_map(struct device *dev);
 int wcnss_wlan_get_dxe_tx_irq(struct device *dev);
 int wcnss_wlan_get_dxe_rx_irq(struct device *dev);
+int wcnss_register_driver(struct wcnss_driver_ops *ops, void *priv);
+int wcnss_unregister_driver(struct wcnss_driver_ops *ops);
+void wcnss_update_bt_profile(void);
 void wcnss_wlan_register_pm_ops(struct device *dev,
 				const struct dev_pm_ops *pm_ops);
 void wcnss_wlan_unregister_pm_ops(struct device *dev,
-				const struct dev_pm_ops *pm_ops);
+				  const struct dev_pm_ops *pm_ops);
 void wcnss_register_thermal_mitigation(struct device *dev,
-				void (*tm_notify)(struct device *dev, int));
-void wcnss_unregister_thermal_mitigation(
-				void (*tm_notify)(struct device *dev, int));
+				       void (*tm_notify)(struct device *dev,
+							 int));
+void wcnss_unregister_thermal_mitigation(void (*tm_notify)(struct device *dev,
+							   int));
 struct platform_device *wcnss_get_platform_device(void);
 struct wcnss_wlan_config *wcnss_get_wlan_config(void);
 void wcnss_set_iris_xo_mode(int iris_xo_mode_set);
 int wcnss_wlan_power(struct device *dev,
-				struct wcnss_wlan_config *cfg,
-				enum wcnss_opcode opcode,
-				int *iris_xo_mode_set);
+		     struct wcnss_wlan_config *cfg,
+		     enum wcnss_opcode opcode,
+		     int *iris_xo_mode_set);
 int wcnss_req_power_on_lock(char *driver_name);
 int wcnss_free_power_on_lock(char *driver_name);
 unsigned int wcnss_get_serial_number(void);
@@ -137,13 +160,14 @@ int wcnss_wlan_iris_xo_mode(void);
 int wcnss_wlan_dual_band_disabled(void);
 void wcnss_flush_work(struct work_struct *work);
 void wcnss_flush_delayed_work(struct delayed_work *dwork);
-void wcnss_init_work(struct work_struct *work , void *callbackptr);
-void wcnss_init_delayed_work(struct delayed_work *dwork , void *callbackptr);
+void wcnss_init_work(struct work_struct *work, void *callbackptr);
+void wcnss_init_delayed_work(struct delayed_work *dwork, void *callbackptr);
 int wcnss_get_iris_name(char *iris_version);
 void wcnss_dump_stack(struct task_struct *task);
 void wcnss_snoc_vote(bool clk_chk_en);
 int wcnss_parse_voltage_regulator(struct wcnss_wlan_config *wlan_config,
 				  struct device *dev);
+void wcnss_log(enum wcnss_log_type type, const char *_fmt, ...);
 
 #ifdef CONFIG_WCNSS_REGISTER_DUMP_ON_BITE
 void wcnss_log_debug_regs_on_bite(void);
@@ -157,6 +181,12 @@ int wcnss_set_wlan_unsafe_channel(
 int wcnss_get_wlan_unsafe_channel(
 				u16 *unsafe_ch_list, u16 buffer_size,
 				u16 *ch_count);
+struct rpmsg_endpoint *wcnss_open_channel(const char *name,
+					  rpmsg_rx_cb_t cb, void *priv);
+void wcnss_close_channel(struct rpmsg_endpoint *channel);
+int wcnss_smd_tx(struct rpmsg_endpoint *channel, void *data, int len);
+int wcnss_get_nv_name(char *nv_name);
+int wcnss_is_sw_pta_enabled(void);
 #define wcnss_wlan_get_drvdata(dev) dev_get_drvdata(dev)
 #define wcnss_wlan_set_drvdata(dev, data) dev_set_drvdata((dev), (data))
 /* WLAN driver uses these names */

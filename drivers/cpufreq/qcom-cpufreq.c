@@ -1,19 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* drivers/cpufreq/qcom-cpufreq.c
  *
  * MSM architecture cpufreq driver
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2007-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2007-2020, The Linux Foundation. All rights reserved.
  * Author: Mike A. Chan <mikechan@google.com>
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the
- * GNU General Public License for more details.
  *
  */
 
@@ -27,10 +19,13 @@
 #include <linux/err.h>
 #include <linux/platform_device.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
+#include <linux/cpu_cooling.h>
 #include <trace/events/power.h>
 
 static DEFINE_MUTEX(l2bw_lock);
 
+static struct thermal_cooling_device *cdev[NR_CPUS];
 static struct clk *cpu_clk[NR_CPUS];
 static struct clk *l2_clk;
 static DEFINE_PER_CPU(struct cpufreq_frequency_table *, freq_table);
@@ -42,6 +37,8 @@ struct cpufreq_suspend_t {
 };
 
 static DEFINE_PER_CPU(struct cpufreq_suspend_t, suspend_data);
+static DEFINE_PER_CPU(int, cached_resolve_idx);
+static DEFINE_PER_CPU(unsigned int, cached_resolve_freq);
 
 static int set_cpu_freq(struct cpufreq_policy *policy, unsigned int new_freq,
 			unsigned int index)
@@ -61,8 +58,11 @@ static int set_cpu_freq(struct cpufreq_policy *policy, unsigned int new_freq,
 	rate = clk_round_rate(cpu_clk[policy->cpu], rate);
 	ret = clk_set_rate(cpu_clk[policy->cpu], rate);
 	cpufreq_freq_transition_end(policy, &freqs, ret);
-	if (!ret)
+	if (!ret) {
+		arch_set_freq_scale(policy->related_cpus, new_freq,
+				    policy->cpuinfo.max_freq);
 		trace_cpu_frequency_switch_end(policy->cpu);
+	}
 
 	return ret;
 }
@@ -74,6 +74,7 @@ static int msm_cpufreq_target(struct cpufreq_policy *policy,
 	int ret = 0;
 	int index;
 	struct cpufreq_frequency_table *table;
+	int first_cpu = cpumask_first(policy->related_cpus);
 
 	mutex_lock(&per_cpu(suspend_data, policy->cpu).suspend_mutex);
 
@@ -81,25 +82,18 @@ static int msm_cpufreq_target(struct cpufreq_policy *policy,
 		goto done;
 
 	if (per_cpu(suspend_data, policy->cpu).device_suspended) {
-		pr_debug("cpufreq: cpu%d scheduling frequency change "
-				"in suspend.\n", policy->cpu);
+		pr_debug("cpufreq: cpu%d scheduling frequency change in suspend\n",
+			 policy->cpu);
 		ret = -EFAULT;
 		goto done;
 	}
 
-	table = cpufreq_frequency_get_table(policy->cpu);
-	if (!table) {
-		pr_err("cpufreq: Failed to get frequency table for CPU%u\n",
-		       policy->cpu);
-		ret = -ENODEV;
-		goto done;
-	}
-	if (cpufreq_frequency_table_target(policy, table, target_freq, relation,
-			&index)) {
-		pr_err("cpufreq: invalid target_freq: %d\n", target_freq);
-		ret = -EINVAL;
-		goto done;
-	}
+	table = policy->freq_table;
+	if (per_cpu(cached_resolve_freq, first_cpu) == target_freq)
+		index = per_cpu(cached_resolve_idx, first_cpu);
+	else
+		index = cpufreq_frequency_table_target(policy, target_freq,
+						       relation);
 
 	pr_debug("CPU[%d] target %d relation %d (%d-%d) selected %d\n",
 		policy->cpu, target_freq, relation,
@@ -110,6 +104,23 @@ static int msm_cpufreq_target(struct cpufreq_policy *policy,
 done:
 	mutex_unlock(&per_cpu(suspend_data, policy->cpu).suspend_mutex);
 	return ret;
+}
+
+static unsigned int msm_cpufreq_resolve_freq(struct cpufreq_policy *policy,
+					     unsigned int target_freq)
+{
+	int index;
+	int first_cpu = cpumask_first(policy->related_cpus);
+	unsigned int freq;
+
+	index = cpufreq_frequency_table_target(policy, target_freq,
+					       CPUFREQ_RELATION_L);
+	freq = policy->freq_table[index].frequency;
+
+	per_cpu(cached_resolve_idx, first_cpu) = index;
+	per_cpu(cached_resolve_freq, first_cpu) = freq;
+
+	return freq;
 }
 
 static int msm_cpufreq_verify(struct cpufreq_policy *policy)
@@ -143,7 +154,8 @@ static int msm_cpufreq_init(struct cpufreq_policy *policy)
 		if (cpu_clk[cpu] == cpu_clk[policy->cpu])
 			cpumask_set_cpu(cpu, policy->cpus);
 
-	ret = cpufreq_table_validate_and_show(policy, table);
+	policy->freq_table = table;
+	ret = cpufreq_table_validate_and_sort(policy);
 	if (ret) {
 		pr_err("cpufreq: failed to get policy min/max\n");
 		return ret;
@@ -151,14 +163,8 @@ static int msm_cpufreq_init(struct cpufreq_policy *policy)
 
 	cur_freq = clk_get_rate(cpu_clk[policy->cpu])/1000;
 
-	if (cpufreq_frequency_table_target(policy, table, cur_freq,
-	    CPUFREQ_RELATION_H, &index) &&
-	    cpufreq_frequency_table_target(policy, table, cur_freq,
-	    CPUFREQ_RELATION_L, &index)) {
-		pr_info("cpufreq: cpu%d at invalid freq: %d\n",
-				policy->cpu, cur_freq);
-		return -EINVAL;
-	}
+	index =  cpufreq_frequency_table_target(policy, cur_freq,
+						CPUFREQ_RELATION_H);
 	/*
 	 * Call set_cpu_freq unconditionally so that when cpu is set to
 	 * online, frequency limit will always be updated.
@@ -170,70 +176,66 @@ static int msm_cpufreq_init(struct cpufreq_policy *policy)
 	pr_debug("cpufreq: cpu%d init at %d switching to %d\n",
 			policy->cpu, cur_freq, table[index].frequency);
 	policy->cur = table[index].frequency;
+	policy->dvfs_possible_from_any_cpu = true;
 
 	return 0;
 }
 
-static int msm_cpufreq_cpu_callback(struct notifier_block *nfb,
-		unsigned long action, void *hcpu)
+static int qcom_cpufreq_dead_cpu(unsigned int cpu)
 {
-	unsigned int cpu = (unsigned long)hcpu;
+	/* Fail hotplug until this driver can get CPU clocks */
+	if (!hotplug_ready)
+		return -EINVAL;
+
+	clk_unprepare(cpu_clk[cpu]);
+	clk_unprepare(l2_clk);
+	return 0;
+}
+
+static int qcom_cpufreq_up_cpu(unsigned int cpu)
+{
 	int rc;
 
 	/* Fail hotplug until this driver can get CPU clocks */
 	if (!hotplug_ready)
-		return NOTIFY_BAD;
+		return -EINVAL;
 
-	switch (action & ~CPU_TASKS_FROZEN) {
-
-	case CPU_DYING:
-		clk_disable(cpu_clk[cpu]);
-		clk_disable(l2_clk);
-		break;
-	/*
-	 * Scale down clock/power of CPU that is dead and scale it back up
-	 * before the CPU is brought up.
-	 */
-	case CPU_DEAD:
-		clk_unprepare(cpu_clk[cpu]);
+	rc = clk_prepare(l2_clk);
+	if (rc < 0)
+		return rc;
+	rc = clk_prepare(cpu_clk[cpu]);
+	if (rc < 0)
 		clk_unprepare(l2_clk);
-		break;
-	case CPU_UP_CANCELED:
-		clk_unprepare(cpu_clk[cpu]);
-		clk_unprepare(l2_clk);
-		break;
-	case CPU_UP_PREPARE:
-		rc = clk_prepare(l2_clk);
-		if (rc < 0)
-			return NOTIFY_BAD;
-		rc = clk_prepare(cpu_clk[cpu]);
-		if (rc < 0) {
-			clk_unprepare(l2_clk);
-			return NOTIFY_BAD;
-		}
-		break;
-
-	case CPU_STARTING:
-		rc = clk_enable(l2_clk);
-		if (rc < 0)
-			return NOTIFY_BAD;
-		rc = clk_enable(cpu_clk[cpu]);
-		if (rc) {
-			clk_disable(l2_clk);
-			return NOTIFY_BAD;
-		}
-		break;
-
-	default:
-		break;
-	}
-
-	return NOTIFY_OK;
+	return rc;
 }
 
-static struct notifier_block __refdata msm_cpufreq_cpu_notifier = {
-	.notifier_call = msm_cpufreq_cpu_callback,
-};
+static int qcom_cpufreq_dying_cpu(unsigned int cpu)
+{
+	/* Fail hotplug until this driver can get CPU clocks */
+	if (!hotplug_ready)
+		return -EINVAL;
+
+	clk_disable(cpu_clk[cpu]);
+	clk_disable(l2_clk);
+	return 0;
+}
+
+static int qcom_cpufreq_starting_cpu(unsigned int cpu)
+{
+	int rc;
+
+	/* Fail hotplug until this driver can get CPU clocks */
+	if (!hotplug_ready)
+		return -EINVAL;
+
+	rc = clk_enable(l2_clk);
+	if (rc < 0)
+		return rc;
+	rc = clk_enable(cpu_clk[cpu]);
+	if (rc < 0)
+		clk_disable(l2_clk);
+	return rc;
+}
 
 static int msm_cpufreq_suspend(void)
 {
@@ -269,13 +271,7 @@ static int msm_cpufreq_resume(void)
 			continue;
 		if (policy.cur <= policy.max && policy.cur >= policy.min)
 			continue;
-		ret = cpufreq_update_policy(cpu);
-		if (ret)
-			pr_info("cpufreq: Current frequency violates policy min/max for CPU%d\n",
-			       cpu);
-		else
-			pr_info("cpufreq: Frequency violation fixed for CPU%d\n",
-				cpu);
+		cpufreq_update_policy(cpu);
 	}
 	put_online_cpus();
 
@@ -306,15 +302,45 @@ static struct freq_attr *msm_freq_attr[] = {
 	NULL,
 };
 
+static void msm_cpufreq_ready(struct cpufreq_policy *policy)
+{
+	struct device_node *np;
+	unsigned int cpu = policy->cpu;
+
+	if (cdev[cpu])
+		return;
+
+	np = of_cpu_device_node_get(cpu);
+	if (WARN_ON(!np))
+		return;
+
+	/*
+	 * For now, just loading the cooling device;
+	 * thermal DT code takes care of matching them.
+	 */
+	if (of_find_property(np, "#cooling-cells", NULL)) {
+		cdev[cpu] = cpufreq_platform_cooling_register(policy, NULL);
+		if (IS_ERR(cdev[cpu])) {
+			pr_err("running cpufreq for CPU%d without cooling dev: %ld\n",
+			       cpu, PTR_ERR(cdev[cpu]));
+			cdev[cpu] = NULL;
+		}
+	}
+	of_node_put(np);
+}
+
 static struct cpufreq_driver msm_cpufreq_driver = {
 	/* lps calculations are handled here. */
-	.flags		= CPUFREQ_STICKY | CPUFREQ_CONST_LOOPS,
+	.flags		= CPUFREQ_STICKY | CPUFREQ_CONST_LOOPS |
+				CPUFREQ_NEED_INITIAL_FREQ_CHECK,
 	.init		= msm_cpufreq_init,
 	.verify		= msm_cpufreq_verify,
 	.target		= msm_cpufreq_target,
+	.resolve_freq	= msm_cpufreq_resolve_freq,
 	.get		= msm_cpufreq_get_freq,
 	.name		= "msm",
 	.attr		= msm_freq_attr,
+	.ready		= msm_cpufreq_ready,
 };
 
 static struct cpufreq_frequency_table *cpufreq_parse_dt(struct device *dev,
@@ -374,13 +400,13 @@ static struct cpufreq_frequency_table *cpufreq_parse_dt(struct device *dev,
 	return ftbl;
 }
 
-static int __init msm_cpufreq_probe(struct platform_device *pdev)
+static int msm_cpufreq_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	char clk_name[] = "cpu??_clk";
 	char tbl_name[] = "qcom,cpufreq-table-??";
 	struct clk *c;
-	int cpu;
+	int cpu, ret;
 	struct cpufreq_frequency_table *ftbl;
 
 	l2_clk = devm_clk_get(dev, "l2_clk");
@@ -407,7 +433,7 @@ static int __init msm_cpufreq_probe(struct platform_device *pdev)
 	if (!IS_ERR(ftbl)) {
 		for_each_possible_cpu(cpu)
 			per_cpu(freq_table, cpu) = ftbl;
-		return 0;
+		goto out_register;
 	}
 
 	/*
@@ -447,19 +473,28 @@ static int __init msm_cpufreq_probe(struct platform_device *pdev)
 		per_cpu(freq_table, cpu) = ftbl;
 	}
 
-	return 0;
+out_register:
+	ret = register_pm_notifier(&msm_cpufreq_pm_notifier);
+	if (ret)
+		return ret;
+
+	ret = cpufreq_register_driver(&msm_cpufreq_driver);
+	if (ret)
+		unregister_pm_notifier(&msm_cpufreq_pm_notifier);
+
+	return ret;
 }
 
-static struct of_device_id match_table[] = {
+static const struct of_device_id msm_cpufreq_match_table[] = {
 	{ .compatible = "qcom,msm-cpufreq" },
 	{}
 };
 
 static struct platform_driver msm_cpufreq_plat_driver = {
+	.probe = msm_cpufreq_probe,
 	.driver = {
 		.name = "msm-cpufreq",
-		.of_match_table = match_table,
-		.owner = THIS_MODULE,
+		.of_match_table = msm_cpufreq_match_table,
 	},
 };
 
@@ -470,27 +505,43 @@ static int __init msm_cpufreq_register(void)
 	for_each_possible_cpu(cpu) {
 		mutex_init(&(per_cpu(suspend_data, cpu).suspend_mutex));
 		per_cpu(suspend_data, cpu).device_suspended = 0;
+		per_cpu(cached_resolve_freq, cpu) = UINT_MAX;
 	}
 
-	rc = platform_driver_probe(&msm_cpufreq_plat_driver,
-				   msm_cpufreq_probe);
+	rc = platform_driver_register(&msm_cpufreq_plat_driver);
 	if (rc < 0) {
 		/* Unblock hotplug if msm-cpufreq probe fails */
-		unregister_hotcpu_notifier(&msm_cpufreq_cpu_notifier);
+		cpuhp_remove_state_nocalls(CPUHP_QCOM_CPUFREQ_PREPARE);
+		cpuhp_remove_state_nocalls(CPUHP_AP_QCOM_CPUFREQ_STARTING);
 		for_each_possible_cpu(cpu)
 			mutex_destroy(&(per_cpu(suspend_data, cpu).
 					suspend_mutex));
 		return rc;
 	}
 
-	register_pm_notifier(&msm_cpufreq_pm_notifier);
-	return cpufreq_register_driver(&msm_cpufreq_driver);
+	return 0;
 }
 
 subsys_initcall(msm_cpufreq_register);
 
 static int __init msm_cpufreq_early_register(void)
 {
-	return register_hotcpu_notifier(&msm_cpufreq_cpu_notifier);
+	int ret;
+
+	ret = cpuhp_setup_state_nocalls(CPUHP_AP_QCOM_CPUFREQ_STARTING,
+					"AP_QCOM_CPUFREQ_STARTING",
+					qcom_cpufreq_starting_cpu,
+					qcom_cpufreq_dying_cpu);
+	if (ret)
+		return ret;
+
+	ret = cpuhp_setup_state_nocalls(CPUHP_QCOM_CPUFREQ_PREPARE,
+					"QCOM_CPUFREQ_PREPARE",
+					qcom_cpufreq_up_cpu,
+					qcom_cpufreq_dead_cpu);
+	if (!ret)
+		return ret;
+	cpuhp_remove_state_nocalls(CPUHP_AP_QCOM_CPUFREQ_STARTING);
+	return ret;
 }
 core_initcall(msm_cpufreq_early_register);

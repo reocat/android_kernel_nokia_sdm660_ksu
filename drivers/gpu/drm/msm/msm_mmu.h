@@ -37,12 +37,12 @@ enum msm_iommu_domain_type {
 };
 
 struct msm_mmu_funcs {
-	int (*attach)(struct msm_mmu *mmu, const char **names, int cnt);
-	void (*detach)(struct msm_mmu *mmu);
+	int (*attach)(struct msm_mmu *mmu, const char * const *names, int cnt);
+	void (*detach)(struct msm_mmu *mmu, const char * const *names, int cnt);
 	int (*map)(struct msm_mmu *mmu, uint64_t iova, struct sg_table *sgt,
-			u32 flags, void *priv);
-	void (*unmap)(struct msm_mmu *mmu, uint64_t iova, struct sg_table *sgt,
-			void *priv);
+			unsigned int len, int prot);
+	int (*unmap)(struct msm_mmu *mmu, uint64_t iova, struct sg_table *sgt,
+			unsigned int len);
 	void (*destroy)(struct msm_mmu *mmu);
 	void (*enable)(struct msm_mmu *mmu);
 	void (*disable)(struct msm_mmu *mmu);
@@ -57,6 +57,8 @@ struct msm_mmu_funcs {
 struct msm_mmu {
 	const struct msm_mmu_funcs *funcs;
 	struct device *dev;
+	int (*handler)(void *arg, unsigned long iova, int flags);
+	void *arg;
 };
 
 static inline void msm_mmu_init(struct msm_mmu *mmu, struct device *dev,
@@ -96,5 +98,12 @@ void __exit msm_smmu_driver_cleanup(void);
 /* register custom fault handler for a specific domain */
 void msm_smmu_register_fault_handler(struct msm_mmu *mmu,
 	iommu_fault_handler_t handler);
+
+static inline void msm_mmu_set_fault_handler(struct msm_mmu *mmu, void *arg,
+		int (*handler)(void *arg, unsigned long iova, int flags))
+{
+	mmu->arg = arg;
+	mmu->handler = handler;
+}
 
 #endif /* __MSM_MMU_H__ */

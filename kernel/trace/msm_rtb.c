@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/atomic.h>
@@ -18,7 +10,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/mod_devicetable.h>
 #include <linux/platform_device.h>
-#include <linux/sched.h>
+#include <linux/sched/clock.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/atomic.h>
@@ -157,7 +149,6 @@ static void uncached_logk_pc_idx(enum logk_event_type log_type, uint64_t caller,
 	msm_rtb_write_cyclecount(start);
 	mb();
 
-	return;
 }
 
 static void uncached_logk_timestamp(int idx)
@@ -300,12 +291,14 @@ static int msm_rtb_probe(struct platform_device *pdev)
 	md_entry.virt_addr = (uintptr_t)msm_rtb.rtb;
 	md_entry.phys_addr = msm_rtb.phys;
 	md_entry.size = msm_rtb.size;
-	if (msm_minidump_add_region(&md_entry))
+	md_entry.id = MINIDUMP_DEFAULT_ID;
+	if (msm_minidump_add_region(&md_entry) < 0)
 		pr_info("Failed to add RTB in Minidump\n");
 
 #if defined(CONFIG_QCOM_RTB_SEPARATE_CPUS)
 	for_each_possible_cpu(cpu) {
 		atomic_t *a = &per_cpu(msm_rtb_idx_cpu, cpu);
+
 		atomic_set(a, cpu);
 	}
 	msm_rtb.step_size = num_possible_cpus();
@@ -320,27 +313,17 @@ static int msm_rtb_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id msm_match_table[] = {
+static const struct of_device_id msm_match_table[] = {
 	{.compatible = RTB_COMPAT_STR},
 	{},
 };
 
 static struct platform_driver msm_rtb_driver = {
+	.probe = msm_rtb_probe,
 	.driver         = {
 		.name = "msm_rtb",
 		.owner = THIS_MODULE,
 		.of_match_table = msm_match_table
 	},
 };
-
-static int __init msm_rtb_init(void)
-{
-	return platform_driver_probe(&msm_rtb_driver, msm_rtb_probe);
-}
-
-static void __exit msm_rtb_exit(void)
-{
-	platform_driver_unregister(&msm_rtb_driver);
-}
-module_init(msm_rtb_init)
-module_exit(msm_rtb_exit)
+module_platform_driver(msm_rtb_driver);

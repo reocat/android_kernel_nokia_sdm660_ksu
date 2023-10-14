@@ -44,6 +44,12 @@
 
 static struct workqueue_struct *irqfd_cleanup_wq;
 
+bool __attribute__((weak))
+kvm_arch_irqfd_allowed(struct kvm *kvm, struct kvm_irqfd *args)
+{
+	return true;
+}
+
 static void
 irqfd_inject(struct work_struct *work)
 {
@@ -188,17 +194,17 @@ int __attribute__((weak)) kvm_arch_set_irq_inatomic(
  * Called with wqh->lock held and interrupts disabled
  */
 static int
-irqfd_wakeup(wait_queue_t *wait, unsigned mode, int sync, void *key)
+irqfd_wakeup(wait_queue_entry_t *wait, unsigned mode, int sync, void *key)
 {
 	struct kvm_kernel_irqfd *irqfd =
 		container_of(wait, struct kvm_kernel_irqfd, wait);
-	unsigned long flags = (unsigned long)key;
+	__poll_t flags = key_to_poll(key);
 	struct kvm_kernel_irq_routing_entry irq;
 	struct kvm *kvm = irqfd->kvm;
 	unsigned seq;
 	int idx;
 
-	if (flags & POLLIN) {
+	if (flags & EPOLLIN) {
 		idx = srcu_read_lock(&kvm->irq_srcu);
 		do {
 			seq = read_seqcount_begin(&irqfd->irq_entry_sc);
@@ -212,7 +218,7 @@ irqfd_wakeup(wait_queue_t *wait, unsigned mode, int sync, void *key)
 		srcu_read_unlock(&kvm->irq_srcu, idx);
 	}
 
-	if (flags & POLLHUP) {
+	if (flags & EPOLLHUP) {
 		/* The eventfd is closing, detach from KVM */
 		unsigned long flags;
 
@@ -291,11 +297,14 @@ kvm_irqfd_assign(struct kvm *kvm, struct kvm_irqfd *args)
 	struct fd f;
 	struct eventfd_ctx *eventfd = NULL, *resamplefd = NULL;
 	int ret;
-	unsigned int events;
+	__poll_t events;
 	int idx;
 
 	if (!kvm_arch_intc_initialized(kvm))
 		return -EAGAIN;
+
+	if (!kvm_arch_irqfd_allowed(kvm, args))
+		return -EINVAL;
 
 	irqfd = kzalloc(sizeof(*irqfd), GFP_KERNEL);
 	if (!irqfd)
@@ -400,28 +409,30 @@ kvm_irqfd_assign(struct kvm *kvm, struct kvm_irqfd *args)
 	 * Check if there was an event already pending on the eventfd
 	 * before we registered, and trigger it as if we didn't miss it.
 	 */
-	events = f.file->f_op->poll(f.file, &irqfd->pt);
+	events = vfs_poll(f.file, &irqfd->pt);
 
-	if (events & POLLIN)
+	if (events & EPOLLIN)
 		schedule_work(&irqfd->inject);
 
 #ifdef CONFIG_HAVE_KVM_IRQ_BYPASS
-	irqfd->consumer.token = (void *)irqfd->eventfd;
-	irqfd->consumer.add_producer = kvm_arch_irq_bypass_add_producer;
-	irqfd->consumer.del_producer = kvm_arch_irq_bypass_del_producer;
-	irqfd->consumer.stop = kvm_arch_irq_bypass_stop;
-	irqfd->consumer.start = kvm_arch_irq_bypass_start;
-	ret = irq_bypass_register_consumer(&irqfd->consumer);
-	if (ret)
-		pr_info("irq bypass consumer (token %p) registration fails: %d\n",
+	if (kvm_arch_has_irq_bypass()) {
+		irqfd->consumer.token = (void *)irqfd->eventfd;
+		irqfd->consumer.add_producer = kvm_arch_irq_bypass_add_producer;
+		irqfd->consumer.del_producer = kvm_arch_irq_bypass_del_producer;
+		irqfd->consumer.stop = kvm_arch_irq_bypass_stop;
+		irqfd->consumer.start = kvm_arch_irq_bypass_start;
+		ret = irq_bypass_register_consumer(&irqfd->consumer);
+		if (ret)
+			pr_info("irq bypass consumer (token %p) registration fails: %d\n",
 				irqfd->consumer.token, ret);
+	}
 #endif
 
 	srcu_read_unlock(&kvm->irq_srcu, idx);
 
 	/*
 	 * do not drop the file until the irqfd is fully initialized, otherwise
-	 * we might race against the POLLHUP
+	 * we might race against the EPOLLHUP
 	 */
 	fdput(f);
 	return 0;
@@ -493,7 +504,7 @@ void kvm_register_irq_ack_notifier(struct kvm *kvm,
 	mutex_lock(&kvm->irq_lock);
 	hlist_add_head_rcu(&kian->link, &kvm->irq_ack_notifier_list);
 	mutex_unlock(&kvm->irq_lock);
-	kvm_vcpu_request_scan_ioapic(kvm);
+	kvm_arch_post_irq_ack_notifier_list_update(kvm);
 }
 
 void kvm_unregister_irq_ack_notifier(struct kvm *kvm,
@@ -503,7 +514,7 @@ void kvm_unregister_irq_ack_notifier(struct kvm *kvm,
 	hlist_del_init_rcu(&kian->link);
 	mutex_unlock(&kvm->irq_lock);
 	synchronize_srcu(&kvm->irq_srcu);
-	kvm_vcpu_request_scan_ioapic(kvm);
+	kvm_arch_post_irq_ack_notifier_list_update(kvm);
 }
 #endif
 
@@ -627,12 +638,12 @@ void kvm_irq_routing_update(struct kvm *kvm)
 
 /*
  * create a host-wide workqueue for issuing deferred shutdown requests
- * aggregated from all vm* instances. We need our own isolated single-thread
- * queue to prevent deadlock against flushing the normal work-queue.
+ * aggregated from all vm* instances. We need our own isolated
+ * queue to ease flushing work items when a VM exits.
  */
 int kvm_irqfd_init(void)
 {
-	irqfd_cleanup_wq = create_singlethread_workqueue("kvm-irqfd-cleanup");
+	irqfd_cleanup_wq = alloc_workqueue("kvm-irqfd-cleanup", 0, 0);
 	if (!irqfd_cleanup_wq)
 		return -ENOMEM;
 
@@ -828,7 +839,7 @@ static int kvm_assign_ioeventfd_idx(struct kvm *kvm,
 	if (ret < 0)
 		goto unlock_fail;
 
-	kvm->buses[bus_idx]->ioeventfd_count++;
+	kvm_get_bus(kvm, bus_idx)->ioeventfd_count++;
 	list_add_tail(&p->list, &kvm->ioeventfds);
 
 	mutex_unlock(&kvm->slots_lock);
@@ -851,6 +862,7 @@ kvm_deassign_ioeventfd_idx(struct kvm *kvm, enum kvm_bus bus_idx,
 {
 	struct _ioeventfd        *p, *tmp;
 	struct eventfd_ctx       *eventfd;
+	struct kvm_io_bus	 *bus;
 	int                       ret = -ENOENT;
 
 	eventfd = eventfd_ctx_fdget(args->fd);
@@ -873,8 +885,9 @@ kvm_deassign_ioeventfd_idx(struct kvm *kvm, enum kvm_bus bus_idx,
 			continue;
 
 		kvm_io_bus_unregister_dev(kvm, bus_idx, &p->dev);
-		if (kvm->buses[bus_idx])
-			kvm->buses[bus_idx]->ioeventfd_count--;
+		bus = kvm_get_bus(kvm, bus_idx);
+		if (bus)
+			bus->ioeventfd_count--;
 		ioeventfd_release(p);
 		ret = 0;
 		break;

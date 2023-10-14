@@ -80,7 +80,6 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct squashfs_sb_info *msblk;
 	struct squashfs_super_block *sblk = NULL;
-	char b[BDEVNAME_SIZE];
 	struct inode *root;
 	long long root_inode;
 	unsigned short flags;
@@ -124,8 +123,8 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_magic = le32_to_cpu(sblk->s_magic);
 	if (sb->s_magic != SQUASHFS_MAGIC) {
 		if (!silent)
-			ERROR("Can't find a SQUASHFS superblock on %s\n",
-						bdevname(sb->s_bdev, b));
+			ERROR("Can't find a SQUASHFS superblock on %pg\n",
+						sb->s_bdev);
 		goto failed_mount;
 	}
 
@@ -153,7 +152,7 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 	 * Check the system page size is not larger than the filesystem
 	 * block size (by default 128K).  This is currently not supported.
 	 */
-	if (PAGE_CACHE_SIZE > msblk->block_size) {
+	if (PAGE_SIZE > msblk->block_size) {
 		ERROR("Page size > filesystem block size (%d).  This is "
 			"currently not supported!\n", msblk->block_size);
 		goto failed_mount;
@@ -180,7 +179,7 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 	msblk->ids = le16_to_cpu(sblk->no_ids);
 	flags = le16_to_cpu(sblk->flags);
 
-	TRACE("Found valid superblock on %s\n", bdevname(sb->s_bdev, b));
+	TRACE("Found valid superblock on %pg\n", sb->s_bdev);
 	TRACE("Inodes are %scompressed\n", SQUASHFS_UNCOMPRESSED_INODES(flags)
 				? "un" : "");
 	TRACE("Data is %scompressed\n", SQUASHFS_UNCOMPRESSED_DATA(flags)
@@ -198,7 +197,7 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 		(u64) le64_to_cpu(sblk->id_table_start));
 
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
-	sb->s_flags |= MS_RDONLY;
+	sb->s_flags |= SB_RDONLY;
 	sb->s_op = &squashfs_super_ops;
 
 	err = -ENOMEM;
@@ -375,7 +374,7 @@ static int squashfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 static int squashfs_remount(struct super_block *sb, int *flags, char *data)
 {
 	sync_filesystem(sb);
-	*flags |= MS_RDONLY;
+	*flags |= SB_RDONLY;
 	return 0;
 }
 
@@ -421,7 +420,8 @@ static int __init init_inodecache(void)
 {
 	squashfs_inode_cachep = kmem_cache_create("squashfs_inode_cache",
 		sizeof(struct squashfs_inode_info), 0,
-		SLAB_HWCACHE_ALIGN|SLAB_RECLAIM_ACCOUNT, init_once);
+		SLAB_HWCACHE_ALIGN|SLAB_RECLAIM_ACCOUNT|SLAB_ACCOUNT,
+		init_once);
 
 	return squashfs_inode_cachep ? 0 : -ENOMEM;
 }

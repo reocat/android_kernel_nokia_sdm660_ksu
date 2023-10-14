@@ -20,7 +20,7 @@
 
 static void perf_output_wakeup(struct perf_output_handle *handle)
 {
-	atomic_set(&handle->rb->poll, POLLIN);
+	atomic_set(&handle->rb->poll, EPOLLIN);
 
 	handle->event->pending_wakeup = 1;
 	irq_work_queue(&handle->event->pending);
@@ -101,7 +101,7 @@ again:
 	 * See perf_output_begin().
 	 */
 	smp_wmb(); /* B, matches C */
-	rb->user_page->data_head = head;
+	WRITE_ONCE(rb->user_page->data_head, head);
 
 	/*
 	 * We must publish the head before decrementing the nest count,
@@ -128,8 +128,21 @@ out:
 	preempt_enable();
 }
 
-int perf_output_begin(struct perf_output_handle *handle,
-		      struct perf_event *event, unsigned int size)
+static __always_inline bool
+ring_buffer_has_space(unsigned long head, unsigned long tail,
+		      unsigned long data_size, unsigned int size,
+		      bool backward)
+{
+	if (!backward)
+		return CIRC_SPACE(head, tail, data_size) >= size;
+	else
+		return CIRC_SPACE(tail, head, data_size) >= size;
+}
+
+static __always_inline int
+__perf_output_begin(struct perf_output_handle *handle,
+		    struct perf_event *event, unsigned int size,
+		    bool backward)
 {
 	struct ring_buffer *rb;
 	unsigned long tail, offset, head;
@@ -151,8 +164,11 @@ int perf_output_begin(struct perf_output_handle *handle,
 	if (unlikely(!rb))
 		goto out;
 
-	if (unlikely(!rb->nr_pages))
+	if (unlikely(rb->paused)) {
+		if (rb->nr_pages)
+			local_inc(&rb->lost);
 		goto out;
+	}
 
 	handle->rb    = rb;
 	handle->event = event;
@@ -169,9 +185,12 @@ int perf_output_begin(struct perf_output_handle *handle,
 	do {
 		tail = READ_ONCE(rb->user_page->data_tail);
 		offset = head = local_read(&rb->head);
-		if (!rb->overwrite &&
-		    unlikely(CIRC_SPACE(head, tail, perf_data_size(rb)) < size))
-			goto fail;
+		if (!rb->overwrite) {
+			if (unlikely(!ring_buffer_has_space(head, tail,
+							    perf_data_size(rb),
+							    size, backward)))
+				goto fail;
+		}
 
 		/*
 		 * The above forms a control dependency barrier separating the
@@ -185,8 +204,16 @@ int perf_output_begin(struct perf_output_handle *handle,
 		 * See perf_output_put_handle().
 		 */
 
-		head += size;
+		if (!backward)
+			head += size;
+		else
+			head -= size;
 	} while (local_cmpxchg(&rb->head, offset, head) != offset);
+
+	if (backward) {
+		offset = head;
+		head = (u64)(-head);
+	}
 
 	/*
 	 * We rely on the implied barrier() by local_cmpxchg() to ensure
@@ -229,6 +256,26 @@ out:
 	return -ENOSPC;
 }
 
+int perf_output_begin_forward(struct perf_output_handle *handle,
+			     struct perf_event *event, unsigned int size)
+{
+	return __perf_output_begin(handle, event, size, false);
+}
+
+int perf_output_begin_backward(struct perf_output_handle *handle,
+			       struct perf_event *event, unsigned int size)
+{
+	return __perf_output_begin(handle, event, size, true);
+}
+
+int perf_output_begin(struct perf_output_handle *handle,
+		      struct perf_event *event, unsigned int size)
+{
+
+	return __perf_output_begin(handle, event, size,
+				   unlikely(is_write_backward(event)));
+}
+
 unsigned int perf_output_copy(struct perf_output_handle *handle,
 		      const void *buf, unsigned int len)
 {
@@ -267,7 +314,27 @@ ring_buffer_init(struct ring_buffer *rb, long watermark, int flags)
 
 	INIT_LIST_HEAD(&rb->event_list);
 	spin_lock_init(&rb->event_lock);
+
+	/*
+	 * perf_output_begin() only checks rb->paused, therefore
+	 * rb->paused must be true if we have no pages for output.
+	 */
+	if (!rb->nr_pages)
+		rb->paused = 1;
 }
+
+void perf_aux_output_flag(struct perf_output_handle *handle, u64 flags)
+{
+	/*
+	 * OVERWRITE is determined by perf_aux_output_end() and can't
+	 * be passed in directly.
+	 */
+	if (WARN_ON_ONCE(flags & PERF_AUX_FLAG_OVERWRITE))
+		return;
+
+	handle->aux_flags |= flags;
+}
+EXPORT_SYMBOL_GPL(perf_aux_output_flag);
 
 /*
  * This is called before hardware starts writing to the AUX area to
@@ -302,7 +369,21 @@ void *perf_aux_output_begin(struct perf_output_handle *handle,
 	if (!rb)
 		return NULL;
 
-	if (!rb_has_aux(rb) || !atomic_inc_not_zero(&rb->aux_refcount))
+	if (!rb_has_aux(rb))
+		goto err;
+
+	/*
+	 * If aux_mmap_count is zero, the aux buffer is in perf_mmap_close(),
+	 * about to get freed, so we leave immediately.
+	 *
+	 * Checking rb::aux_mmap_count and rb::refcount has to be done in
+	 * the same order, see perf_mmap_close. Otherwise we end up freeing
+	 * aux pages in this path, which is a bug, because in_atomic().
+	 */
+	if (!atomic_read(&rb->aux_mmap_count))
+		goto err;
+
+	if (!atomic_inc_not_zero(&rb->aux_refcount))
 		goto err;
 
 	/*
@@ -319,12 +400,13 @@ void *perf_aux_output_begin(struct perf_output_handle *handle,
 	if (WARN_ON_ONCE(local_xchg(&rb->aux_nest, 1)))
 		goto err_put;
 
-	aux_head = local_read(&rb->aux_head);
+	aux_head = rb->aux_head;
 
 	handle->rb = rb;
 	handle->event = event;
 	handle->head = aux_head;
 	handle->size = 0;
+	handle->aux_flags = 0;
 
 	/*
 	 * In overwrite mode, AUX data stores do not depend on aux_tail,
@@ -332,8 +414,8 @@ void *perf_aux_output_begin(struct perf_output_handle *handle,
 	 * (B) <-> (C) ordering is still observed by the pmu driver.
 	 */
 	if (!rb->aux_overwrite) {
-		aux_tail = ACCESS_ONCE(rb->user_page->aux_tail);
-		handle->wakeup = local_read(&rb->aux_wakeup) + rb->aux_watermark;
+		aux_tail = READ_ONCE(rb->user_page->aux_tail);
+		handle->wakeup = rb->aux_wakeup + rb->aux_watermark;
 		if (aux_head - aux_tail < perf_aux_size(rb))
 			handle->size = CIRC_SPACE(aux_head, aux_tail, perf_aux_size(rb));
 
@@ -343,7 +425,7 @@ void *perf_aux_output_begin(struct perf_output_handle *handle,
 		 * store that will be enabled on successful return
 		 */
 		if (!handle->size) { /* A, matches D */
-			event->pending_disable = 1;
+			event->pending_disable = smp_processor_id();
 			perf_output_wakeup(handle);
 			local_set(&rb->aux_nest, 0);
 			goto err_put;
@@ -362,6 +444,20 @@ err:
 
 	return NULL;
 }
+EXPORT_SYMBOL_GPL(perf_aux_output_begin);
+
+static __always_inline bool rb_need_aux_wakeup(struct ring_buffer *rb)
+{
+	if (rb->aux_overwrite)
+		return false;
+
+	if (rb->aux_head - rb->aux_wakeup >= rb->aux_watermark) {
+		rb->aux_wakeup = rounddown(rb->aux_head, rb->aux_watermark);
+		return true;
+	}
+
+	return false;
+}
 
 /*
  * Commit the data written by hardware into the ring buffer by adjusting
@@ -373,46 +469,42 @@ err:
  * of the AUX buffer management code is that after pmu::stop(), the AUX
  * transaction must be stopped and therefore drop the AUX reference count.
  */
-void perf_aux_output_end(struct perf_output_handle *handle, unsigned long size,
-			 bool truncated)
+void perf_aux_output_end(struct perf_output_handle *handle, unsigned long size)
 {
+	bool wakeup = !!(handle->aux_flags & PERF_AUX_FLAG_TRUNCATED);
 	struct ring_buffer *rb = handle->rb;
 	bool wakeup = truncated;
 	unsigned long aux_head;
-	u64 flags = 0;
-
-	if (truncated)
-		flags |= PERF_AUX_FLAG_TRUNCATED;
 
 	/* in overwrite mode, driver provides aux_head via handle */
 	if (rb->aux_overwrite) {
-		flags |= PERF_AUX_FLAG_OVERWRITE;
+		handle->aux_flags |= PERF_AUX_FLAG_OVERWRITE;
 
 		aux_head = handle->head;
-		local_set(&rb->aux_head, aux_head);
+		rb->aux_head = aux_head;
 	} else {
-		aux_head = local_read(&rb->aux_head);
-		local_add(size, &rb->aux_head);
+		handle->aux_flags &= ~PERF_AUX_FLAG_OVERWRITE;
+
+		aux_head = rb->aux_head;
+		rb->aux_head += size;
 	}
 
-	if (size || flags) {
+	if (size || handle->aux_flags) {
 		/*
 		 * Only send RECORD_AUX if we have something useful to communicate
 		 */
 
-		perf_event_aux_event(handle->event, aux_head, size, flags);
+		perf_event_aux_event(handle->event, aux_head, size,
+		                     handle->aux_flags);
 	}
 
-	aux_head = rb->user_page->aux_head = local_read(&rb->aux_head);
-
-	if (aux_head - local_read(&rb->aux_wakeup) >= rb->aux_watermark) {
+	WRITE_ONCE(rb->user_page->aux_head, rb->aux_head);
+	if (rb_need_aux_wakeup(rb))
 		wakeup = true;
-		local_add(rb->aux_watermark, &rb->aux_wakeup);
-	}
 
 	if (wakeup) {
-		if (truncated)
-			handle->event->pending_disable = 1;
+		if (handle->aux_flags & PERF_AUX_FLAG_TRUNCATED)
+			handle->event->pending_disable = smp_processor_id();
 		perf_output_wakeup(handle);
 	}
 
@@ -423,6 +515,7 @@ void perf_aux_output_end(struct perf_output_handle *handle, unsigned long size,
 	rb_free_aux(rb);
 	ring_buffer_put(rb);
 }
+EXPORT_SYMBOL_GPL(perf_aux_output_end);
 
 /*
  * Skip over a given number of bytes in the AUX buffer, due to, for example,
@@ -431,26 +524,24 @@ void perf_aux_output_end(struct perf_output_handle *handle, unsigned long size,
 int perf_aux_output_skip(struct perf_output_handle *handle, unsigned long size)
 {
 	struct ring_buffer *rb = handle->rb;
-	unsigned long aux_head;
 
 	if (size > handle->size)
 		return -ENOSPC;
 
-	local_add(size, &rb->aux_head);
+	rb->aux_head += size;
 
-	aux_head = rb->user_page->aux_head = local_read(&rb->aux_head);
-	if (aux_head - local_read(&rb->aux_wakeup) >= rb->aux_watermark) {
+	WRITE_ONCE(rb->user_page->aux_head, rb->aux_head);
+	if (rb_need_aux_wakeup(rb)) {
 		perf_output_wakeup(handle);
-		local_add(rb->aux_watermark, &rb->aux_wakeup);
-		handle->wakeup = local_read(&rb->aux_wakeup) +
-				 rb->aux_watermark;
+		handle->wakeup = rb->aux_wakeup + rb->aux_watermark;
 	}
 
-	handle->head = aux_head;
+	handle->head = rb->aux_head;
 	handle->size -= size;
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(perf_aux_output_skip);
 
 void *perf_get_aux(struct perf_output_handle *handle)
 {
@@ -460,6 +551,7 @@ void *perf_get_aux(struct perf_output_handle *handle)
 
 	return handle->rb->aux_priv;
 }
+EXPORT_SYMBOL_GPL(perf_get_aux);
 
 #define PERF_AUX_GFP	(GFP_KERNEL | __GFP_ZERO | __GFP_NOWARN | __GFP_NORETRY)
 
@@ -533,7 +625,7 @@ int rb_alloc_aux(struct ring_buffer *rb, struct perf_event *event,
 	int ret = -ENOMEM, max_order = 0;
 
 	if (!has_aux(event))
-		return -ENOTSUPP;
+		return -EOPNOTSUPP;
 
 	if (event->pmu->capabilities & PERF_PMU_CAP_AUX_NO_SG) {
 		/*
@@ -555,7 +647,8 @@ int rb_alloc_aux(struct ring_buffer *rb, struct perf_event *event,
 		}
 	}
 
-	rb->aux_pages = kzalloc_node(nr_pages * sizeof(void *), GFP_KERNEL, node);
+	rb->aux_pages = kcalloc_node(nr_pages, sizeof(void *), GFP_KERNEL,
+				     node);
 	if (!rb->aux_pages)
 		return -ENOMEM;
 
@@ -785,8 +878,10 @@ struct ring_buffer *rb_alloc(int nr_pages, long watermark, int cpu, int flags)
 
 	rb->user_page = all_buf;
 	rb->data_pages[0] = all_buf + PAGE_SIZE;
-	rb->page_order = ilog2(nr_pages);
-	rb->nr_pages = !!nr_pages;
+	if (nr_pages) {
+		rb->nr_pages = 1;
+		rb->page_order = ilog2(nr_pages);
+	}
 
 	ring_buffer_init(rb, watermark, flags);
 

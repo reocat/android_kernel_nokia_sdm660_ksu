@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /**
  * ulpi.c - DesignWare USB3 Controller's ULPI PHY interface
  *
  * Copyright (C) 2015 Intel Corporation
  *
  * Author: Heikki Krogerus <heikki.krogerus@linux.intel.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/delay.h>
@@ -39,7 +36,7 @@ static int dwc3_ulpi_busyloop(struct dwc3 *dwc, u8 addr, bool read)
 	while (count--) {
 		ndelay(ns);
 		reg = dwc3_readl(dwc->regs, DWC3_GUSB2PHYACC(0));
-		if (!(reg & DWC3_GUSB2PHYACC_BUSY))
+		if (reg & DWC3_GUSB2PHYACC_DONE)
 			return 0;
 		cpu_relax();
 	}
@@ -47,11 +44,17 @@ static int dwc3_ulpi_busyloop(struct dwc3 *dwc, u8 addr, bool read)
 	return -ETIMEDOUT;
 }
 
-static int dwc3_ulpi_read(struct ulpi_ops *ops, u8 addr)
+static int dwc3_ulpi_read(struct device *dev, u8 addr)
 {
-	struct dwc3 *dwc = dev_get_drvdata(ops->dev);
+	struct dwc3 *dwc = dev_get_drvdata(dev);
 	u32 reg;
 	int ret;
+
+	reg = dwc3_readl(dwc->regs, DWC3_GUSB2PHYCFG(0));
+	if (reg & DWC3_GUSB2PHYCFG_SUSPHY) {
+		reg &= ~DWC3_GUSB2PHYCFG_SUSPHY;
+		dwc3_writel(dwc->regs, DWC3_GUSB2PHYCFG(0), reg);
+	}
 
 	reg = DWC3_GUSB2PHYACC_NEWREGREQ | DWC3_ULPI_ADDR(addr);
 	dwc3_writel(dwc->regs, DWC3_GUSB2PHYACC(0), reg);
@@ -65,10 +68,16 @@ static int dwc3_ulpi_read(struct ulpi_ops *ops, u8 addr)
 	return DWC3_GUSB2PHYACC_DATA(reg);
 }
 
-static int dwc3_ulpi_write(struct ulpi_ops *ops, u8 addr, u8 val)
+static int dwc3_ulpi_write(struct device *dev, u8 addr, u8 val)
 {
-	struct dwc3 *dwc = dev_get_drvdata(ops->dev);
+	struct dwc3 *dwc = dev_get_drvdata(dev);
 	u32 reg;
+
+	reg = dwc3_readl(dwc->regs, DWC3_GUSB2PHYCFG(0));
+	if (reg & DWC3_GUSB2PHYCFG_SUSPHY) {
+		reg &= ~DWC3_GUSB2PHYCFG_SUSPHY;
+		dwc3_writel(dwc->regs, DWC3_GUSB2PHYCFG(0), reg);
+	}
 
 	reg = DWC3_GUSB2PHYACC_NEWREGREQ | DWC3_ULPI_ADDR(addr);
 	reg |= DWC3_GUSB2PHYACC_WRITE | val;
@@ -77,7 +86,7 @@ static int dwc3_ulpi_write(struct ulpi_ops *ops, u8 addr, u8 val)
 	return dwc3_ulpi_busyloop(dwc, addr, false);
 }
 
-static struct ulpi_ops dwc3_ulpi_ops = {
+static const struct ulpi_ops dwc3_ulpi_ops = {
 	.read = dwc3_ulpi_read,
 	.write = dwc3_ulpi_write,
 };

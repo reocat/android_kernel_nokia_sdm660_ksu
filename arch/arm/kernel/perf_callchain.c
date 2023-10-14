@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * ARM callchain support
  *
@@ -75,7 +76,7 @@ perf_callchain_user(struct perf_callchain_entry_ctx *entry, struct pt_regs *regs
 
 	tail = (struct frame_tail __user *)regs->ARM_fp - 1;
 
-	while ((entry->entry->nr < entry->max_stack) &&
+	while ((entry->nr < entry->max_stack) &&
 	       tail && !((unsigned long)tail & 0x3))
 		tail = user_backtrace(tail, entry);
 }

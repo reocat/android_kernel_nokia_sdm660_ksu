@@ -170,7 +170,8 @@ static int elan_smbus_get_version(struct i2c_client *client,
 }
 
 static int elan_smbus_get_sm_version(struct i2c_client *client,
-				     u8 *ic_type, u8 *version)
+				     u16 *ic_type, u8 *version,
+				     u8 *clickpad)
 {
 	int error;
 	u8 val[I2C_SMBUS_BLOCK_MAX] = {0};
@@ -184,6 +185,7 @@ static int elan_smbus_get_sm_version(struct i2c_client *client,
 
 	*version = val[0];
 	*ic_type = val[1];
+	*clickpad = val[0] & 0x10;
 	return 0;
 }
 
@@ -226,11 +228,13 @@ static int elan_smbus_get_checksum(struct i2c_client *client,
 static int elan_smbus_get_max(struct i2c_client *client,
 			      unsigned int *max_x, unsigned int *max_y)
 {
+	int ret;
 	int error;
 	u8 val[I2C_SMBUS_BLOCK_MAX] = {0};
 
-	error = i2c_smbus_read_block_data(client, ETP_SMBUS_RANGE_CMD, val);
-	if (error) {
+	ret = i2c_smbus_read_block_data(client, ETP_SMBUS_RANGE_CMD, val);
+	if (ret != 3) {
+		error = ret < 0 ? ret : -EIO;
 		dev_err(&client->dev, "failed to get dimensions: %d\n", error);
 		return error;
 	}
@@ -244,12 +248,13 @@ static int elan_smbus_get_max(struct i2c_client *client,
 static int elan_smbus_get_resolution(struct i2c_client *client,
 				     u8 *hw_res_x, u8 *hw_res_y)
 {
+	int ret;
 	int error;
 	u8 val[I2C_SMBUS_BLOCK_MAX] = {0};
 
-	error = i2c_smbus_read_block_data(client,
-					  ETP_SMBUS_RESOLUTION_CMD, val);
-	if (error) {
+	ret = i2c_smbus_read_block_data(client, ETP_SMBUS_RESOLUTION_CMD, val);
+	if (ret != 3) {
+		error = ret < 0 ? ret : -EIO;
 		dev_err(&client->dev, "failed to get resolution: %d\n", error);
 		return error;
 	}
@@ -264,12 +269,13 @@ static int elan_smbus_get_num_traces(struct i2c_client *client,
 				     unsigned int *x_traces,
 				     unsigned int *y_traces)
 {
+	int ret;
 	int error;
 	u8 val[I2C_SMBUS_BLOCK_MAX] = {0};
 
-	error = i2c_smbus_read_block_data(client,
-					  ETP_SMBUS_XY_TRACENUM_CMD, val);
-	if (error) {
+	ret = i2c_smbus_read_block_data(client, ETP_SMBUS_XY_TRACENUM_CMD, val);
+	if (ret != 3) {
+		error = ret < 0 ? ret : -EIO;
 		dev_err(&client->dev, "failed to get trace info: %d\n", error);
 		return error;
 	}
@@ -381,7 +387,7 @@ static int elan_smbus_prepare_fw_update(struct i2c_client *client)
 		len = i2c_smbus_read_block_data(client,
 						ETP_SMBUS_IAP_PASSWORD_READ,
 						val);
-		if (len < sizeof(u16)) {
+		if (len < (int)sizeof(u16)) {
 			error = len < 0 ? len : -EIO;
 			dev_err(dev, "failed to read iap password: %d\n",
 				error);
@@ -497,6 +503,12 @@ static int elan_smbus_finish_fw_update(struct i2c_client *client,
 	return 0;
 }
 
+static int elan_smbus_get_pattern(struct i2c_client *client, u8 *pattern)
+{
+	*pattern = 0;
+	return 0;
+}
+
 const struct elan_transport_ops elan_smbus_ops = {
 	.initialize		= elan_smbus_initialize,
 	.sleep_control		= elan_smbus_sleep_control,
@@ -526,4 +538,5 @@ const struct elan_transport_ops elan_smbus_ops = {
 	.finish_fw_update	= elan_smbus_finish_fw_update,
 
 	.get_report		= elan_smbus_get_report,
+	.get_pattern		= elan_smbus_get_pattern,
 };

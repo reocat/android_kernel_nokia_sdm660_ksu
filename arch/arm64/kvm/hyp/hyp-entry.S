@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 - ARM Ltd
+ * Copyright (C) 2015-2018 - ARM Ltd
  * Author: Marc Zyngier <marc.zyngier@arm.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -15,45 +15,60 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <linux/arm-smccc.h>
 #include <linux/linkage.h>
 
 #include <asm/alternative.h>
 #include <asm/assembler.h>
-#include <asm/asm-offsets.h>
 #include <asm/cpufeature.h>
 #include <asm/kvm_arm.h>
 #include <asm/kvm_asm.h>
 #include <asm/kvm_mmu.h>
+#include <asm/mmu.h>
+
+.macro save_caller_saved_regs_vect
+	/* x0 and x1 were saved in the vector entry */
+	stp	x2, x3,   [sp, #-16]!
+	stp	x4, x5,   [sp, #-16]!
+	stp	x6, x7,   [sp, #-16]!
+	stp	x8, x9,   [sp, #-16]!
+	stp	x10, x11, [sp, #-16]!
+	stp	x12, x13, [sp, #-16]!
+	stp	x14, x15, [sp, #-16]!
+	stp	x16, x17, [sp, #-16]!
+.endm
+
+.macro restore_caller_saved_regs_vect
+	ldp	x16, x17, [sp], #16
+	ldp	x14, x15, [sp], #16
+	ldp	x12, x13, [sp], #16
+	ldp	x10, x11, [sp], #16
+	ldp	x8, x9,   [sp], #16
+	ldp	x6, x7,   [sp], #16
+	ldp	x4, x5,   [sp], #16
+	ldp	x2, x3,   [sp], #16
+	ldp	x0, x1,   [sp], #16
+.endm
 
 	.text
 	.pushsection	.hyp.text, "ax"
-
-.macro	save_x0_to_x3
-	stp	x0, x1, [sp, #-16]!
-	stp	x2, x3, [sp, #-16]!
-.endm
-
-.macro	restore_x0_to_x3
-	ldp	x2, x3, [sp], #16
-	ldp	x0, x1, [sp], #16
-.endm
 
 .macro do_el2_call
 	/*
 	 * Shuffle the parameters before calling the function
 	 * pointed to in x0. Assumes parameters in x[1,2,3].
 	 */
+	str	lr, [sp, #-16]!
 	mov	lr, x0
 	mov	x0, x1
 	mov	x1, x2
 	mov	x2, x3
 	blr	lr
+	ldr	lr, [sp], #16
 .endm
 
 ENTRY(__vhe_hyp_call)
-	str	lr, [sp, #-16]!
 	do_el2_call
-	ldr	lr, [sp], #16
 	/*
 	 * We used to rely on having an exception return to get
 	 * an implicit isb. In the E2H case, we don't have it anymore.
@@ -63,26 +78,39 @@ ENTRY(__vhe_hyp_call)
 	isb
 	ret
 ENDPROC(__vhe_hyp_call)
-	
+
 el1_sync:				// Guest trapped into EL2
-	save_x0_to_x3
 
-	mrs	x1, esr_el2
-	lsr	x2, x1, #ESR_ELx_EC_SHIFT
-
-	cmp	x2, #ESR_ELx_EC_HVC64
+	mrs	x0, esr_el2
+	lsr	x0, x0, #ESR_ELx_EC_SHIFT
+	cmp	x0, #ESR_ELx_EC_HVC64
+	ccmp	x0, #ESR_ELx_EC_HVC32, #4, ne
 	b.ne	el1_trap
 
-	mrs	x3, vttbr_el2		// If vttbr is valid, the 64bit guest
-	cbnz	x3, el1_trap		// called HVC
+	mrs	x1, vttbr_el2		// If vttbr is valid, the guest
+	cbnz	x1, el1_hvc_guest	// called HVC
 
 	/* Here, we're pretty sure the host called HVC. */
-	restore_x0_to_x3
+	ldp	x0, x1, [sp], #16
 
-	cmp	x0, #HVC_GET_VECTORS
-	b.ne	1f
-	mrs	x0, vbar_el2
-	b	2f
+	/* Check for a stub HVC call */
+	cmp	x0, #HVC_STUB_HCALL_NR
+	b.hs	1f
+
+	/*
+	 * Compute the idmap address of __kvm_handle_stub_hvc and
+	 * jump there. Since we use kimage_voffset, do not use the
+	 * HYP VA for __kvm_handle_stub_hvc, but the kernel VA instead
+	 * (by loading it from the constant pool).
+	 *
+	 * Preserve x0-x4, which may contain stub parameters.
+	 */
+	ldr	x5, =__kvm_handle_stub_hvc
+	ldr_l	x6, kimage_voffset
+
+	/* x5 = __pa(x5) */
+	sub	x5, x5, x6
+	br	x5
 
 1:
 	/*
@@ -91,89 +119,96 @@ el1_sync:				// Guest trapped into EL2
 	kern_hyp_va	x0
 	do_el2_call
 
-2:	eret
+	eret
+
+el1_hvc_guest:
+	/*
+	 * Fastest possible path for ARM_SMCCC_ARCH_WORKAROUND_1.
+	 * The workaround has already been applied on the host,
+	 * so let's quickly get back to the guest. We don't bother
+	 * restoring x1, as it can be clobbered anyway.
+	 */
+	ldr	x1, [sp]				// Guest's x0
+	eor	w1, w1, #ARM_SMCCC_ARCH_WORKAROUND_1
+	cbz	w1, wa_epilogue
+
+	/* ARM_SMCCC_ARCH_WORKAROUND_2 handling */
+	eor	w1, w1, #(ARM_SMCCC_ARCH_WORKAROUND_1 ^ \
+			  ARM_SMCCC_ARCH_WORKAROUND_2)
+	cbz	w1, wa_epilogue
+
+	eor	w1, w1, #(ARM_SMCCC_ARCH_WORKAROUND_2 ^ \
+			  ARM_SMCCC_ARCH_WORKAROUND_3)
+	cbnz	w1, el1_trap
+
+#ifdef CONFIG_ARM64_SSBD
+alternative_cb	arm64_enable_wa2_handling
+	b	wa2_end
+alternative_cb_end
+	get_vcpu_ptr	x2, x0
+	ldr	x0, [x2, #VCPU_WORKAROUND_FLAGS]
+
+	// Sanitize the argument and update the guest flags
+	ldr	x1, [sp, #8]			// Guest's x1
+	clz	w1, w1				// Murphy's device:
+	lsr	w1, w1, #5			// w1 = !!w1 without using
+	eor	w1, w1, #1			// the flags...
+	bfi	x0, x1, #VCPU_WORKAROUND_2_FLAG_SHIFT, #1
+	str	x0, [x2, #VCPU_WORKAROUND_FLAGS]
+
+	/* Check that we actually need to perform the call */
+	hyp_ldr_this_cpu x0, arm64_ssbd_callback_required, x2
+	cbz	x0, wa2_end
+
+	mov	w0, #ARM_SMCCC_ARCH_WORKAROUND_2
+	smc	#0
+
+	/* Don't leak data from the SMC call */
+	mov	x3, xzr
+wa2_end:
+	mov	x2, xzr
+	mov	x1, xzr
+#endif
+
+wa_epilogue:
+	mov	x0, xzr
+	add	sp, sp, #16
+	eret
 
 el1_trap:
-	/*
-	 * x1: ESR
-	 * x2: ESR_EC
-	 */
-
-	/* Guest accessed VFP/SIMD registers, save host, restore Guest */
-	cmp	x2, #ESR_ELx_EC_FP_ASIMD
-	b.eq	__fpsimd_guest_restore
-
-	cmp	x2, #ESR_ELx_EC_DABT_LOW
-	mov	x0, #ESR_ELx_EC_IABT_LOW
-	ccmp	x2, x0, #4, ne
-	b.ne	1f		// Not an abort we care about
-
-	/* This is an abort. Check for permission fault */
-alternative_if_not ARM64_WORKAROUND_834220
-	and	x2, x1, #ESR_ELx_FSC_TYPE
-	cmp	x2, #FSC_PERM
-	b.ne	1f		// Not a permission fault
-alternative_else
-	nop			// Use the permission fault path to
-	nop			// check for a valid S1 translation,
-	nop			// regardless of the ESR value.
-alternative_endif
-
-	/*
-	 * Check for Stage-1 page table walk, which is guaranteed
-	 * to give a valid HPFAR_EL2.
-	 */
-	tbnz	x1, #7, 1f	// S1PTW is set
-
-	/* Preserve PAR_EL1 */
-	mrs	x3, par_el1
-	stp	x3, xzr, [sp, #-16]!
-
-	/*
-	 * Permission fault, HPFAR_EL2 is invalid.
-	 * Resolve the IPA the hard way using the guest VA.
-	 * Stage-1 translation already validated the memory access rights.
-	 * As such, we can use the EL1 translation regime, and don't have
-	 * to distinguish between EL0 and EL1 access.
-	 */
-	mrs	x2, far_el2
-	at	s1e1r, x2
-	isb
-
-	/* Read result */
-	mrs	x3, par_el1
-	ldp	x0, xzr, [sp], #16	// Restore PAR_EL1 from the stack
-	msr	par_el1, x0
-	tbnz	x3, #0, 3f		// Bail out if we failed the translation
-	ubfx	x3, x3, #12, #36	// Extract IPA
-	lsl	x3, x3, #4		// and present it like HPFAR
-	b	2f
-
-1:	mrs	x3, hpfar_el2
-	mrs	x2, far_el2
-
-2:	mrs	x0, tpidr_el2
-	str	w1, [x0, #VCPU_ESR_EL2]
-	str	x2, [x0, #VCPU_FAR_EL2]
-	str	x3, [x0, #VCPU_HPFAR_EL2]
-
-	mov	x1, #ARM_EXCEPTION_TRAP
+	get_vcpu_ptr	x1, x0
+	mov	x0, #ARM_EXCEPTION_TRAP
 	b	__guest_exit
 
-	/*
-	 * Translation failed. Just return to the guest and
-	 * let it fault again. Another CPU is probably playing
-	 * behind our back.
-	 */
-3:	restore_x0_to_x3
+el1_irq:
+	get_vcpu_ptr	x1, x0
+	mov	x0, #ARM_EXCEPTION_IRQ
+	b	__guest_exit
+
+el1_error:
+	get_vcpu_ptr	x1, x0
+	mov	x0, #ARM_EXCEPTION_EL1_SERROR
+	b	__guest_exit
+
+el2_sync:
+	save_caller_saved_regs_vect
+	stp     x29, x30, [sp, #-16]!
+	bl	kvm_unexpected_el2_exception
+	ldp     x29, x30, [sp], #16
+	restore_caller_saved_regs_vect
 
 	eret
 
-el1_irq:
-	save_x0_to_x3
-	mrs	x0, tpidr_el2
-	mov	x1, #ARM_EXCEPTION_IRQ
-	b	__guest_exit
+el2_error:
+	save_caller_saved_regs_vect
+	stp     x29, x30, [sp, #-16]!
+
+	bl	kvm_unexpected_el2_exception
+
+	ldp     x29, x30, [sp], #16
+	restore_caller_saved_regs_vect
+
+	eret
 
 ENTRY(__hyp_do_panic)
 	mov	lr, #(PSR_F_BIT | PSR_I_BIT | PSR_A_BIT | PSR_D_BIT |\
@@ -183,6 +218,11 @@ ENTRY(__hyp_do_panic)
 	msr	elr_el2, lr
 	eret
 ENDPROC(__hyp_do_panic)
+
+ENTRY(__hyp_panic)
+	get_host_ctxt x0, x1
+	b	hyp_panic
+ENDPROC(__hyp_panic)
 
 .macro invalid_vector	label, target = __hyp_panic
 	.align	2
@@ -196,37 +236,166 @@ ENDPROC(\label)
 	invalid_vector	el2t_irq_invalid
 	invalid_vector	el2t_fiq_invalid
 	invalid_vector	el2t_error_invalid
-	invalid_vector	el2h_sync_invalid
 	invalid_vector	el2h_irq_invalid
 	invalid_vector	el2h_fiq_invalid
-	invalid_vector	el2h_error_invalid
-	invalid_vector	el1_sync_invalid
-	invalid_vector	el1_irq_invalid
 	invalid_vector	el1_fiq_invalid
-	invalid_vector	el1_error_invalid
 
 	.ltorg
 
 	.align 11
 
+.macro valid_vect target
+	.align 7
+	stp	x0, x1, [sp, #-16]!
+	b	\target
+.endm
+
+.macro invalid_vect target
+	.align 7
+	b	\target
+	ldp	x0, x1, [sp], #16
+	b	\target
+.endm
+
 ENTRY(__kvm_hyp_vector)
-	ventry	el2t_sync_invalid		// Synchronous EL2t
-	ventry	el2t_irq_invalid		// IRQ EL2t
-	ventry	el2t_fiq_invalid		// FIQ EL2t
-	ventry	el2t_error_invalid		// Error EL2t
+	invalid_vect	el2t_sync_invalid	// Synchronous EL2t
+	invalid_vect	el2t_irq_invalid	// IRQ EL2t
+	invalid_vect	el2t_fiq_invalid	// FIQ EL2t
+	invalid_vect	el2t_error_invalid	// Error EL2t
 
-	ventry	el2h_sync_invalid		// Synchronous EL2h
-	ventry	el2h_irq_invalid		// IRQ EL2h
-	ventry	el2h_fiq_invalid		// FIQ EL2h
-	ventry	el2h_error_invalid		// Error EL2h
+	valid_vect	el2_sync		// Synchronous EL2h
+	invalid_vect	el2h_irq_invalid	// IRQ EL2h
+	invalid_vect	el2h_fiq_invalid	// FIQ EL2h
+	valid_vect	el2_error		// Error EL2h
 
-	ventry	el1_sync			// Synchronous 64-bit EL1
-	ventry	el1_irq				// IRQ 64-bit EL1
-	ventry	el1_fiq_invalid			// FIQ 64-bit EL1
-	ventry	el1_error_invalid		// Error 64-bit EL1
+	valid_vect	el1_sync		// Synchronous 64-bit EL1
+	valid_vect	el1_irq			// IRQ 64-bit EL1
+	invalid_vect	el1_fiq_invalid		// FIQ 64-bit EL1
+	valid_vect	el1_error		// Error 64-bit EL1
 
-	ventry	el1_sync			// Synchronous 32-bit EL1
-	ventry	el1_irq				// IRQ 32-bit EL1
-	ventry	el1_fiq_invalid			// FIQ 32-bit EL1
-	ventry	el1_error_invalid		// Error 32-bit EL1
+	valid_vect	el1_sync		// Synchronous 32-bit EL1
+	valid_vect	el1_irq			// IRQ 32-bit EL1
+	invalid_vect	el1_fiq_invalid		// FIQ 32-bit EL1
+	valid_vect	el1_error		// Error 32-bit EL1
 ENDPROC(__kvm_hyp_vector)
+
+#ifdef CONFIG_KVM_INDIRECT_VECTORS
+.macro hyp_ventry
+	.align 7
+1:	.rept 27
+	nop
+	.endr
+/*
+ * The default sequence is to directly branch to the KVM vectors,
+ * using the computed offset. This applies for VHE as well as
+ * !ARM64_HARDEN_EL2_VECTORS.
+ *
+ * For ARM64_HARDEN_EL2_VECTORS configurations, this gets replaced
+ * with:
+ *
+ * stp	x0, x1, [sp, #-16]!
+ * movz	x0, #(addr & 0xffff)
+ * movk	x0, #((addr >> 16) & 0xffff), lsl #16
+ * movk	x0, #((addr >> 32) & 0xffff), lsl #32
+ * br	x0
+ *
+ * Where addr = kern_hyp_va(__kvm_hyp_vector) + vector-offset + 4.
+ * See kvm_patch_vector_branch for details.
+ */
+alternative_cb	kvm_patch_vector_branch
+	b	__kvm_hyp_vector + (1b - 0b)
+	nop
+	nop
+	nop
+	nop
+alternative_cb_end
+.endm
+
+.macro generate_vectors
+0:
+	.rept 16
+	hyp_ventry
+	.endr
+	.org 0b + SZ_2K		// Safety measure
+.endm
+
+	.align	11
+ENTRY(__bp_harden_hyp_vecs_start)
+	.rept BP_HARDEN_EL2_SLOTS
+	generate_vectors
+	.endr
+ENTRY(__bp_harden_hyp_vecs_end)
+
+	.popsection
+
+ENTRY(__smccc_workaround_1_smc_start)
+	sub	sp, sp, #(8 * 4)
+	stp	x2, x3, [sp, #(8 * 0)]
+	stp	x0, x1, [sp, #(8 * 2)]
+	mov	w0, #ARM_SMCCC_ARCH_WORKAROUND_1
+	smc	#0
+	ldp	x2, x3, [sp, #(8 * 0)]
+	ldp	x0, x1, [sp, #(8 * 2)]
+	add	sp, sp, #(8 * 4)
+ENTRY(__smccc_workaround_1_smc_end)
+
+ENTRY(__smccc_workaround_3_smc_start)
+	esb
+	sub	sp, sp, #(8 * 4)
+	stp	x2, x3, [sp, #(8 * 0)]
+	stp	x0, x1, [sp, #(8 * 2)]
+	mov	w0, #ARM_SMCCC_ARCH_WORKAROUND_3
+	smc	#0
+	ldp	x2, x3, [sp, #(8 * 0)]
+	ldp	x0, x1, [sp, #(8 * 2)]
+	add	sp, sp, #(8 * 4)
+ENTRY(__smccc_workaround_3_smc_end)
+
+ENTRY(__spectre_bhb_loop_k8_start)
+	esb
+	sub	sp, sp, #(8 * 2)
+	stp	x0, x1, [sp, #(8 * 0)]
+	mov	x0, #8
+2:	b	. + 4
+	subs	x0, x0, #1
+	b.ne	2b
+	dsb	nsh
+	isb
+	ldp	x0, x1, [sp, #(8 * 0)]
+	add	sp, sp, #(8 * 2)
+ENTRY(__spectre_bhb_loop_k8_end)
+
+ENTRY(__spectre_bhb_loop_k24_start)
+	esb
+	sub	sp, sp, #(8 * 2)
+	stp	x0, x1, [sp, #(8 * 0)]
+	mov	x0, #24
+2:	b	. + 4
+	subs	x0, x0, #1
+	b.ne	2b
+	dsb	nsh
+	isb
+	ldp	x0, x1, [sp, #(8 * 0)]
+	add	sp, sp, #(8 * 2)
+ENTRY(__spectre_bhb_loop_k24_end)
+
+ENTRY(__spectre_bhb_loop_k32_start)
+	esb
+	sub	sp, sp, #(8 * 2)
+	stp	x0, x1, [sp, #(8 * 0)]
+	mov     x0, #32
+2:	b	. + 4
+	subs	x0, x0, #1
+	b.ne	2b
+	dsb	nsh
+	isb
+	ldp	x0, x1, [sp, #(8 * 0)]
+	add	sp, sp, #(8 * 2)
+ENTRY(__spectre_bhb_loop_k32_end)
+
+ENTRY(__spectre_bhb_clearbhb_start)
+	esb
+	clearbhb
+	isb
+ENTRY(__spectre_bhb_clearbhb_end)
+#endif

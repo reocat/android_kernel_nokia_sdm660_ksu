@@ -1,4 +1,5 @@
-/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2014-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,7 +18,7 @@
 #include <linux/pinctrl/consumer.h>
 #define SPI_DRV_NAME                  "spi_qsd"
 
-#if defined(CONFIG_SPI_QSD) || defined(CONFIG_SPI_QSD_MODULE)
+#if IS_ENABLED(CONFIG_SPI_QSD) || IS_ENABLED(CONFIG_SPI_QSD_MODULE)
 
 #define QSD_REG(x) (x)
 #define QUP_REG(x)
@@ -29,7 +30,7 @@
 #define QSD_REG(x)
 #define QUP_REG(x) (x)
 
-#define QUP_CONFIG                    0x0000 /* N & NO_INPUT/NO_OUPUT bits */
+#define QUP_CONFIG                    0x0000 /* N & NO_INPUT/NO_OUTPUT bits */
 #define QUP_ERROR_FLAGS_EN            0x030C
 #define QUP_ERR_MASK                  0x3
 #define SPI_OUTPUT_FIFO_WORD_CNT      0x010C
@@ -38,7 +39,6 @@
 #define QUP_MX_WRITE_CNT_CURRENT      0x0154
 
 #define QUP_CONFIG_SPI_MODE           0x0100
-#define QUP_CONFIG_SPI_SLAVE          0x0400
 #endif
 
 #define GSBI_CTRL_REG                 0x0
@@ -52,47 +52,38 @@
 
 #define QUP_ERROR_FLAGS               0x0308
 
-#define SPI_CONFIG                    QSD_REG(0x0000) QUP_REG(0x0300)
-#define SPI_IO_CONTROL                QSD_REG(0x0004) QUP_REG(0x0304)
-#define SPI_IO_MODES                  QSD_REG(0x0008) QUP_REG(0x0008)
-#define SPI_SW_RESET                  QSD_REG(0x000C) QUP_REG(0x000C)
-#define SPI_TIME_OUT_CURRENT          QSD_REG(0x0014) QUP_REG(0x0014)
-#define SPI_MX_OUTPUT_COUNT           QSD_REG(0x0018) QUP_REG(0x0100)
-#define SPI_MX_OUTPUT_CNT_CURRENT     QSD_REG(0x001C) QUP_REG(0x0104)
-#define SPI_MX_INPUT_COUNT            QSD_REG(0x0020) QUP_REG(0x0200)
-#define SPI_MX_INPUT_CNT_CURRENT      QSD_REG(0x0024) QUP_REG(0x0204)
-#define SPI_MX_READ_COUNT             QSD_REG(0x0028) QUP_REG(0x0208)
-#define SPI_MX_READ_CNT_CURRENT       QSD_REG(0x002C) QUP_REG(0x020C)
-#define SPI_OPERATIONAL               QSD_REG(0x0030) QUP_REG(0x0018)
-#define SPI_ERROR_FLAGS               QSD_REG(0x0034) QUP_REG(0x001C)
-#define SPI_ERROR_FLAGS_EN            QSD_REG(0x0038) QUP_REG(0x0020)
-#define SPI_DEASSERT_WAIT             QSD_REG(0x003C) QUP_REG(0x0310)
-#define SPI_OUTPUT_DEBUG              QSD_REG(0x0040) QUP_REG(0x0108)
-#define SPI_INPUT_DEBUG               QSD_REG(0x0044) QUP_REG(0x0210)
-#define SPI_TEST_CTRL                 QSD_REG(0x004C) QUP_REG(0x0024)
-#define SPI_OUTPUT_FIFO               QSD_REG(0x0100) QUP_REG(0x0110)
-#define SPI_INPUT_FIFO                QSD_REG(0x0200) QUP_REG(0x0218)
-#define SPI_STATE                     QSD_REG(SPI_OPERATIONAL) QUP_REG(0x0004)
-#define SPI_SLAVE_IRQ_STATUS		(0x0330)
-#define SPI_SLAVE_IRQ_EN		(0x0334)
-#define SPI_SLAVE_CONFIG		(0x0338)
+#define SPI_CONFIG                    (QSD_REG(0x0000) QUP_REG(0x0300))
+#define SPI_IO_CONTROL                (QSD_REG(0x0004) QUP_REG(0x0304))
+#define SPI_IO_MODES                  (QSD_REG(0x0008) QUP_REG(0x0008))
+#define SPI_SW_RESET                  (QSD_REG(0x000C) QUP_REG(0x000C))
+#define SPI_TIME_OUT_CURRENT          (QSD_REG(0x0014) QUP_REG(0x0014))
+#define SPI_MX_OUTPUT_COUNT           (QSD_REG(0x0018) QUP_REG(0x0100))
+#define SPI_MX_OUTPUT_CNT_CURRENT     (QSD_REG(0x001C) QUP_REG(0x0104))
+#define SPI_MX_INPUT_COUNT            (QSD_REG(0x0020) QUP_REG(0x0200))
+#define SPI_MX_INPUT_CNT_CURRENT      (QSD_REG(0x0024) QUP_REG(0x0204))
+#define SPI_MX_READ_COUNT             (QSD_REG(0x0028) QUP_REG(0x0208))
+#define SPI_MX_READ_CNT_CURRENT       (QSD_REG(0x002C) QUP_REG(0x020C))
+#define SPI_OPERATIONAL               (QSD_REG(0x0030) QUP_REG(0x0018))
+#define SPI_ERROR_FLAGS               (QSD_REG(0x0034) QUP_REG(0x001C))
+#define SPI_ERROR_FLAGS_EN            (QSD_REG(0x0038) QUP_REG(0x0020))
+#define SPI_DEASSERT_WAIT             (QSD_REG(0x003C) QUP_REG(0x0310))
+#define SPI_OUTPUT_DEBUG              (QSD_REG(0x0040) QUP_REG(0x0108))
+#define SPI_INPUT_DEBUG               (QSD_REG(0x0044) QUP_REG(0x0210))
+#define SPI_TEST_CTRL                 (QSD_REG(0x004C) QUP_REG(0x0024))
+#define SPI_OUTPUT_FIFO               (QSD_REG(0x0100) QUP_REG(0x0110))
+#define SPI_INPUT_FIFO                (QSD_REG(0x0200) QUP_REG(0x0218))
+#define SPI_STATE                     (QSD_REG(SPI_OPERATIONAL) QUP_REG(0x0004))
 
 /* QUP_CONFIG fields */
 #define SPI_CFG_N                     0x0000001F
 #define SPI_NO_INPUT                  0x00000080
 #define SPI_NO_OUTPUT                 0x00000040
 #define SPI_EN_EXT_OUT_FLAG           0x00010000
-#define QUP_CFG_MODE                  0x00000F00
-#define APP_CLK_ON_EN			BIT(12)
-#define CORE_CLK_ON_EN			BIT(13)
-#define FIFO_CLK_ON_EN			BIT(14)
-#define CORE_EX_CLK_ON_EN		BIT(15)
 
 /* SPI_CONFIG fields */
 #define SPI_CFG_LOOPBACK              0x00000100
 #define SPI_CFG_INPUT_FIRST           0x00000200
 #define SPI_CFG_HS_MODE               0x00000400
-#define SPI_CFG_SLAVE_OP              0x00000020
 
 /* SPI_IO_CONTROL fields */
 #define SPI_IO_C_FORCE_CS             0x00000800
@@ -105,22 +96,22 @@
 #define SPI_IO_C_NO_TRI_STATE         0x00000001
 
 /* SPI_IO_MODES fields */
-#define SPI_IO_M_OUTPUT_BIT_SHIFT_EN  QSD_REG(0x00004000) QUP_REG(0x00010000)
-#define SPI_IO_M_PACK_EN              QSD_REG(0x00002000) QUP_REG(0x00008000)
-#define SPI_IO_M_UNPACK_EN            QSD_REG(0x00001000) QUP_REG(0x00004000)
-#define SPI_IO_M_INPUT_MODE           QSD_REG(0x00000C00) QUP_REG(0x00003000)
-#define SPI_IO_M_OUTPUT_MODE          QSD_REG(0x00000300) QUP_REG(0x00000C00)
-#define SPI_IO_M_INPUT_FIFO_SIZE      QSD_REG(0x000000C0) QUP_REG(0x00000380)
-#define SPI_IO_M_INPUT_BLOCK_SIZE     QSD_REG(0x00000030) QUP_REG(0x00000060)
-#define SPI_IO_M_OUTPUT_FIFO_SIZE     QSD_REG(0x0000000C) QUP_REG(0x0000001C)
-#define SPI_IO_M_OUTPUT_BLOCK_SIZE    QSD_REG(0x00000003) QUP_REG(0x00000003)
+#define SPI_IO_M_OUTPUT_BIT_SHIFT_EN  (QSD_REG(0x00004000) QUP_REG(0x00010000))
+#define SPI_IO_M_PACK_EN              (QSD_REG(0x00002000) QUP_REG(0x00008000))
+#define SPI_IO_M_UNPACK_EN            (QSD_REG(0x00001000) QUP_REG(0x00004000))
+#define SPI_IO_M_INPUT_MODE           (QSD_REG(0x00000C00) QUP_REG(0x00003000))
+#define SPI_IO_M_OUTPUT_MODE          (QSD_REG(0x00000300) QUP_REG(0x00000C00))
+#define SPI_IO_M_INPUT_FIFO_SIZE      (QSD_REG(0x000000C0) QUP_REG(0x00000380))
+#define SPI_IO_M_INPUT_BLOCK_SIZE     (QSD_REG(0x00000030) QUP_REG(0x00000060))
+#define SPI_IO_M_OUTPUT_FIFO_SIZE     (QSD_REG(0x0000000C) QUP_REG(0x0000001C))
+#define SPI_IO_M_OUTPUT_BLOCK_SIZE    (QSD_REG(0x00000003) QUP_REG(0x00000003))
 
-#define INPUT_BLOCK_SZ_SHIFT          QSD_REG(4)          QUP_REG(5)
-#define INPUT_FIFO_SZ_SHIFT           QSD_REG(6)          QUP_REG(7)
-#define OUTPUT_BLOCK_SZ_SHIFT         QSD_REG(0)          QUP_REG(0)
-#define OUTPUT_FIFO_SZ_SHIFT          QSD_REG(2)          QUP_REG(2)
-#define OUTPUT_MODE_SHIFT             QSD_REG(8)          QUP_REG(10)
-#define INPUT_MODE_SHIFT              QSD_REG(10)         QUP_REG(12)
+#define INPUT_BLOCK_SZ_SHIFT          (QSD_REG(4)          QUP_REG(5))
+#define INPUT_FIFO_SZ_SHIFT           (QSD_REG(6)          QUP_REG(7))
+#define OUTPUT_BLOCK_SZ_SHIFT         (QSD_REG(0)          QUP_REG(0))
+#define OUTPUT_FIFO_SZ_SHIFT          (QSD_REG(2)          QUP_REG(2))
+#define OUTPUT_MODE_SHIFT             (QSD_REG(8)          QUP_REG(10))
+#define INPUT_MODE_SHIFT              (QSD_REG(10)         QUP_REG(12))
 
 /* SPI_OPERATIONAL fields */
 #define SPI_OP_IN_BLK_RD_REQ_FLAG     0x00002000
@@ -137,23 +128,6 @@
 #define SPI_OP_STATE                  0x00000003
 
 #define SPI_OP_STATE_CLEAR_BITS       0x2
-
-/* SPI SLAVE IRQ_STATUS/EN fields */
-#define CS_N_ASSERT			BIT(0)
-#define CS_N_DEASSERT			BIT(1)
-#define CS_N_ETXT			BIT(2)
-#define TX_UNDERFLOW			BIT(3)
-#define RX_OVERFLOW_WAIT_EOT		BIT(4)
-#define RX_OVERFLOW_NO_EOT		BIT(5)
-#define CS_N_ERXT			BIT(6)
-
-/* SPI_SLAVE_CONFIG Fields */
-#define RX_N_SHIFT			BIT(0)
-#define PAUSE_ON_ERR_DIS		BIT(1)
-#define SPI_S_CGC_EN			BIT(2)
-#define RX_UNBALANCED_MASK		BIT(3)
-#define SLAVE_DIS_RESET_ST		BIT(4)
-#define SLAVE_AUTO_PAUSE_EOT		BIT(7)
 
 #define SPI_PINCTRL_STATE_DEFAULT "spi_default"
 #define SPI_PINCTRL_STATE_SLEEP "spi_sleep"
@@ -173,8 +147,9 @@ enum msm_spi_state {
 #define SPI_ERR_CLK_UNDER_RUN_ERR     0x00000001
 
 /* We don't allow transactions larger than 4K-64 or 64K-64 due to
-   mx_input/output_cnt register size */
-#define SPI_MAX_TRANSFERS             QSD_REG(0xFC0) QUP_REG(0xFC0)
+ * mx_input/output_cnt register size
+ */
+#define SPI_MAX_TRANSFERS             (QSD_REG(0xFC0) QUP_REG(0xFC0))
 #define SPI_MAX_LEN                   (SPI_MAX_TRANSFERS * dd->bytes_per_word)
 
 #define SPI_NUM_CHIPSELECTS           4
@@ -204,7 +179,6 @@ enum msm_spi_state {
 enum msm_spi_qup_version {
 	SPI_QUP_VERSION_NONE    = 0x0,
 	SPI_QUP_VERSION_BFAM    = 0x2,
-	SPI_QUP_VERSION_SPI_SLV = 0x26,
 };
 
 enum msm_spi_pipe_direction {
@@ -259,38 +233,37 @@ static struct msm_spi_regs{
 	mode_t mode;
 	int offset;
 } debugfs_spi_regs[] = {
-	{"config",                S_IRUGO | S_IWUSR, SPI_CONFIG },
-	{"io_control",            S_IRUGO | S_IWUSR, SPI_IO_CONTROL },
-	{"io_modes",              S_IRUGO | S_IWUSR, SPI_IO_MODES },
-	{"sw_reset",                        S_IWUSR, SPI_SW_RESET },
-	{"time_out_current",      S_IRUGO,           SPI_TIME_OUT_CURRENT },
-	{"mx_output_count",       S_IRUGO | S_IWUSR, SPI_MX_OUTPUT_COUNT },
-	{"mx_output_cnt_current", S_IRUGO,
-						SPI_MX_OUTPUT_CNT_CURRENT },
-	{"mx_input_count",        S_IRUGO | S_IWUSR, SPI_MX_INPUT_COUNT },
-	{"mx_input_cnt_current",  S_IRUGO,           SPI_MX_INPUT_CNT_CURRENT },
-	{"mx_read_count",         S_IRUGO | S_IWUSR, SPI_MX_READ_COUNT, },
-	{"mx_read_cnt_current",   S_IRUGO,           SPI_MX_READ_CNT_CURRENT },
-	{"operational",           S_IRUGO | S_IWUSR, SPI_OPERATIONAL },
-	{"error_flags",           S_IRUGO | S_IWUSR, SPI_ERROR_FLAGS },
-	{"error_flags_en",        S_IRUGO | S_IWUSR, SPI_ERROR_FLAGS_EN },
-	{"deassert_wait",         S_IRUGO | S_IWUSR, SPI_DEASSERT_WAIT },
-	{"output_debug",          S_IRUGO,           SPI_OUTPUT_DEBUG },
-	{"input_debug",           S_IRUGO,           SPI_INPUT_DEBUG },
-	{"test_ctrl",             S_IRUGO | S_IWUSR, SPI_TEST_CTRL },
-	{"output_fifo",                     S_IWUSR, SPI_OUTPUT_FIFO },
-	{"input_fifo",		  S_IRUSR,           SPI_INPUT_FIFO },
-	{"spi_state",             S_IRUGO | S_IWUSR, SPI_STATE },
-#if defined(CONFIG_SPI_QSD) || defined(CONFIG_SPI_QSD_MODULE)
-	{"fifo_word_cnt",         S_IRUGO,           SPI_FIFO_WORD_CNT },
+	{"config",               0644,  SPI_CONFIG },
+	{"io_control",           0644,  SPI_IO_CONTROL },
+	{"io_modes",             0644,  SPI_IO_MODES },
+	{"sw_reset",             0200,  SPI_SW_RESET },
+	{"time_out_current",     0444,  SPI_TIME_OUT_CURRENT },
+	{"mx_output_count",      0644,  SPI_MX_OUTPUT_COUNT },
+	{"mx_output_cnt_current", 0444, SPI_MX_OUTPUT_CNT_CURRENT },
+	{"mx_input_count",       0644,  SPI_MX_INPUT_COUNT },
+	{"mx_input_cnt_current", 0444,  SPI_MX_INPUT_CNT_CURRENT },
+	{"mx_read_count",        0644,  SPI_MX_READ_COUNT },
+	{"mx_read_cnt_current",  0444,  SPI_MX_READ_CNT_CURRENT },
+	{"operational",          0644,  SPI_OPERATIONAL },
+	{"error_flags",          0644,  SPI_ERROR_FLAGS },
+	{"error_flags_en",       0644,  SPI_ERROR_FLAGS_EN },
+	{"deassert_wait",        0644,  SPI_DEASSERT_WAIT },
+	{"output_debug",         0444,  SPI_OUTPUT_DEBUG },
+	{"input_debug",          0444,  SPI_INPUT_DEBUG },
+	{"test_ctrl",            0644,  SPI_TEST_CTRL },
+	{"output_fifo",          0200,  SPI_OUTPUT_FIFO },
+	{"input_fifo",           0400,  SPI_INPUT_FIFO },
+	{"spi_state",            0644,  SPI_STATE },
+#if IS_ENABLED(CONFIG_SPI_QSD) || IS_ENABLED(CONFIG_SPI_QSD_MODULE)
+	{"fifo_word_cnt",        0444,  SPI_FIFO_WORD_CNT},
 #else
-	{"qup_config",            S_IRUGO | S_IWUSR, QUP_CONFIG },
-	{"qup_error_flags",       S_IRUGO | S_IWUSR, QUP_ERROR_FLAGS },
-	{"qup_error_flags_en",    S_IRUGO | S_IWUSR, QUP_ERROR_FLAGS_EN },
-	{"mx_write_cnt",          S_IRUGO | S_IWUSR, QUP_MX_WRITE_COUNT },
-	{"mx_write_cnt_current",  S_IRUGO,           QUP_MX_WRITE_CNT_CURRENT },
-	{"output_fifo_word_cnt",  S_IRUGO,           SPI_OUTPUT_FIFO_WORD_CNT },
-	{"input_fifo_word_cnt",   S_IRUGO,           SPI_INPUT_FIFO_WORD_CNT },
+	{"qup_config",           0644,  QUP_CONFIG},
+	{"qup_error_flags",      0644,  QUP_ERROR_FLAGS},
+	{"qup_error_flags_en",   0644,  QUP_ERROR_FLAGS_EN},
+	{"mx_write_cnt",         0644,  QUP_MX_WRITE_COUNT},
+	{"mx_write_cnt_current", 0444,  QUP_MX_WRITE_CNT_CURRENT},
+	{"output_fifo_word_cnt", 0444,  SPI_OUTPUT_FIFO_WORD_CNT},
+	{"input_fifo_word_cnt",  0444,  SPI_INPUT_FIFO_WORD_CNT},
 #endif
 };
 #endif
@@ -306,7 +279,7 @@ struct msm_spi_bam {
 	void __iomem            *base;
 	phys_addr_t              phys_addr;
 	uintptr_t                handle;
-	u32                      irq;
+	int                      irq;
 	struct msm_spi_bam_pipe  prod;
 	struct msm_spi_bam_pipe  cons;
 	bool                     deregister_required;
@@ -332,6 +305,7 @@ struct msm_spi {
 	struct msm_bus_client_handle *bus_cl_hdl;
 	unsigned long            mem_phys_addr;
 	size_t                   mem_size;
+	void			*ipc_logs; /* ipc logs handler */
 	int                      input_fifo_size;
 	int                      output_fifo_size;
 	u32                      rx_bytes_remaining;
@@ -342,7 +316,7 @@ struct msm_spi {
 	int                      write_xfr_cnt;
 	int                      write_len;
 	int                      read_len;
-#if defined(CONFIG_SPI_QSD) || defined(CONFIG_SPI_QSD_MODULE)
+#if IS_ENABLED(CONFIG_SPI_QSD) || IS_ENABLED(CONFIG_SPI_QSD_MODULE)
 	int                      irq_out;
 	int                      irq_err;
 #endif
@@ -358,8 +332,8 @@ struct msm_spi {
 	int                      tx_dma_crci;
 	int                      rx_dma_chan;
 	int                      rx_dma_crci;
-	int                      (*dma_init) (struct msm_spi *dd);
-	void                     (*dma_teardown) (struct msm_spi *dd);
+	int                      (*dma_init)(struct msm_spi *dd);
+	void                     (*dma_teardown)(struct msm_spi *dd);
 	struct msm_spi_bam       bam;
 	int                      input_block_size;
 	int                      output_block_size;
@@ -404,8 +378,6 @@ struct msm_spi {
 	struct pinctrl_state	*pins_sleep;
 	bool			is_init_complete;
 	bool			pack_words;
-	bool			slv_support;
-	atomic_t                qup_state;
 };
 
 /* Forward declaration */
@@ -418,7 +390,7 @@ static void msm_spi_write_word_to_fifo(struct msm_spi *dd);
 static inline void msm_spi_write_rmn_to_fifo(struct msm_spi *dd);
 static irqreturn_t msm_spi_qup_irq(int irq, void *dev_id);
 
-#if defined(CONFIG_SPI_QSD) || defined(CONFIG_SPI_QSD_MODULE)
+#if IS_ENABLED(CONFIG_SPI_QSD) || IS_ENABLED(CONFIG_SPI_QSD_MODULE)
 static inline void msm_spi_disable_irqs(struct msm_spi *dd)
 {
 	disable_irq(dd->irq_in);

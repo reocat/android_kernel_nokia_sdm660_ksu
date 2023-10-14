@@ -1628,7 +1628,6 @@ static struct clk_rcg sdc1_src = {
 			.parent_names = gcc_pxo_pll8,
 			.num_parents = 2,
 			.ops = &clk_rcg_ops,
-			.flags = CLK_SET_RATE_GATE,
 		},
 	}
 };
@@ -1677,7 +1676,6 @@ static struct clk_rcg sdc2_src = {
 			.parent_names = gcc_pxo_pll8,
 			.num_parents = 2,
 			.ops = &clk_rcg_ops,
-			.flags = CLK_SET_RATE_GATE,
 		},
 	}
 };
@@ -1726,7 +1724,6 @@ static struct clk_rcg sdc3_src = {
 			.parent_names = gcc_pxo_pll8,
 			.num_parents = 2,
 			.ops = &clk_rcg_ops,
-			.flags = CLK_SET_RATE_GATE,
 		},
 	}
 };
@@ -1775,7 +1772,6 @@ static struct clk_rcg sdc4_src = {
 			.parent_names = gcc_pxo_pll8,
 			.num_parents = 2,
 			.ops = &clk_rcg_ops,
-			.flags = CLK_SET_RATE_GATE,
 		},
 	}
 };
@@ -1824,7 +1820,6 @@ static struct clk_rcg sdc5_src = {
 			.parent_names = gcc_pxo_pll8,
 			.num_parents = 2,
 			.ops = &clk_rcg_ops,
-			.flags = CLK_SET_RATE_GATE,
 		},
 	}
 };
@@ -3461,7 +3456,6 @@ MODULE_DEVICE_TABLE(of, gcc_msm8960_match_table);
 
 static int gcc_msm8960_probe(struct platform_device *pdev)
 {
-	struct clk *clk;
 	struct device *dev = &pdev->dev;
 	const struct of_device_id *match;
 	struct platform_device *tsens;
@@ -3471,14 +3465,13 @@ static int gcc_msm8960_probe(struct platform_device *pdev)
 	if (!match)
 		return -EINVAL;
 
-	/* Temporary until RPM clocks supported */
-	clk = clk_register_fixed_rate(dev, "cxo", NULL, CLK_IS_ROOT, 19200000);
-	if (IS_ERR(clk))
-		return PTR_ERR(clk);
+	ret = qcom_cc_register_board_clk(dev, "cxo_board", "cxo", 19200000);
+	if (ret)
+		return ret;
 
-	clk = clk_register_fixed_rate(dev, "pxo", NULL, CLK_IS_ROOT, 27000000);
-	if (IS_ERR(clk))
-		return PTR_ERR(clk);
+	ret = qcom_cc_register_board_clk(dev, "pxo_board", "pxo", 27000000);
+	if (ret)
+		return ret;
 
 	ret = qcom_cc_probe(pdev, match->data);
 	if (ret)

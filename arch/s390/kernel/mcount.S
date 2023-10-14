@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright IBM Corp. 2008, 2009
  *
@@ -10,6 +11,10 @@
 #include <asm/ftrace.h>
 #include <asm/nospec-insn.h>
 #include <asm/ptrace.h>
+#include <asm/export.h>
+
+	GEN_BR_THUNK %r1
+	GEN_BR_THUNK %r14
 
 	GEN_BR_THUNK %r1
 	GEN_BR_THUNK %r14
@@ -33,12 +38,14 @@ ENTRY(ftrace_stub)
 ENTRY(_mcount)
 	BR_EX	%r14
 
+EXPORT_SYMBOL(_mcount)
+
 ENTRY(ftrace_caller)
 	.globl	ftrace_regs_caller
 	.set	ftrace_regs_caller,ftrace_caller
 	stg	%r14,(__SF_GPRS+8*8)(%r15)	# save traced function caller
 	lgr	%r1,%r15
-#ifndef CC_USING_HOTPATCH
+#if !(defined(CC_USING_HOTPATCH) || defined(CC_USING_NOP_MCOUNT))
 	aghi	%r0,MCOUNT_RETURN_FIXUP
 #endif
 	# allocate stack frame for ftrace_caller to contain traced function

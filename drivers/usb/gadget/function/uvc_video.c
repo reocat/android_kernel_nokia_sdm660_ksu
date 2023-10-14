@@ -1,13 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  *	uvc_video.c  --  USB Video Class Gadget driver
  *
  *	Copyright (C) 2009-2010
  *	    Laurent Pinchart (laurent.pinchart@ideasonboard.com)
- *
- *	This program is free software; you can redistribute it and/or modify
- *	it under the terms of the GNU General Public License as published by
- *	the Free Software Foundation; either version 2 of the License, or
- *	(at your option) any later version.
  */
 
 #include <linux/kernel.h>
@@ -137,7 +133,8 @@ static int uvcg_video_ep_queue(struct uvc_video *video, struct usb_request *req)
 	if (ret < 0) {
 		printk(KERN_INFO "Failed to queue request (%d).\n", ret);
 		/* Isochronous endpoints can't be halted. */
-		if (usb_endpoint_xfer_bulk(video->ep->desc))
+		if ((ret != -ESHUTDOWN) &&
+				usb_endpoint_xfer_bulk(video->ep->desc))
 			usb_ep_set_halt(video->ep);
 	}
 
@@ -253,7 +250,11 @@ uvc_video_alloc_requests(struct uvc_video *video)
 	unsigned int i;
 	int ret = -ENOMEM;
 
-	BUG_ON(video->req_size);
+	if (video->req_size) {
+		pr_err("%s: close the video node and reopen it\n",
+				__func__);
+		return -EBUSY;
+	}
 
 	req_size = video->ep->maxpacket
 		 * max_t(unsigned int, video->ep->maxburst, 1)

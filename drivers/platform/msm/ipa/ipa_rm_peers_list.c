@@ -1,13 +1,6 @@
-/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -30,12 +23,8 @@ static int ipa_rm_peers_list_get_resource_index(
 
 	if (IPA_RM_RESORCE_IS_PROD(resource_name))
 		resource_index = ipa_rm_prod_index(resource_name);
-	else if (IPA_RM_RESORCE_IS_CONS(resource_name)) {
+	else if (IPA_RM_RESORCE_IS_CONS(resource_name))
 		resource_index = ipa_rm_cons_index(resource_name);
-		if (resource_index != IPA_RM_INDEX_INVALID)
-			resource_index =
-				resource_index - IPA_RM_RESOURCE_PROD_MAX;
-	}
 
 	return resource_index;
 }
@@ -79,6 +68,7 @@ int ipa_rm_peers_list_create(int max_peers,
 
 list_alloc_fail:
 	kfree(*peers_list);
+	*peers_list = NULL;
 bail:
 	return result;
 }
@@ -204,22 +194,23 @@ bool ipa_rm_peers_list_check_dependency(
 {
 	bool result = false;
 	int resource_index;
+	struct ipa_rm_resource_peer *peer_ptr;
 
 	if (!resource_peers || !depends_on_peers || !userspace_dep)
 		return result;
 
 	resource_index = ipa_rm_peers_list_get_resource_index(depends_on_name);
-	if (resource_peers->peers[resource_index].resource != NULL) {
+	peer_ptr = &resource_peers->peers[resource_index];
+	if (peer_ptr->resource != NULL) {
 		result = true;
-		*userspace_dep = resource_peers->peers[resource_index].
-			userspace_dep;
+		*userspace_dep = peer_ptr->userspace_dep;
 	}
 
 	resource_index = ipa_rm_peers_list_get_resource_index(resource_name);
-	if (depends_on_peers->peers[resource_index].resource != NULL) {
+	peer_ptr = &depends_on_peers->peers[resource_index];
+	if (peer_ptr->resource != NULL) {
 		result = true;
-		*userspace_dep = depends_on_peers->peers[resource_index].
-			userspace_dep;
+		*userspace_dep = peer_ptr->userspace_dep;
 	}
 
 	return result;

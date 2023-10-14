@@ -1,13 +1,6 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/init.h>
@@ -100,7 +93,7 @@ ssize_t mpq_streambuffer_pkt_read(
 		struct mpq_streambuffer_packet_header *packet,
 		u8 *user_data)
 {
-	size_t ret;
+	int ret;
 	size_t read_len;
 
 	spin_lock(&sbuff->packet_data.lock);
@@ -345,12 +338,10 @@ ssize_t mpq_streambuffer_data_write(
 		if ((sbuff->pending_buffers_count == sbuff->buffers_num) ||
 			((desc->size - desc->write_ptr) < len)) {
 			MPQ_DVB_DBG_PRINT(
-				"%s: No space available! %d pending buffers out of %d total buffers. write_ptr=%d, size=%d\n",
-				__func__,
-				sbuff->pending_buffers_count,
-				sbuff->buffers_num,
-				desc->write_ptr,
-				desc->size);
+			  "%s: No space available %d pending buffers out of %d",
+			  __func__,
+			  sbuff->pending_buffers_count,
+			  sbuff->buffers_num);
 			spin_unlock(&sbuff->raw_data.lock);
 			return -ENOSPC;
 		}
@@ -397,7 +388,7 @@ int mpq_streambuffer_data_write_deposit(
 		if ((sbuff->pending_buffers_count == sbuff->buffers_num) ||
 			 ((desc->size - desc->write_ptr) < len)) {
 			MPQ_DVB_ERR_PRINT(
-				"%s: No space available!\n",
+				"%s: No space available\n",
 				__func__);
 			spin_unlock(&sbuff->raw_data.lock);
 			return -ENOSPC;

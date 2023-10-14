@@ -1,5 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -26,61 +27,47 @@
 #include <linux/regulator/consumer.h>
 #include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
-#include <linux/of_gpio.h>
-#include <linux/clk/msm-clk.h>
 #include <soc/qcom/subsystem_restart.h>
 #include <soc/qcom/ramdump.h>
-#include <soc/qcom/smem.h>
-#include <soc/qcom/smsm.h>
+#include <linux/soc/qcom/smem.h>
+#include <linux/soc/qcom/smem_state.h>
 
 #include "peripheral-loader.h"
 #include "pil-q6v5.h"
 #include "pil-msa.h"
 
-#define MAX_VDD_MSS_UV		1150000
 #define PROXY_TIMEOUT_MS	10000
-#define MAX_SSR_REASON_LEN	130U
+#define MAX_SSR_REASON_LEN	256U
 #define STOP_ACK_TIMEOUT_MS	1000
-
-/* FIH, to support fih apr { */
-//VNA-3504, add modem failure reason
-char fih_failure_reason[MAX_SSR_REASON_LEN];
-/* FIH, to support fih apr } */
 
 #define subsys_to_drv(d) container_of(d, struct modem_data, subsys_desc)
 
-static void log_modem_sfr(void)
+static void log_modem_sfr(struct modem_data *drv)
 {
-	u32 size;
+	size_t size;
 	char *smem_reason, reason[MAX_SSR_REASON_LEN];
 
-	smem_reason = smem_get_entry_no_rlock(SMEM_SSR_REASON_MSS0, &size, 0,
-							SMEM_ANY_HOST_FLAG);
-	if (!smem_reason || !size) {
-		pr_err("modem subsystem failure reason: (unknown, smem_get_entry_no_rlock failed).\n");
+	if (drv->q6->smem_id == -1)
+		return;
+
+	smem_reason = qcom_smem_get(QCOM_SMEM_HOST_ANY, drv->q6->smem_id,
+								&size);
+	if (IS_ERR(smem_reason) || !size) {
+		pr_err("modem SFR: (unknown, qcom_smem_get failed).\n");
 		return;
 	}
 	if (!smem_reason[0]) {
-		pr_err("modem subsystem failure reason: (unknown, empty string found).\n");
+		pr_err("modem SFR: (unknown, empty string found).\n");
 		return;
 	}
 
-	strlcpy(reason, smem_reason, min(size, MAX_SSR_REASON_LEN));
+	strlcpy(reason, smem_reason, min(size, (size_t)MAX_SSR_REASON_LEN));
 	pr_err("modem subsystem failure reason: %s.\n", reason);
-
-	/* FIH, to support fih apr { */
-	//VNA-3504, add modem failure reason
-	strlcpy(fih_failure_reason, smem_reason, min(size, MAX_SSR_REASON_LEN));
-	//pr_err("fih get failure reason: %s.\n", fih_failure_reason);
-	/* FIH, to support fih apr } */
-
-	smem_reason[0] = '\0';
-	wmb();
 }
 
 static void restart_modem(struct modem_data *drv)
 {
-	log_modem_sfr();
+	log_modem_sfr(drv);
 	drv->ignore_errors = true;
 	subsystem_restart_dev(drv->subsys);
 }
@@ -89,10 +76,11 @@ static irqreturn_t modem_err_fatal_intr_handler(int irq, void *dev_id)
 {
 	struct modem_data *drv = subsys_to_drv(dev_id);
 
-	/* Ignore if we're the one that set the force stop GPIO */
+	/* Ignore if we're the one that set the force stop BIT */
 	if (drv->crash_shutdown)
 		return IRQ_HANDLED;
 
+	pr_err("Fatal error on the modem.\n");
 	subsys_set_crash_status(drv->subsys, CRASH_STATUS_ERR_FATAL);
 	restart_modem(drv);
 	return IRQ_HANDLED;
@@ -101,8 +89,27 @@ static irqreturn_t modem_err_fatal_intr_handler(int irq, void *dev_id)
 static irqreturn_t modem_stop_ack_intr_handler(int irq, void *dev_id)
 {
 	struct modem_data *drv = subsys_to_drv(dev_id);
+
 	pr_info("Received stop ack interrupt from modem\n");
 	complete(&drv->stop_ack);
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t modem_shutdown_ack_intr_handler(int irq, void *dev_id)
+{
+	struct modem_data *drv = subsys_to_drv(dev_id);
+
+	pr_info("Received stop shutdown interrupt from modem\n");
+	complete_shutdown_ack(drv->subsys);
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t modem_ramdump_disable_intr_handler(int irq, void *dev_id)
+{
+	struct modem_data *drv = subsys_to_drv(dev_id);
+
+	pr_info("Received ramdump disable interrupt from modem\n");
+	drv->subsys_desc.ramdump_disable = 1;
 	return IRQ_HANDLED;
 }
 
@@ -115,19 +122,19 @@ static int modem_shutdown(const struct subsys_desc *subsys, bool force_stop)
 		return 0;
 
 	if (!subsys_get_crash_status(drv->subsys) && force_stop &&
-	    subsys->force_stop_gpio) {
-		gpio_set_value(subsys->force_stop_gpio, 1);
+	    subsys->force_stop_bit) {
+		qcom_smem_state_update_bits(subsys->state,
+				BIT(subsys->force_stop_bit), 1);
 		ret = wait_for_completion_timeout(&drv->stop_ack,
 				msecs_to_jiffies(STOP_ACK_TIMEOUT_MS));
 		if (!ret)
 			pr_warn("Timed out on stop ack from modem.\n");
-		gpio_set_value(subsys->force_stop_gpio, 0);
+		qcom_smem_state_update_bits(subsys->state,
+				BIT(subsys->force_stop_bit), 0);
 	}
 
-	if (drv->subsys_desc.ramdump_disable_gpio) {
-		drv->subsys_desc.ramdump_disable = gpio_get_value(
-					drv->subsys_desc.ramdump_disable_gpio);
-		 pr_warn("Ramdump disable gpio value is %d\n",
+	if (drv->subsys_desc.ramdump_disable_irq) {
+		pr_warn("Ramdump disable value is %d\n",
 			drv->subsys_desc.ramdump_disable);
 	}
 
@@ -157,11 +164,13 @@ static int modem_powerup(const struct subsys_desc *subsys)
 static void modem_crash_shutdown(const struct subsys_desc *subsys)
 {
 	struct modem_data *drv = subsys_to_drv(subsys);
+
 	drv->crash_shutdown = true;
 	if (!subsys_get_crash_status(drv->subsys) &&
-		subsys->force_stop_gpio) {
-		gpio_set_value(subsys->force_stop_gpio, 1);
-		mdelay(STOP_ACK_TIMEOUT_MS);
+		subsys->force_stop_bit) {
+		qcom_smem_state_update_bits(subsys->state,
+				BIT(subsys->force_stop_bit), 1);
+		msleep(STOP_ACK_TIMEOUT_MS);
 	}
 }
 
@@ -173,6 +182,15 @@ static int modem_ramdump(int enable, const struct subsys_desc *subsys)
 	if (!enable)
 		return 0;
 
+	ret = pil_mss_make_proxy_votes(&drv->q6->desc);
+	if (ret)
+		return ret;
+
+	ret = pil_mss_debug_reset(&drv->q6->desc);
+	if (ret)
+		return ret;
+
+	pil_mss_remove_proxy_votes(&drv->q6->desc);
 	ret = pil_mss_make_proxy_votes(&drv->q6->desc);
 	if (ret)
 		return ret;
@@ -197,12 +215,12 @@ static int modem_ramdump(int enable, const struct subsys_desc *subsys)
 static irqreturn_t modem_wdog_bite_intr_handler(int irq, void *dev_id)
 {
 	struct modem_data *drv = subsys_to_drv(dev_id);
+
 	if (drv->ignore_errors)
 		return IRQ_HANDLED;
 
 	pr_err("Watchdog bite received from modem software!\n");
-	if (drv->subsys_desc.system_debug &&
-			!gpio_get_value(drv->subsys_desc.err_fatal_gpio))
+	if (drv->subsys_desc.system_debug)
 		panic("%s: System ramdump requested. Triggering device restart!\n",
 							__func__);
 	subsys_set_crash_status(drv->subsys, CRASH_STATUS_WDOG_BITE);
@@ -213,11 +231,8 @@ static irqreturn_t modem_wdog_bite_intr_handler(int irq, void *dev_id)
 static int pil_subsys_init(struct modem_data *drv,
 					struct platform_device *pdev)
 {
-	int ret;
-	
-	// init the fih_failure_reason.
-	fih_failure_reason[0] = '\0';
-	
+	int ret = -EINVAL;
+
 	drv->subsys_desc.name = "modem";
 	drv->subsys_desc.dev = &pdev->dev;
 	drv->subsys_desc.owner = THIS_MODULE;
@@ -228,15 +243,40 @@ static int pil_subsys_init(struct modem_data *drv,
 	drv->subsys_desc.err_fatal_handler = modem_err_fatal_intr_handler;
 	drv->subsys_desc.stop_ack_handler = modem_stop_ack_intr_handler;
 	drv->subsys_desc.wdog_bite_handler = modem_wdog_bite_intr_handler;
+	drv->subsys_desc.ramdump_disable_handler =
+					modem_ramdump_disable_intr_handler;
+	drv->subsys_desc.shutdown_ack_handler = modem_shutdown_ack_intr_handler;
+
+	if (IS_ERR_OR_NULL(drv->q6)) {
+		ret = PTR_ERR(drv->q6);
+		dev_err(&pdev->dev, "Pil q6 data is err %pK %d!!!\n",
+			drv->q6, ret);
+		goto err_subsys;
+	}
 
 	drv->q6->desc.modem_ssr = false;
+	drv->q6->desc.signal_aop = of_property_read_bool(pdev->dev.of_node,
+						"qcom,signal-aop");
+	if (drv->q6->desc.signal_aop) {
+		drv->q6->desc.cl.dev = &pdev->dev;
+		drv->q6->desc.cl.tx_block = true;
+		drv->q6->desc.cl.tx_tout = 1000;
+		drv->q6->desc.cl.knows_txdone = false;
+		drv->q6->desc.mbox = mbox_request_channel(&drv->q6->desc.cl, 0);
+		if (IS_ERR(drv->q6->desc.mbox)) {
+			ret = PTR_ERR(drv->q6->desc.mbox);
+			dev_err(&pdev->dev, "Failed to get mailbox channel %pK %d\n",
+				drv->q6->desc.mbox, ret);
+			goto err_subsys;
+		}
+	}
+
 	drv->subsys = subsys_register(&drv->subsys_desc);
 	if (IS_ERR(drv->subsys)) {
 		ret = PTR_ERR(drv->subsys);
 		goto err_subsys;
 	}
 
-	drv->q6->desc.subsys_dev = drv->subsys;
 	drv->ramdump_dev = create_ramdump_device("modem", &pdev->dev);
 	if (!drv->ramdump_dev) {
 		pr_err("%s: Unable to create a modem ramdump device.\n",
@@ -283,31 +323,20 @@ static int pil_mss_loadable_init(struct modem_data *drv,
 
 	q6_desc->ops = &pil_msa_mss_ops;
 
+	q6_desc->sequential_loading = of_property_read_bool(pdev->dev.of_node,
+						"qcom,sequential-fw-load");
+	q6->reset_clk = of_property_read_bool(pdev->dev.of_node,
+							"qcom,reset-clk");
 	q6->self_auth = of_property_read_bool(pdev->dev.of_node,
 							"qcom,pil-self-auth");
 	if (q6->self_auth) {
 		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 						    "rmb_base");
 		q6->rmb_base = devm_ioremap_resource(&pdev->dev, res);
-		if (!q6->rmb_base)
-			return -ENOMEM;
+		if (IS_ERR(q6->rmb_base))
+			return PTR_ERR(q6->rmb_base);
 		drv->rmb_base = q6->rmb_base;
 		q6_desc->ops = &pil_msa_mss_ops_selfauth;
-	}
-
-	q6->cx_ipeak_vote = of_property_read_bool(pdev->dev.of_node,
-							"qcom,cx-ipeak-vote");
-	if (q6->cx_ipeak_vote) {
-		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
-						    "cxip_lm_vote_clear");
-		if (!res) {
-			dev_err(&pdev->dev, "Failed to get resource for ipeak reg\n");
-			return -EINVAL;
-		}
-		q6->cxip_lm_vote_clear = devm_ioremap(&pdev->dev,
-						res->start, resource_size(res));
-		if (!q6->cxip_lm_vote_clear)
-			return -ENOMEM;
 	}
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "restart_reg");
@@ -315,10 +344,9 @@ static int pil_mss_loadable_init(struct modem_data *drv,
 		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 							"restart_reg_sec");
 		if (!res) {
-			dev_err(&pdev->dev, "Failed to get resource for restart reg\n");
-			return -EINVAL;
+			dev_err(&pdev->dev, "No restart register defined\n");
+			return -ENOMEM;
 		}
-
 		q6->restart_reg_sec = true;
 	}
 
@@ -327,6 +355,27 @@ static int pil_mss_loadable_init(struct modem_data *drv,
 	if (!q6->restart_reg)
 		return -ENOMEM;
 
+	q6->pdc_sync = NULL;
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "pdc_sync");
+	if (res) {
+		q6->pdc_sync = devm_ioremap(&pdev->dev,
+						res->start, resource_size(res));
+		if (of_property_read_u32(pdev->dev.of_node,
+			"qcom,mss_pdc_offset", &q6->mss_pdc_offset)) {
+			dev_err(&pdev->dev,
+				"Offset for MSS PDC not specified\n");
+			return -EINVAL;
+		}
+
+	}
+
+	q6->alt_reset = NULL;
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "alt_reset");
+	if (res) {
+		q6->alt_reset = devm_ioremap(&pdev->dev,
+						res->start, resource_size(res));
+	}
+
 	q6->vreg = NULL;
 
 	prop = of_find_property(pdev->dev.of_node, "vdd_mss-supply", NULL);
@@ -334,19 +383,6 @@ static int pil_mss_loadable_init(struct modem_data *drv,
 		q6->vreg = devm_regulator_get(&pdev->dev, "vdd_mss");
 		if (IS_ERR(q6->vreg))
 			return PTR_ERR(q6->vreg);
-
-		ret = regulator_set_voltage(q6->vreg, VDD_MSS_UV,
-						MAX_VDD_MSS_UV);
-		if (ret)
-			dev_err(&pdev->dev, "Failed to set vreg voltage(rc:%d)\n",
-									ret);
-
-		ret = regulator_set_load(q6->vreg, 100000);
-		if (ret < 0) {
-			dev_err(&pdev->dev, "Failed to set vreg mode(rc:%d)\n",
-									ret);
-			return ret;
-		}
 	}
 
 	q6->vreg_mx = devm_regulator_get(&pdev->dev, "vdd_mx");
@@ -396,6 +432,19 @@ static int pil_mss_loadable_init(struct modem_data *drv,
 	if (of_property_match_string(pdev->dev.of_node,
 			"qcom,active-clock-names", "mnoc_axi_clk") >= 0)
 		q6->mnoc_axi_clk = devm_clk_get(&pdev->dev, "mnoc_axi_clk");
+
+	/* Defaulting smem_id to be not present */
+	q6->smem_id = -1;
+
+	if (of_find_property(pdev->dev.of_node, "qcom,smem-id", NULL)) {
+		ret = of_property_read_u32(pdev->dev.of_node, "qcom,smem-id",
+					   &q6->smem_id);
+		if (ret) {
+			dev_err(&pdev->dev, "Failed to get the smem_id(ret:%d)\n",
+				ret);
+			return ret;
+		}
+	}
 
 	ret = pil_desc_init(q6_desc);
 
@@ -465,11 +514,10 @@ static struct platform_driver pil_mba_mem_driver = {
 	.driver = {
 		.name = "pil-mba-mem",
 		.of_match_table = mba_mem_match_table,
-		.owner = THIS_MODULE,
 	},
 };
 
-static struct of_device_id mss_match_table[] = {
+static const struct of_device_id mss_match_table[] = {
 	{ .compatible = "qcom,pil-q6v5-mss" },
 	{ .compatible = "qcom,pil-q6v55-mss" },
 	{ .compatible = "qcom,pil-q6v56-mss" },
@@ -482,7 +530,6 @@ static struct platform_driver pil_mss_driver = {
 	.driver = {
 		.name = "pil-q6v5-mss",
 		.of_match_table = mss_match_table,
-		.owner = THIS_MODULE,
 	},
 };
 

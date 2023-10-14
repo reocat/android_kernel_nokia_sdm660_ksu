@@ -1,13 +1,6 @@
-/* Copyright (c) 2016, Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __LINUX_USB_USBPD_H
@@ -16,6 +9,7 @@
 #include <linux/list.h>
 
 struct usbpd;
+struct device;
 
 /* Standard IDs */
 #define USBPD_SID			0xff00
@@ -43,8 +37,13 @@ struct usbpd_svid_handler {
 	u16 svid;
 
 	/* Notified when VDM session established/reset; must be implemented */
-	void (*connect)(struct usbpd_svid_handler *hdlr);
+	void (*connect)(struct usbpd_svid_handler *hdlr,
+			bool supports_usb_comm);
 	void (*disconnect)(struct usbpd_svid_handler *hdlr);
+
+	/* DP driver -> PE driver for requesting USB SS lanes */
+	int (*request_usb_ss_lane)(struct usbpd *pd,
+			struct usbpd_svid_handler *hdlr);
 
 	/* Unstructured VDM */
 	void (*vdm_received)(struct usbpd_svid_handler *hdlr, u32 vdm_hdr,
@@ -101,6 +100,8 @@ int usbpd_send_svdm(struct usbpd *pd, u16 svid, u8 cmd,
  *         otherwise ORIENTATION_NONE if not attached
  */
 enum plug_orientation usbpd_get_plug_orientation(struct usbpd *pd);
+
+void usbpd_vdm_in_suspend(struct usbpd *pd, bool in_suspend);
 #else
 static inline struct usbpd *devm_usbpd_get_by_phandle(struct device *dev,
 		const char *phandle)
@@ -136,6 +137,8 @@ static inline enum plug_orientation usbpd_get_plug_orientation(struct usbpd *pd)
 {
 	return ORIENTATION_NONE;
 }
+
+static inline void usbpd_vdm_in_suspend(struct usbpd *pd, bool in_suspend) { }
 #endif /* IS_ENABLED(CONFIG_USB_PD_POLICY) */
 
 /*

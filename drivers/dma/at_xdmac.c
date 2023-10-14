@@ -443,9 +443,8 @@ static struct at_xdmac_desc *at_xdmac_alloc_desc(struct dma_chan *chan,
 	struct at_xdmac		*atxdmac = to_at_xdmac(chan->device);
 	dma_addr_t		phys;
 
-	desc = dma_pool_alloc(atxdmac->at_xdmac_desc_pool, gfp_flags, &phys);
+	desc = dma_pool_zalloc(atxdmac->at_xdmac_desc_pool, gfp_flags, &phys);
 	if (desc) {
-		memset(desc, 0, sizeof(*desc));
 		INIT_LIST_HEAD(&desc->descs_list);
 		dma_async_tx_descriptor_init(&desc->tx_dma_desc, chan);
 		desc->tx_dma_desc.tx_submit = at_xdmac_tx_submit;
@@ -455,7 +454,7 @@ static struct at_xdmac_desc *at_xdmac_alloc_desc(struct dma_chan *chan,
 	return desc;
 }
 
-void at_xdmac_init_used_desc(struct at_xdmac_desc *desc)
+static void at_xdmac_init_used_desc(struct at_xdmac_desc *desc)
 {
 	memset(&desc->lld, 0, sizeof(desc->lld));
 	INIT_LIST_HEAD(&desc->descs_list);
@@ -876,7 +875,7 @@ at_xdmac_interleaved_queue_desc(struct dma_chan *chan,
 	dwidth = at_xdmac_align_width(chan, src | dst | chunk->size);
 	if (chunk->size >= (AT_XDMAC_MBR_UBC_UBLEN_MAX << dwidth)) {
 		dev_dbg(chan2dev(chan),
-			"%s: chunk too big (%d, max size %lu)...\n",
+			"%s: chunk too big (%zu, max size %lu)...\n",
 			__func__, chunk->size,
 			AT_XDMAC_MBR_UBC_UBLEN_MAX << dwidth);
 		return NULL;
@@ -957,7 +956,7 @@ at_xdmac_prep_interleaved(struct dma_chan *chan,
 	if ((xt->numf > 1) && (xt->frame_size > 1))
 		return NULL;
 
-	dev_dbg(chan2dev(chan), "%s: src=%pad, dest=%pad, numf=%d, frame_size=%d, flags=0x%lx\n",
+	dev_dbg(chan2dev(chan), "%s: src=%pad, dest=%pad, numf=%zu, frame_size=%zu, flags=0x%lx\n",
 		__func__, &xt->src_start, &xt->dst_start,	xt->numf,
 		xt->frame_size, flags);
 
@@ -991,7 +990,7 @@ at_xdmac_prep_interleaved(struct dma_chan *chan,
 			dst_skip = chunk->size + dst_icg;
 
 			dev_dbg(chan2dev(chan),
-				"%s: chunk size=%d, src icg=%d, dst icg=%d\n",
+				"%s: chunk size=%zu, src icg=%zu, dst icg=%zu\n",
 				__func__, chunk->size, src_icg, dst_icg);
 
 			desc = at_xdmac_interleaved_queue_desc(chan, atchan,
@@ -1201,14 +1200,14 @@ static struct at_xdmac_desc *at_xdmac_memset_create_desc(struct dma_chan *chan,
 	return desc;
 }
 
-struct dma_async_tx_descriptor *
+static struct dma_async_tx_descriptor *
 at_xdmac_prep_dma_memset(struct dma_chan *chan, dma_addr_t dest, int value,
 			 size_t len, unsigned long flags)
 {
 	struct at_xdmac_chan	*atchan = to_at_xdmac_chan(chan);
 	struct at_xdmac_desc	*desc;
 
-	dev_dbg(chan2dev(chan), "%s: dest=%pad, len=%d, pattern=0x%x, flags=0x%lx\n",
+	dev_dbg(chan2dev(chan), "%s: dest=%pad, len=%zu, pattern=0x%x, flags=0x%lx\n",
 		__func__, &dest, len, value, flags);
 
 	if (unlikely(!len))
@@ -1392,7 +1391,7 @@ at_xdmac_tx_status(struct dma_chan *chan, dma_cookie_t cookie,
 {
 	struct at_xdmac_chan	*atchan = to_at_xdmac_chan(chan);
 	struct at_xdmac		*atxdmac = to_at_xdmac(atchan->chan.device);
-	struct at_xdmac_desc	*desc, *_desc;
+	struct at_xdmac_desc	*desc, *_desc, *iter;
 	struct list_head	*descs_list;
 	enum dma_status		ret;
 	int			residue, retry;
@@ -1507,11 +1506,13 @@ at_xdmac_tx_status(struct dma_chan *chan, dma_cookie_t cookie,
 	 * microblock.
 	 */
 	descs_list = &desc->descs_list;
-	list_for_each_entry_safe(desc, _desc, descs_list, desc_node) {
-		dwidth = at_xdmac_get_dwidth(desc->lld.mbr_cfg);
-		residue -= (desc->lld.mbr_ubc & 0xffffff) << dwidth;
-		if ((desc->lld.mbr_nda & 0xfffffffc) == cur_nda)
+	list_for_each_entry_safe(iter, _desc, descs_list, desc_node) {
+		dwidth = at_xdmac_get_dwidth(iter->lld.mbr_cfg);
+		residue -= (iter->lld.mbr_ubc & 0xffffff) << dwidth;
+		if ((iter->lld.mbr_nda & 0xfffffffc) == cur_nda) {
+			desc = iter;
 			break;
+		}
 	}
 	residue += cur_ubc << dwidth;
 
@@ -1571,8 +1572,8 @@ static void at_xdmac_handle_cyclic(struct at_xdmac_chan *atchan)
 	desc = list_first_entry(&atchan->xfers_list, struct at_xdmac_desc, xfer_node);
 	txd = &desc->tx_dma_desc;
 
-	if (txd->callback && (txd->flags & DMA_PREP_INTERRUPT))
-		txd->callback(txd->callback_param);
+	if (txd->flags & DMA_PREP_INTERRUPT)
+		dmaengine_desc_get_callback_invoke(txd, NULL);
 }
 
 static void at_xdmac_tasklet(unsigned long data)
@@ -1608,7 +1609,7 @@ static void at_xdmac_tasklet(unsigned long data)
 		dev_vdbg(chan2dev(&atchan->chan), "%s: desc 0x%p\n", __func__, desc);
 		if (!desc->active_xfer) {
 			dev_err(chan2dev(&atchan->chan), "Xfer not active: exiting");
-			spin_unlock_bh(&atchan->lock);
+			spin_unlock(&atchan->lock);
 			return;
 		}
 
@@ -1619,8 +1620,8 @@ static void at_xdmac_tasklet(unsigned long data)
 
 		if (!at_xdmac_chan_is_cyclic(atchan)) {
 			dma_cookie_complete(txd);
-			if (txd->callback && (txd->flags & DMA_PREP_INTERRUPT))
-				txd->callback(txd->callback_param);
+			if (txd->flags & DMA_PREP_INTERRUPT)
+				dmaengine_desc_get_callback_invoke(txd, NULL);
 		}
 
 		dma_run_dependencies(txd);
@@ -1804,6 +1805,11 @@ static int at_xdmac_alloc_chan_resources(struct dma_chan *chan)
 	for (i = 0; i < init_nr_desc_per_channel; i++) {
 		desc = at_xdmac_alloc_desc(chan, GFP_ATOMIC);
 		if (!desc) {
+			if (i == 0) {
+				dev_warn(chan2dev(chan),
+					 "can't allocate any descriptors\n");
+				return -EIO;
+			}
 			dev_warn(chan2dev(chan),
 				"only %d descriptors have been allocated\n", i);
 			break;
@@ -1838,8 +1844,7 @@ static void at_xdmac_free_chan_resources(struct dma_chan *chan)
 #ifdef CONFIG_PM
 static int atmel_xdmac_prepare(struct device *dev)
 {
-	struct platform_device	*pdev = to_platform_device(dev);
-	struct at_xdmac		*atxdmac = platform_get_drvdata(pdev);
+	struct at_xdmac		*atxdmac = dev_get_drvdata(dev);
 	struct dma_chan		*chan, *_chan;
 
 	list_for_each_entry_safe(chan, _chan, &atxdmac->dma.channels, device_node) {
@@ -1858,8 +1863,7 @@ static int atmel_xdmac_prepare(struct device *dev)
 #ifdef CONFIG_PM_SLEEP
 static int atmel_xdmac_suspend(struct device *dev)
 {
-	struct platform_device	*pdev = to_platform_device(dev);
-	struct at_xdmac		*atxdmac = platform_get_drvdata(pdev);
+	struct at_xdmac		*atxdmac = dev_get_drvdata(dev);
 	struct dma_chan		*chan, *_chan;
 
 	list_for_each_entry_safe(chan, _chan, &atxdmac->dma.channels, device_node) {
@@ -1875,6 +1879,7 @@ static int atmel_xdmac_suspend(struct device *dev)
 		}
 	}
 	atxdmac->save_gim = at_xdmac_read(atxdmac, AT_XDMAC_GIM);
+	atxdmac->save_gs = at_xdmac_read(atxdmac, AT_XDMAC_GS);
 
 	at_xdmac_off(atxdmac);
 	clk_disable_unprepare(atxdmac->clk);
@@ -1883,13 +1888,15 @@ static int atmel_xdmac_suspend(struct device *dev)
 
 static int atmel_xdmac_resume(struct device *dev)
 {
-	struct platform_device	*pdev = to_platform_device(dev);
-	struct at_xdmac		*atxdmac = platform_get_drvdata(pdev);
+	struct at_xdmac		*atxdmac = dev_get_drvdata(dev);
 	struct at_xdmac_chan	*atchan;
 	struct dma_chan		*chan, *_chan;
 	int			i;
+	int ret;
 
-	clk_prepare_enable(atxdmac->clk);
+	ret = clk_prepare_enable(atxdmac->clk);
+	if (ret)
+		return ret;
 
 	/* Clear pending interrupts. */
 	for (i = 0; i < atxdmac->dma.chancnt; i++) {
@@ -1899,7 +1906,6 @@ static int atmel_xdmac_resume(struct device *dev)
 	}
 
 	at_xdmac_write(atxdmac, AT_XDMAC_GIE, atxdmac->save_gim);
-	at_xdmac_write(atxdmac, AT_XDMAC_GE, atxdmac->save_gs);
 	list_for_each_entry_safe(chan, _chan, &atxdmac->dma.channels, device_node) {
 		atchan = to_at_xdmac_chan(chan);
 		at_xdmac_chan_write(atchan, AT_XDMAC_CC, atchan->save_cc);
@@ -1910,7 +1916,8 @@ static int atmel_xdmac_resume(struct device *dev)
 			at_xdmac_chan_write(atchan, AT_XDMAC_CNDC, atchan->save_cndc);
 			at_xdmac_chan_write(atchan, AT_XDMAC_CIE, atchan->save_cim);
 			wmb();
-			at_xdmac_write(atxdmac, AT_XDMAC_GE, atchan->mask);
+			if (atxdmac->save_gs & atchan->mask)
+				at_xdmac_write(atxdmac, AT_XDMAC_GE, atchan->mask);
 		}
 	}
 	return 0;
@@ -2083,8 +2090,6 @@ static int at_xdmac_remove(struct platform_device *pdev)
 	of_dma_controller_free(pdev->dev.of_node);
 	dma_async_device_unregister(&atxdmac->dma);
 	clk_disable_unprepare(atxdmac->clk);
-
-	synchronize_irq(atxdmac->irq);
 
 	free_irq(atxdmac->irq, atxdmac);
 

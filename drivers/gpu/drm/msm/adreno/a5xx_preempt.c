@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2017 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,7 +12,6 @@
  */
 
 #include "msm_gem.h"
-#include "msm_iommu.h"
 #include "a5xx_gpu.h"
 
 /*
@@ -68,11 +67,6 @@ static struct msm_ringbuffer *get_next_ring(struct msm_gpu *gpu)
 	unsigned long flags;
 	int i;
 
-	/*
-	 * Find the highest prority ringbuffer that isn't empty and jump
-	 * to it (0 being the highest and gpu->nr_rings - 1 being the
-	 * lowest)
-	 */
 	for (i = 0; i < gpu->nr_rings; i++) {
 		bool empty;
 		struct msm_ringbuffer *ring = gpu->rb[i];
@@ -88,9 +82,9 @@ static struct msm_ringbuffer *get_next_ring(struct msm_gpu *gpu)
 	return NULL;
 }
 
-static void a5xx_preempt_timer(unsigned long data)
+static void a5xx_preempt_timer(struct timer_list *t)
 {
-	struct a5xx_gpu *a5xx_gpu = (struct a5xx_gpu *) data;
+	struct a5xx_gpu *a5xx_gpu = from_timer(a5xx_gpu, t, preempt_timer);
 	struct msm_gpu *gpu = &a5xx_gpu->base.base;
 	struct drm_device *dev = gpu->dev;
 	struct msm_drm_private *priv = dev->dev_private;
@@ -150,15 +144,6 @@ void a5xx_preempt_trigger(struct msm_gpu *gpu)
 	spin_lock_irqsave(&ring->lock, flags);
 	a5xx_gpu->preempt[ring->id]->wptr = get_wptr(ring);
 	spin_unlock_irqrestore(&ring->lock, flags);
-
-	/* Do read barrier to make sure we have updated pagetable info */
-	rmb();
-
-	/* Set the SMMU info for the preemption */
-	if (a5xx_gpu->smmu_info) {
-		a5xx_gpu->smmu_info->ttbr0 = ring->memptrs->ttbr0;
-		a5xx_gpu->smmu_info->contextidr = ring->memptrs->contextidr;
-	}
 
 	/* Set the address of the incoming preemption record */
 	gpu_write64(gpu, REG_A5XX_CP_CONTEXT_SWITCH_RESTORE_ADDR_LO,
@@ -221,24 +206,17 @@ void a5xx_preempt_hw_init(struct msm_gpu *gpu)
 {
 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
 	struct a5xx_gpu *a5xx_gpu = to_a5xx_gpu(adreno_gpu);
-	struct msm_ringbuffer *ring;
 	int i;
 
-	if (gpu->nr_rings > 1) {
-		/* Clear the preemption records */
-		FOR_EACH_RING(gpu, ring, i) {
-			if (ring) {
-				a5xx_gpu->preempt[ring->id]->wptr = 0;
-				a5xx_gpu->preempt[ring->id]->rptr = 0;
-				a5xx_gpu->preempt[ring->id]->rbase = ring->iova;
-			}
-		}
+	for (i = 0; i < gpu->nr_rings; i++) {
+		a5xx_gpu->preempt[i]->wptr = 0;
+		a5xx_gpu->preempt[i]->rptr = 0;
+		a5xx_gpu->preempt[i]->rbase = gpu->rb[i]->iova;
 	}
 
-	/* Tell the CP where to find the smmu_info buffer */
+	/* Write a 0 to signal that we aren't switching pagetables */
 	gpu_write64(gpu, REG_A5XX_CP_CONTEXT_SWITCH_SMMU_INFO_LO,
-		REG_A5XX_CP_CONTEXT_SWITCH_SMMU_INFO_HI,
-		a5xx_gpu->smmu_info_iova);
+		REG_A5XX_CP_CONTEXT_SWITCH_SMMU_INFO_HI, 0);
 
 	/* Reset the preemption state */
 	set_preempt_state(a5xx_gpu, PREEMPT_NONE);
@@ -253,13 +231,12 @@ static int preempt_init_ring(struct a5xx_gpu *a5xx_gpu,
 	struct adreno_gpu *adreno_gpu = &a5xx_gpu->base;
 	struct msm_gpu *gpu = &adreno_gpu->base;
 	struct a5xx_preempt_record *ptr;
-	struct drm_gem_object *bo;
-	u64 iova;
+	struct drm_gem_object *bo = NULL;
+	u64 iova = 0;
 
 	ptr = msm_gem_kernel_new(gpu->dev,
 		A5XX_PREEMPT_RECORD_SIZE + A5XX_PREEMPT_COUNTER_SIZE,
-		MSM_BO_UNCACHED | MSM_BO_PRIVILEGED,
-		gpu->aspace, &bo, &iova);
+		MSM_BO_UNCACHED, gpu->aspace, &bo, &iova);
 
 	if (IS_ERR(ptr))
 		return PTR_ERR(ptr);
@@ -284,26 +261,19 @@ void a5xx_preempt_fini(struct msm_gpu *gpu)
 {
 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
 	struct a5xx_gpu *a5xx_gpu = to_a5xx_gpu(adreno_gpu);
-	struct msm_ringbuffer *ring;
 	int i;
 
-	FOR_EACH_RING(gpu, ring, i) {
-		if (!ring || !a5xx_gpu->preempt_bo[i])
+	for (i = 0; i < gpu->nr_rings; i++) {
+		if (!a5xx_gpu->preempt_bo[i])
 			continue;
+
+		msm_gem_put_vaddr(a5xx_gpu->preempt_bo[i]);
 
 		if (a5xx_gpu->preempt_iova[i])
 			msm_gem_put_iova(a5xx_gpu->preempt_bo[i], gpu->aspace);
 
-		drm_gem_object_unreference_unlocked(a5xx_gpu->preempt_bo[i]);
-
+		drm_gem_object_unreference(a5xx_gpu->preempt_bo[i]);
 		a5xx_gpu->preempt_bo[i] = NULL;
-	}
-
-	if (a5xx_gpu->smmu_info_bo) {
-		if (a5xx_gpu->smmu_info_iova)
-			msm_gem_put_iova(a5xx_gpu->smmu_info_bo, gpu->aspace);
-		drm_gem_object_unreference_unlocked(a5xx_gpu->smmu_info_bo);
-		a5xx_gpu->smmu_info_bo = NULL;
 	}
 }
 
@@ -311,49 +281,24 @@ void a5xx_preempt_init(struct msm_gpu *gpu)
 {
 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
 	struct a5xx_gpu *a5xx_gpu = to_a5xx_gpu(adreno_gpu);
-	struct msm_ringbuffer *ring;
-	struct a5xx_smmu_info *ptr;
-	struct drm_gem_object *bo;
-	uint64_t iova;
 	int i;
 
 	/* No preemption if we only have one ring */
 	if (gpu->nr_rings <= 1)
 		return;
 
-	FOR_EACH_RING(gpu, ring, i) {
-		if (!ring)
-			continue;
+	for (i = 0; i < gpu->nr_rings; i++) {
+		if (preempt_init_ring(a5xx_gpu, gpu->rb[i])) {
+			/*
+			 * On any failure our adventure is over. Clean up and
+			 * set nr_rings to 1 to force preemption off
+			 */
+			a5xx_preempt_fini(gpu);
+			gpu->nr_rings = 1;
 
-		if (preempt_init_ring(a5xx_gpu, ring))
-			goto fail;
+			return;
+		}
 	}
 
-	if (msm_iommu_allow_dynamic(gpu->aspace->mmu)) {
-		ptr = msm_gem_kernel_new(gpu->dev,
-			sizeof(struct a5xx_smmu_info),
-			MSM_BO_UNCACHED | MSM_BO_PRIVILEGED,
-			gpu->aspace, &bo, &iova);
-
-		if (IS_ERR(ptr))
-			goto fail;
-
-		ptr->magic = A5XX_SMMU_INFO_MAGIC;
-
-		a5xx_gpu->smmu_info_bo = bo;
-		a5xx_gpu->smmu_info_iova = iova;
-		a5xx_gpu->smmu_info = ptr;
-	}
-
-	setup_timer(&a5xx_gpu->preempt_timer, a5xx_preempt_timer,
-		(unsigned long) a5xx_gpu);
-
-	return;
-fail:
-	/*
-	 * On any failure our adventure is over. Clean up and
-	 * set nr_rings to 1 to force preemption off
-	 */
-	a5xx_preempt_fini(gpu);
-	gpu->nr_rings = 1;
+	timer_setup(&a5xx_gpu->preempt_timer, a5xx_preempt_timer, 0);
 }

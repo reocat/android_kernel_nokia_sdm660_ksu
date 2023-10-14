@@ -15,8 +15,6 @@
 #include <linux/slab.h>
 #include "clk.h"
 
-#define to_clk_mux(_hw) container_of(_hw, struct clk_mux, hw)
-
 /**
  * struct clk_fixup_mux - imx integer fixup multiplexer clock
  * @mux: the parent class
@@ -72,12 +70,12 @@ static const struct clk_ops clk_fixup_mux_ops = {
 };
 
 struct clk *imx_clk_fixup_mux(const char *name, void __iomem *reg,
-			      u8 shift, u8 width, const char **parents,
+			      u8 shift, u8 width, const char * const *parents,
 			      int num_parents, void (*fixup)(u32 *val))
 {
 	struct clk_fixup_mux *fixup_mux;
 	struct clk *clk;
-	struct clk_init_data init;
+	struct clk_init_data init = {};
 
 	if (!fixup)
 		return ERR_PTR(-EINVAL);

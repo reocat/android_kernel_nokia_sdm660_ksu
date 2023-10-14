@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __LINUX_VMPRESSURE_H
 #define __LINUX_VMPRESSURE_H
 
@@ -12,7 +13,9 @@
 struct vmpressure {
 	unsigned long scanned;
 	unsigned long reclaimed;
-	unsigned long stall;
+
+	unsigned long tree_scanned;
+	unsigned long tree_reclaimed;
 	/* The lock is used to keep the scanned/reclaimed above in sync. */
 	struct spinlock sr_lock;
 
@@ -28,7 +31,7 @@ struct mem_cgroup;
 
 extern int vmpressure_notifier_register(struct notifier_block *nb);
 extern int vmpressure_notifier_unregister(struct notifier_block *nb);
-extern void vmpressure(gfp_t gfp, struct mem_cgroup *memcg,
+extern void vmpressure(gfp_t gfp, struct mem_cgroup *memcg, bool tree,
 		       unsigned long scanned, unsigned long reclaimed);
 extern void vmpressure_prio(gfp_t gfp, struct mem_cgroup *memcg, int prio);
 

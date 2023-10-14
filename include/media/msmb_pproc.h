@@ -1,3 +1,16 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2018, 2020 The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
 #ifndef __MSMB_PPROC_H
 #define __MSMB_PPROC_H
 
@@ -33,7 +46,7 @@ struct msm_cpp_frame_info32_t {
 	struct msm_cpp_buffer_info_t tnr_scratch_buffer_info[2];
 	uint32_t reserved;
 	uint8_t partial_frame_indicator;
-	/* the followings are used only for partial_frame type
+	/* the following are used only for partial_frame type
 	 * and is only used for offline frame processing and
 	 * only if payload big enough and need to be split into partial_frame
 	 * if first_payload, kernel acquires output buffer
@@ -152,4 +165,3 @@ struct msm_camera_v4l2_ioctl32_t {
 #endif
 
 #endif
-

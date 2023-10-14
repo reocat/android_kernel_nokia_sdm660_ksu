@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM irq
 
@@ -15,7 +16,7 @@ struct softirq_action;
 			 softirq_name(NET_TX)		\
 			 softirq_name(NET_RX)		\
 			 softirq_name(BLOCK)		\
-			 softirq_name(BLOCK_IOPOLL)	\
+			 softirq_name(IRQ_POLL)		\
 			 softirq_name(TASKLET)		\
 			 softirq_name(SCHED)		\
 			 softirq_name(HRTIMER)		\
@@ -75,7 +76,7 @@ TRACE_EVENT(irq_handler_entry,
  * @ret: return value
  *
  * If the @ret value is set to IRQ_HANDLED, then we know that the corresponding
- * @action->handler scuccessully handled this irq. Otherwise, the irq might be
+ * @action->handler successfully handled this irq. Otherwise, the irq might be
  * a shared irq line, or the irq was not handled successfully. Can be used in
  * conjunction with the irq_handler_entry to understand irq handler latencies.
  */
@@ -157,6 +158,51 @@ DEFINE_EVENT(softirq, softirq_raise,
 	TP_PROTO(unsigned int vec_nr),
 
 	TP_ARGS(vec_nr)
+);
+
+DECLARE_EVENT_CLASS(tasklet,
+
+	TP_PROTO(void *func),
+
+	TP_ARGS(func),
+
+	TP_STRUCT__entry(
+		__field( void *,	func)
+	),
+
+	TP_fast_assign(
+		__entry->func = func;
+	),
+
+	TP_printk("function=%ps", __entry->func)
+);
+
+DEFINE_EVENT(tasklet, tasklet_entry,
+
+	TP_PROTO(void *func),
+
+	TP_ARGS(func)
+);
+
+DEFINE_EVENT(tasklet, tasklet_exit,
+
+	TP_PROTO(void *func),
+
+	TP_ARGS(func)
+);
+
+DEFINE_EVENT(tasklet, tasklet_hi_entry,
+
+	TP_PROTO(void *func),
+
+	TP_ARGS(func)
+);
+
+DEFINE_EVENT(tasklet, tasklet_hi_exit,
+
+	TP_PROTO(void *func),
+
+	TP_ARGS(func)
 );
 
 #endif /*  _TRACE_IRQ_H */

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * IA-64-specific support for kernel module loader.
  *
@@ -35,6 +36,7 @@
 
 #include <asm/patch.h>
 #include <asm/unaligned.h>
+#include <asm/sections.h>
 
 #define ARCH_MODULE_DEBUG 0
 
@@ -486,13 +488,13 @@ module_frob_arch_sections (Elf_Ehdr *ehdr, Elf_Shdr *sechdrs, char *secstrings,
 static inline int
 in_init (const struct module *mod, uint64_t addr)
 {
-	return addr - (uint64_t) mod->module_init < mod->init_size;
+	return addr - (uint64_t) mod->init_layout.base < mod->init_layout.size;
 }
 
 static inline int
 in_core (const struct module *mod, uint64_t addr)
 {
-	return addr - (uint64_t) mod->module_core < mod->core_size;
+	return addr - (uint64_t) mod->core_layout.base < mod->core_layout.size;
 }
 
 static inline int
@@ -675,7 +677,7 @@ do_reloc (struct module *mod, uint8_t r_type, Elf64_Sym *sym, uint64_t addend,
 		break;
 
 	      case RV_BDREL:
-		val -= (uint64_t) (in_init(mod, val) ? mod->module_init : mod->module_core);
+		val -= (uint64_t) (in_init(mod, val) ? mod->init_layout.base : mod->core_layout.base);
 		break;
 
 	      case RV_LTV:
@@ -810,15 +812,15 @@ apply_relocate_add (Elf64_Shdr *sechdrs, const char *strtab, unsigned int symind
 		 *     addresses have been selected...
 		 */
 		uint64_t gp;
-		if (mod->core_size > MAX_LTOFF)
+		if (mod->core_layout.size > MAX_LTOFF)
 			/*
 			 * This takes advantage of fact that SHF_ARCH_SMALL gets allocated
 			 * at the end of the module.
 			 */
-			gp = mod->core_size - MAX_LTOFF / 2;
+			gp = mod->core_layout.size - MAX_LTOFF / 2;
 		else
-			gp = mod->core_size / 2;
-		gp = (uint64_t) mod->module_core + ((gp + 7) & -8);
+			gp = mod->core_layout.size / 2;
+		gp = (uint64_t) mod->core_layout.base + ((gp + 7) & -8);
 		mod->arch.gp = gp;
 		DEBUGP("%s: placing gp at 0x%lx\n", __func__, gp);
 	}
@@ -903,9 +905,31 @@ register_unwind_table (struct module *mod)
 int
 module_finalize (const Elf_Ehdr *hdr, const Elf_Shdr *sechdrs, struct module *mod)
 {
+	struct mod_arch_specific *mas = &mod->arch;
+
 	DEBUGP("%s: init: entry=%p\n", __func__, mod->init);
-	if (mod->arch.unwind)
+	if (mas->unwind)
 		register_unwind_table(mod);
+
+	/*
+	 * ".opd" was already relocated to the final destination. Store
+	 * it's address for use in symbolizer.
+	 */
+	mas->opd_addr = (void *)mas->opd->sh_addr;
+	mas->opd_size = mas->opd->sh_size;
+
+	/*
+	 * Module relocation was already done at this point. Section
+	 * headers are about to be deleted. Wipe out load-time context.
+	 */
+	mas->core_plt = NULL;
+	mas->init_plt = NULL;
+	mas->got = NULL;
+	mas->opd = NULL;
+	mas->unwind = NULL;
+	mas->gp = 0;
+	mas->next_got_entry = 0;
+
 	return 0;
 }
 
@@ -920,4 +944,14 @@ module_arch_cleanup (struct module *mod)
 		unw_remove_unwind_table(mod->arch.core_unw_table);
 		mod->arch.core_unw_table = NULL;
 	}
+}
+
+void *dereference_module_function_descriptor(struct module *mod, void *ptr)
+{
+	struct mod_arch_specific *mas = &mod->arch;
+
+	if (ptr < mas->opd_addr || ptr >= mas->opd_addr + mas->opd_size)
+		return ptr;
+
+	return dereference_function_descriptor(ptr);
 }

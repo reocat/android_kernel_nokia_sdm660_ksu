@@ -1,4 +1,5 @@
-/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2011-2016, 2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -38,27 +39,27 @@ enum msm_actuator_state_t {
 };
 
 struct msm_actuator_func_tbl {
-	int32_t (*actuator_i2c_write_b_af)(struct msm_actuator_ctrl_t *,
-			uint8_t,
-			uint8_t);
-	int32_t (*actuator_init_step_table)(struct msm_actuator_ctrl_t *,
-		struct msm_actuator_set_info_t *);
-	int32_t (*actuator_init_focus)(struct msm_actuator_ctrl_t *,
-		uint16_t, struct reg_settings_t *);
-	int32_t (*actuator_set_default_focus)(struct msm_actuator_ctrl_t *,
-			struct msm_actuator_move_params_t *);
-	int32_t (*actuator_move_focus)(struct msm_actuator_ctrl_t *,
-			struct msm_actuator_move_params_t *);
-	void (*actuator_parse_i2c_params)(struct msm_actuator_ctrl_t *,
-			int16_t, uint32_t, uint16_t);
-	void (*actuator_write_focus)(struct msm_actuator_ctrl_t *,
-			uint16_t,
-			struct damping_params_t *,
-			int8_t,
-			int16_t);
-	int32_t (*actuator_set_position)(struct msm_actuator_ctrl_t *,
-		struct msm_actuator_set_position_t *);
-	int32_t (*actuator_park_lens)(struct msm_actuator_ctrl_t *);
+	int32_t (*actuator_init_step_table)(struct msm_actuator_ctrl_t *a_ctrl,
+		struct msm_actuator_set_info_t *set_info);
+	int32_t (*actuator_init_focus)(struct msm_actuator_ctrl_t *a_ctrl,
+		uint16_t size, struct reg_settings_t *settings);
+	int32_t (*actuator_set_default_focus)(
+			struct msm_actuator_ctrl_t *a_ctrl,
+			struct msm_actuator_move_params_t *move_params);
+	int32_t (*actuator_move_focus)(struct msm_actuator_ctrl_t *a_ctrl,
+			struct msm_actuator_move_params_t *move_params);
+	void (*actuator_parse_i2c_params)(
+			struct msm_actuator_ctrl_t *a_ctrl,
+			int16_t next_lens_position, uint32_t hw_params,
+			uint16_t delay);
+	void (*actuator_write_focus)(struct msm_actuator_ctrl_t *a_ctrl,
+			uint16_t curr_lens_pos,
+			struct damping_params_t *damping_params,
+			int8_t sign_direction,
+			int16_t code_boundary);
+	int32_t (*actuator_set_position)(struct msm_actuator_ctrl_t *a_ctrl,
+		struct msm_actuator_set_position_t *set_pos);
+	int32_t (*actuator_park_lens)(struct msm_actuator_ctrl_t *a_ctrl);
 };
 
 struct msm_actuator {

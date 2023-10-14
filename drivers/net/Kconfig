@@ -62,14 +62,56 @@ config DUMMY
 	  this device is consigned into oblivion) with a configurable IP
 	  address. It is most commonly used in order to make your currently
 	  inactive SLIP address seem like a real address for local programs.
-	  If you use SLIP or PPP, you might want to say Y here. Since this
-	  thing often comes in handy, the default is Y. It won't enlarge your
-	  kernel either. What a deal. Read about it in the Network
+	  If you use SLIP or PPP, you might want to say Y here. It won't
+	  enlarge your kernel. What a deal. Read about it in the Network
 	  Administrator's Guide, available from
 	  <http://www.tldp.org/docs.html#guide>.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called dummy.
+
+config WIREGUARD
+	tristate "WireGuard secure network tunnel"
+	depends on NET && INET
+	depends on IPV6 || !IPV6
+	select NET_UDP_TUNNEL
+	select DST_CACHE
+	select CRYPTO
+	select CRYPTO_LIB_CURVE25519
+	select CRYPTO_LIB_CHACHA20POLY1305
+	select CRYPTO_CHACHA20_X86_64 if X86 && 64BIT
+	select CRYPTO_POLY1305_X86_64 if X86 && 64BIT
+	select CRYPTO_BLAKE2S_X86 if X86 && 64BIT
+	select CRYPTO_CURVE25519_X86 if X86 && 64BIT
+	select ARM_CRYPTO if ARM
+	select ARM64_CRYPTO if ARM64
+	select CRYPTO_CHACHA20_NEON if ARM || (ARM64 && KERNEL_MODE_NEON)
+	select CRYPTO_POLY1305_NEON if ARM64 && KERNEL_MODE_NEON
+	select CRYPTO_POLY1305_ARM if ARM
+	select CRYPTO_BLAKE2S_ARM if ARM
+	select CRYPTO_CURVE25519_NEON if ARM && KERNEL_MODE_NEON
+	select CRYPTO_CHACHA_MIPS if CPU_MIPS32_R2
+	select CRYPTO_POLY1305_MIPS if MIPS
+	help
+	  WireGuard is a secure, fast, and easy to use replacement for IPSec
+	  that uses modern cryptography and clever networking tricks. It's
+	  designed to be fairly general purpose and abstract enough to fit most
+	  use cases, while at the same time remaining extremely simple to
+	  configure. See www.wireguard.com for more info.
+
+	  It's safe to say Y or M here, as the driver is very lightweight and
+	  is only in use when an administrator chooses to add an interface.
+
+config WIREGUARD_DEBUG
+	bool "Debugging checks and verbose messages"
+	depends on WIREGUARD
+	help
+	  This will write log messages for handshake and other events
+	  that occur for a WireGuard interface. It will also perform some
+	  extra validation checks and unit tests at various points. This is
+	  only useful for debugging.
+
+	  Say N here unless you know what you're doing.
 
 config EQUALIZER
 	tristate "EQL (serial line load balancing) support"
@@ -136,6 +178,7 @@ config MACVTAP
 	tristate "MAC-VLAN based tap driver"
 	depends on MACVLAN
 	depends on INET
+	select TAP
 	help
 	  This adds a specialized tap character device driver that is based
 	  on the MAC-VLAN network interface, called macvtap. A macvtap device
@@ -149,7 +192,9 @@ config MACVTAP
 config IPVLAN
     tristate "IP-VLAN support"
     depends on INET
-    depends on IPV6
+    depends on IPV6 || !IPV6
+    depends on NETFILTER
+    select NET_L3_MASTER_DEV
     ---help---
       This allows one to create virtual devices off of a main interface
       and packets will be delivered based on the dest L3 (IPv6/IPv4 addr)
@@ -164,11 +209,25 @@ config IPVLAN
       To compile this driver as a module, choose M here: the module
       will be called ipvlan.
 
+config IPVTAP
+	tristate "IP-VLAN based tap driver"
+	depends on IPVLAN
+	depends on INET
+	select TAP
+	---help---
+	  This adds a specialized tap character device driver that is based
+	  on the IP-VLAN network interface, called ipvtap. An ipvtap device
+	  can be added in the same way as a ipvlan device, using 'type
+	  ipvtap', and then be accessed through the tap user space interface.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called ipvtap.
 
 config VXLAN
        tristate "Virtual eXtensible Local Area Network (VXLAN)"
        depends on INET
        select NET_UDP_TUNNEL
+       select GRO_CELLS
        ---help---
 	  This allows one to create vxlan virtual interfaces that provide
 	  Layer 2 Networks over Layer 3 Networks. VXLAN is often used
@@ -181,8 +240,10 @@ config VXLAN
 
 config GENEVE
        tristate "Generic Network Virtualization Encapsulation"
-       depends on INET && NET_UDP_TUNNEL
-       select NET_IP_TUNNEL
+       depends on INET
+       depends on IPV6 || !IPV6
+       select NET_UDP_TUNNEL
+       select GRO_CELLS
        ---help---
 	  This allows one to create geneve virtual interfaces that provide
 	  Layer 2 Networks over Layer 3 Networks. GENEVE is often used
@@ -192,6 +253,32 @@ config GENEVE
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called geneve.
+
+config GTP
+	tristate "GPRS Tunneling Protocol datapath (GTP-U)"
+	depends on INET
+	select NET_UDP_TUNNEL
+	---help---
+	  This allows one to create gtp virtual interfaces that provide
+	  the GPRS Tunneling Protocol datapath (GTP-U). This tunneling protocol
+	  is used to prevent subscribers from accessing mobile carrier core
+	  network infrastructure. This driver requires a userspace software that
+	  implements the signaling protocol (GTP-C) to update its PDP context
+	  base, such as OpenGGSN <http://git.osmocom.org/openggsn/). This
+	  tunneling protocol is implemented according to the GSM TS 09.60 and
+	  3GPP TS 29.060 standards.
+
+	  To compile this drivers as a module, choose M here: the module
+	  wil be called gtp.
+
+config MACSEC
+	tristate "IEEE 802.1AE MAC-level encryption (MACsec)"
+	select CRYPTO
+	select CRYPTO_AES
+	select CRYPTO_GCM
+	select GRO_CELLS
+	---help---
+	   MACsec is an encryption standard for Ethernet.
 
 config NETCONSOLE
 	tristate "Network console logging support"
@@ -258,6 +345,12 @@ config TUN
 
 	  If you don't know what to use this for, you don't need it.
 
+config TAP
+	tristate
+	---help---
+	  This option is selected by any driver implementing tap user space
+	  interface for a virtual interface to re-use core tap functionality.
+
 config TUN_VNET_CROSS_LE
 	bool "Support for cross-endian vnet headers on little-endian kernels"
 	default n
@@ -282,9 +375,10 @@ config VETH
 config VIRTIO_NET
 	tristate "Virtio network driver"
 	depends on VIRTIO
+	select NET_FAILOVER
 	---help---
 	  This is the virtual network driver for virtio.  It can be used with
-	  lguest or QEMU based VMMs (like KVM or Xen).  Say Y or M.
+	  QEMU based VMMs (like KVM or Xen).  Say Y or M.
 
 config NLMON
 	tristate "Virtual netlink monitoring device"
@@ -305,6 +399,14 @@ config NET_VRF
 	---help---
 	  This option enables the support for mapping interfaces into VRF's. The
 	  support enables VRF devices.
+
+config VSOCKMON
+    tristate "Virtual vsock monitoring device"
+    depends on VHOST_VSOCK
+    ---help---
+     This option enables a monitoring net device for vsock sockets. It is
+     mostly intended for developers or support to debug vsock issues. If
+     unsure, say N.
 
 endif # NET_CORE
 
@@ -426,8 +528,42 @@ config FUJITSU_ES
 	  This driver provides support for Extended Socket network device
           on Extended Partitioning of FUJITSU PRIMEQUEST 2000 E2 series.
 
+config THUNDERBOLT_NET
+	tristate "Networking over Thunderbolt cable"
+	depends on THUNDERBOLT && INET
+	help
+	  Select this if you want to create network between two
+	  computers over a Thunderbolt cable. The driver supports Apple
+	  ThunderboltIP protocol and allows communication with any host
+	  supporting the same protocol including Windows and macOS.
+
+	  To compile this driver a module, choose M here. The module will be
+	  called thunderbolt-net.
+
 source "drivers/net/hyperv/Kconfig"
 
-source "drivers/net/rmnet/Kconfig"
+config NETDEVSIM
+	tristate "Simulated networking device"
+	depends on DEBUG_FS
+	depends on MAY_USE_DEVLINK
+	help
+	  This driver is a developer testing tool and software model that can
+	  be used to test various control path networking APIs, especially
+	  HW-offload related.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called netdevsim.
+
+config NET_FAILOVER
+	tristate "Failover driver"
+	select FAILOVER
+	help
+	  This provides an automated failover mechanism via APIs to create
+	  and destroy a failover master netdev and manages a primary and
+	  standby slave netdevs that get registered via the generic failover
+	  infrastructure. This can be used by paravirtual drivers to enable
+	  an alternate low latency datapath. It alsoenables live migration of
+	  a VM with direct attached VF by failing over to the paravirtual
+	  datapath when the VF is unplugged.
 
 endif # NETDEVICES

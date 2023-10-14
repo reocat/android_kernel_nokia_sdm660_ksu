@@ -1,15 +1,5 @@
-/* Copyright (c) 2008-2020, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2008-2018, 2020-2021, The Linux Foundation. All rights reserved. */
 
 #ifndef MDSS_PANEL_H
 #define MDSS_PANEL_H
@@ -19,9 +9,6 @@
 #include <linux/stringify.h>
 #include <linux/types.h>
 #include <linux/debugfs.h>
-#include <linux/of_gpio.h>
-#include <linux/gpio.h>
-#include <linux/interrupt.h>
 
 /* panel id type */
 struct panel_id {
@@ -57,7 +44,10 @@ struct panel_id {
 #define MIPI_CMD_PANEL		9	/* MIPI */
 #define WRITEBACK_PANEL		10	/* Wifi display */
 #define LVDS_PANEL		11	/* LVDS */
-#define DP_PANEL		12	/* LVDS */
+#define EDP_PANEL		12	/* EDP */
+#define SPI_PANEL               13	/* SPI */
+#define RGB_PANEL               14	/* RGB */
+#define DP_PANEL		15	/* DP */
 
 #define DSC_PPS_LEN		128
 #define INTF_EVENT_STR(x)	#x
@@ -65,33 +55,10 @@ struct panel_id {
 /* HDR propeties count */
 #define DISPLAY_PRIMARIES_COUNT	8	/* WRGB x and y values*/
 
-//SW4-HL-Display-ImplementPanelID-00+{_20151112
-enum {	//this id syncs with the item 'fih,panel-id' of each panel's dtsi
-	SIMULATION_PANEL = 0,
-	FIH_ILI7807E_1080P_VIDEO_PANEL = 1,
-	FIH_FT8716U_1080P_CTC_VIDEO_PANEL = 2,		//SW4-JasonSH-Display-BringUpFT8716U-00+_20170619
-	FIH_FT8716U_FHD_CTC_B2N_VIDEO_PANEL = 3,		/* B2N - gatycclu - Add B2N setting */
-	FIH_NT36672_FHD_CTC_B2N_VIDEO_PANEL = 4,		/* B2N - gatycclu - Add B2N 2nd source setting */
-	FIH_NT36672_H_GLASS_FHD_CTC_B2N_VIDEO_PANEL = 5,		/* B2N 2nd source H-GLASS setting */
-	FIH_FT8716_1080P_VIDEO_EVB_PANEL = 11,
-	FIH_FT8716_1080P_VIDEO_EVT_PANEL = 12,
-	FIH_FT8716_FFD_VIDEO_PANEL = 13,
-	FIH_FT8716U_FFD_VIDEO_PANEL = 14,
-	FIH_R69338_1080P_VIDEO_PANEL_PL2 = 15,			//ZZDC sunqiupeng add for bringup PL2 2nd panel@20171226
-	FIH_CTC_OTM1911A_FHD_VIDEO_PANEL = 16,		//SW4-HL-Display-BringUpCTCOTM1911A-00+_20180116
-	FIH_AUO_OTM1911A_FHD_VIDEO_PANEL = 17,		//SW4-HL-Display-OTM1911A-AUO-BringUp-00+_20180221
-    FIH_CTC_JD9522Z_FHD_VIDEO_PANEL = 18,           //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-    FIH_CTL_CTC_OTM1911A_FHD_VIDEO_PANEL = 19,	//SW4-HL-Display-CTL-GT915L-CTC_n_AUO-BringUp-00+_20180226
-    FIH_CTL_AUO_OTM1911A_FHD_VIDEO_PANEL = 20,      //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-    FIH_CTL_CTC_JD9522Z_FHD_VIDEO_PANEL = 21,       //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-    FIH_FT8719_1080P_VIDEO_PANEL = 22,
-};
-//SW4-HL-Display-ImplementPanelID-00+}_20151112
-
 static inline const char *mdss_panel2str(u32 panel)
 {
-	static const char *names[] = {
-#define PANEL_NAME(n) [n ## _PANEL] = __stringify(n)
+	static const char * const names[] = {
+#define PANEL_NAME(n)[n ## _PANEL] = __stringify(n)
 		PANEL_NAME(MIPI_VIDEO),
 		PANEL_NAME(MIPI_CMD),
 		PANEL_NAME(DP),
@@ -130,6 +97,8 @@ enum {
 	MDSS_PANEL_INTF_DSI,
 	MDSS_PANEL_INTF_EDP,
 	MDSS_PANEL_INTF_HDMI,
+	MDSS_PANEL_INTF_SPI,
+	MDSS_PANEL_INTF_RGB,
 };
 
 enum {
@@ -211,6 +180,7 @@ struct mdss_panel_cfg {
 
 #define MDP_INTF_DSI_CMD_FIFO_UNDERFLOW		0x0001
 #define MDP_INTF_DSI_VIDEO_FIFO_OVERFLOW	0x0002
+#define MDP_INTF_DSI_PANEL_DEAD			0x0003
 
 
 enum {
@@ -450,6 +420,7 @@ struct mdss_dsi_phy_ctrl {
 	bool reg_ldo_mode;
 
 	char timing_8996[40];/* 8996, 8 * 5 */
+	char timing_12nm[14]; /* 12nm PHY */
 	char regulator_len;
 	char strength_len;
 	char lanecfg_len;
@@ -570,6 +541,10 @@ struct edp_panel_info {
 	char frame_rate;	/* fps */
 };
 
+struct spi_panel_info {
+	char frame_rate;	/* fps */
+};
+
 /**
  * struct dynamic_fps_data - defines dynamic fps related data
  * @hfp: horizontal front porch
@@ -595,7 +570,7 @@ struct dynamic_fps_data {
  * @DFPS_IMMEDIATE_MULTI_UPDATE_MODE_CLK_HFP: update fps using both horizontal
  *  timings and clock.
  * @DFPS_IMMEDIATE_MULTI_MODE_HFP_CALC_CLK: update fps using both
- *  horizontal timings, clock need to be caculate base on new clock and
+ *  horizontal timings, clock need to be calculate base on new clock and
  *  porches.
  * @DFPS_MODE_MAX: defines maximum limit of supported modes.
  */
@@ -807,8 +782,6 @@ struct mdss_panel_info {
 	u32 yres;
 	u32 physical_width;
 	u32 physical_height;
-	u32 physical_width_full;	//SW4-HL-Display-CTS_Xdpi_Ydpi-00+_20151112
-	u32 physical_height_full;	//SW4-HL-Display-CTS_Xdpi_Ydpi-00+_20151112
 	u32 bpp;
 	u32 type;
 	u32 wait_cycle;
@@ -828,8 +801,6 @@ struct mdss_panel_info {
 	u32 rst_seq_len;
 	u32 vic; /* video identification code */
 	u32 deep_color;
-	bool is_ce_mode; /* CE video format */
-	u8 csc_type;
 	struct mdss_rect roi;
 	struct mdss_dsi_dual_pu_roi dual_roi;
 	int pwm_pmic_gpio;
@@ -942,6 +913,7 @@ struct mdss_panel_info {
 	struct mipi_panel_info mipi;
 	struct lvds_panel_info lvds;
 	struct edp_panel_info edp;
+	struct spi_panel_info spi;
 
 	bool is_dba_panel;
 
@@ -965,21 +937,6 @@ struct mdss_panel_info {
 
 	/* esc clk recommended for the panel */
 	u32 esc_clk_rate_hz;
-
-	int panel_id;	//SW4-HL-Display-ImplementPanelID-00+_20151112
-
-	//SW4-HL-Display-GlanceMode-00+{_20170524
-	bool aod_enabled;
-
-	bool aod_power_keep;
-	bool aod_power_keep_1p8;
-	bool aod_power_keep_3p3;
-	bool aod_power_keep_lab;
-	bool aod_power_keep_ibb;
-
-	bool aod_ready_on;
-	//struct wake_lock aod_wake_lock;
-	//SW4-HL-Display-GlanceMode-00+}_20170524
 };
 
 struct mdss_panel_timing {
@@ -1018,13 +975,13 @@ struct mdss_panel_timing {
 
 struct mdss_panel_data {
 	struct mdss_panel_info panel_info;
-	void (*set_backlight) (struct mdss_panel_data *pdata, u32 bl_level);
+	void (*set_backlight)(struct mdss_panel_data *pdata, u32 bl_level);
 	int (*apply_display_setting)(struct mdss_panel_data *pdata, u32 mode);
 	unsigned char *mmss_cc_base;
 
 	/**
 	 * event_handler() - callback handler for MDP core events
-	 * @pdata:	Pointer refering to the panel struct associated to this
+	 * @pdata:	Pointer referring to the panel struct associated to this
 	 *		event. Can be used to retrieve panel info.
 	 * @e:		Event being generated, see enum mdss_intf_events
 	 * @arg:	Optional argument to pass some info from some events.
@@ -1034,8 +991,7 @@ struct mdss_panel_data {
 	 * these events to perform appropriate actions for panel initialization
 	 * and teardown.
 	 */
-	int (*event_handler) (struct mdss_panel_data *pdata, int e, void *arg);
-	enum mdss_mdp_csc_type (*get_csc_type)(struct mdss_panel_data *pdata);
+	int (*event_handler)(struct mdss_panel_data *pdata, int e, void *arg);
 	struct device_node *(*get_fb_node)(struct platform_device *pdev);
 
 	struct list_head timings_list;
@@ -1053,7 +1009,6 @@ struct mdss_panel_data {
 	bool panel_disable_mode;
 
 	int panel_te_gpio;
-	bool is_te_irq_enabled;
 	struct completion te_done;
 };
 
@@ -1064,23 +1019,6 @@ struct mdss_panel_debugfs_info {
 	u32 override_flag;
 	struct mdss_panel_debugfs_info *next;
 };
-
-static inline void panel_update_te_irq(struct mdss_panel_data *pdata,
-					bool enable)
-{
-	if (!pdata) {
-		pr_err("Invalid Params\n");
-		return;
-	}
-
-	if (enable && !pdata->is_te_irq_enabled) {
-		enable_irq(gpio_to_irq(pdata->panel_te_gpio));
-		pdata->is_te_irq_enabled = true;
-	} else if (!enable && pdata->is_te_irq_enabled) {
-		disable_irq(gpio_to_irq(pdata->panel_te_gpio));
-		pdata->is_te_irq_enabled = false;
-	}
-}
 
 /**
  * mdss_get_panel_framerate() - get panel frame rate based on panel information
@@ -1099,8 +1037,14 @@ static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info)
 	case MIPI_CMD_PANEL:
 		frame_rate = panel_info->mipi.frame_rate;
 		break;
+	case EDP_PANEL:
+		frame_rate = panel_info->edp.frame_rate;
+		break;
 	case WRITEBACK_PANEL:
 		frame_rate = DEFAULT_FRAME_RATE;
+		break;
+	case SPI_PANEL:
+		frame_rate = panel_info->spi.frame_rate;
 		break;
 	case DTV_PANEL:
 	case DP_PANEL:
@@ -1264,7 +1208,7 @@ static inline bool mdss_panel_is_power_on_interactive(int panel_power_state)
  * @panel_power_state: enum identifying the power state to be checked
  *
  * A panel is considered to be on as long as it can accept any commands
- * or data. Sometimes it is posible to program the panel to be in a low
+ * or data. Sometimes it is possible to program the panel to be in a low
  * power non-interactive state. This function returns false only if panel
  * has explicitly been turned off.
  */
@@ -1289,12 +1233,13 @@ static inline bool mdss_panel_is_power_on_lp(int panel_power_state)
 }
 
 /**
- * mdss_panel_is_panel_power_on_ulp: - checks if panel is in ultra low power mode
+ * mdss_panel_is_panel_power_on_ulp: - checks if panel is in
+ *                                   ultra low power mode
  * @pdata: pointer to the panel struct associated to the panel
  * @panel_power_state: enum identifying the power state to be checked
  *
  * This function returns true if the panel is in a ultra low power
- * state where it is still on but cannot recieve any display updates.
+ * state where it is still on but cannot receive any display updates.
  */
 static inline bool mdss_panel_is_power_on_ulp(int panel_power_state)
 {
@@ -1327,8 +1272,8 @@ static inline void mdss_panel_update_clk_rate(struct mdss_panel_info *pinfo,
 }
 
 /**
- * mdss_panel_calc_frame_rate() - calculate panel frame rate based on panel timing
- *				information.
+ * mdss_panel_calc_frame_rate() - calculate panel frame rate based
+ *                                on panel timing information.
  * @panel_info:	Pointer to panel info containing all panel information
  */
 static inline u8 mdss_panel_calc_frame_rate(struct mdss_panel_info *pinfo)
@@ -1428,7 +1373,8 @@ void mdss_panel_dsc_initial_line_calc(struct dsc_desc *dsc, int enc_ip_width);
 void mdss_panel_dsc_pclk_param_calc(struct dsc_desc *dsc, int intf_width);
 
 /**
- * mdss_panel_dsc_prepare_pps_buf - prepares Picture Parameter Set to be sent to panel
+ * mdss_panel_dsc_prepare_pps_buf - prepares Picture Parameter Set to be
+ *                                sent to panel
  * @dsc: pointer to DSC structure associated with panel_info
  * @buf: buffer that holds PPS
  * @pps_id: pps_identifier

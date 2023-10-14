@@ -1,13 +1,6 @@
-/* Copyright (c) 2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"PBS: %s: " fmt, __func__
@@ -121,9 +114,10 @@ static int qpnp_pbs_wait_for_ack(struct qpnp_pbs *pbs, u8 bit_pos)
 		}
 
 		if (val == 0xFF) {
+			val = 0;
 			/* PBS error - clear SCRATCH2 register */
 			rc = qpnp_pbs_write(pbs, pbs->base +
-					PBS_CLIENT_SCRATCH2, 0, 1);
+					PBS_CLIENT_SCRATCH2, &val, 1);
 			if (rc < 0) {
 				pr_err("Failed to clear register %x rc=%d\n",
 						PBS_CLIENT_SCRATCH2, rc);
@@ -198,8 +192,10 @@ int qpnp_pbs_trigger_event(struct device_node *dev_node, u8 bitmap)
 	}
 
 	if (val == 0xFF) {
+		val = 0;
 		/* PBS error - clear SCRATCH2 register */
-		rc = qpnp_pbs_write(pbs, pbs->base + PBS_CLIENT_SCRATCH2, 0, 1);
+		rc = qpnp_pbs_write(pbs, pbs->base + PBS_CLIENT_SCRATCH2, &val,
+				    1);
 		if (rc < 0) {
 			pr_err("Failed to clear register %x rc=%d\n",
 						PBS_CLIENT_SCRATCH2, rc);
@@ -338,7 +334,6 @@ static const struct of_device_id qpnp_pbs_match_table[] = {
 static struct platform_driver qpnp_pbs_driver = {
 	.driver	= {
 		.name		= QPNP_PBS_DEV_NAME,
-		.owner		= THIS_MODULE,
 		.of_match_table	= qpnp_pbs_match_table,
 	},
 	.probe	= qpnp_pbs_probe,

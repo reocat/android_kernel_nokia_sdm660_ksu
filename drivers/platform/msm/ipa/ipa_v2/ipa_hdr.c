@@ -1,13 +1,6 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2012-2018, 2020, The Linux Foundation. All rights reserved.
  */
 
 #include "ipa_i.h"
@@ -45,14 +38,13 @@ static int ipa_generate_hdr_hw_tbl(struct ipa_mem_buffer *mem)
 	}
 	IPADBG_LOW("tbl_sz=%d\n", ipa_ctx->hdr_tbl.end);
 
-	mem->base = dma_alloc_coherent(ipa_ctx->pdev, mem->size,
+	mem->base = dma_zalloc_coherent(ipa_ctx->pdev, mem->size,
 			&mem->phys_base, GFP_KERNEL);
 	if (!mem->base) {
 		IPAERR("fail to alloc DMA buff of size %d\n", mem->size);
 		return -ENOMEM;
 	}
 
-	memset(mem->base, 0, mem->size);
 	list_for_each_entry(entry, &ipa_ctx->hdr_tbl.head_hdr_entry_list,
 			link) {
 		if (entry->is_hdr_proc_ctx)
@@ -956,8 +948,8 @@ int __ipa_del_hdr(u32 hdr_hdl, bool by_user)
 }
 
 /**
- * ipa2_add_hdr() - add the specified headers to SW and optionally commit them to
- * IPA HW
+ * ipa2_add_hdr() - add the specified headers to SW and optionally commit them
+ * to IPA HW
  * @hdrs:	[inout] set of headers to add
  *
  * Returns:	0 on success, negative on failure
@@ -1385,8 +1377,8 @@ int ipa2_reset_hdr(bool user_only)
 					ctx_off_entry);
 			}
 			list_for_each_entry_safe(ctx_off_entry, ctx_off_next,
-				&ipa_ctx->hdr_proc_ctx_tbl.
-				head_free_offset_list[i], link) {
+			&ipa_ctx->hdr_proc_ctx_tbl.head_free_offset_list[i],
+			link) {
 				list_del(&ctx_off_entry->link);
 				kmem_cache_free(
 					ipa_ctx->hdr_proc_ctx_offset_cache,
@@ -1415,7 +1407,7 @@ static struct ipa_hdr_entry *__ipa_find_hdr(const char *name)
 
 	list_for_each_entry(entry, &ipa_ctx->hdr_tbl.head_hdr_entry_list,
 			link) {
-		if (!strncmp(name, entry->name, IPA_RESOURCE_NAME_MAX))
+		if (!strcmp(name, entry->name))
 			return entry;
 	}
 
@@ -1448,6 +1440,7 @@ int ipa2_get_hdr(struct ipa_ioc_get_hdr *lookup)
 		return -EINVAL;
 	}
 	mutex_lock(&ipa_ctx->lock);
+	lookup->name[IPA_RESOURCE_NAME_MAX-1] = '\0';
 	entry = __ipa_find_hdr(lookup->name);
 	if (entry) {
 		lookup->hdl = entry->id;
@@ -1549,7 +1542,8 @@ bail:
 }
 
 /**
- * ipa2_copy_hdr() - Lookup the specified header resource and return a copy of it
+ * ipa2_copy_hdr() - Lookup the specified header resource and return a copy of
+ * it
  * @copy:	[inout] header to lookup and its copy
  *
  * lookup the specified header resource and return a copy of it (along with its
@@ -1569,6 +1563,7 @@ int ipa2_copy_hdr(struct ipa_ioc_copy_hdr *copy)
 		return -EINVAL;
 	}
 	mutex_lock(&ipa_ctx->lock);
+	copy->name[IPA_RESOURCE_NAME_MAX-1] = '\0';
 	entry = __ipa_find_hdr(copy->name);
 	if (entry) {
 		memcpy(copy->hdr, entry->hdr, entry->hdr_len);

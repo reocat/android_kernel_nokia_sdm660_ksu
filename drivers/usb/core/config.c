@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Released under the GPLv2 only.
+ */
+
 #include <linux/usb.h>
 #include <linux/usb/ch9.h>
 #include <linux/usb/hcd.h>
@@ -43,6 +48,27 @@ static int find_next_descriptor(unsigned char *buffer, int size,
 	return buffer - buffer0;
 }
 
+static void usb_parse_ssp_isoc_endpoint_companion(struct device *ddev,
+		int cfgno, int inum, int asnum, struct usb_host_endpoint *ep,
+		unsigned char *buffer, int size)
+{
+	struct usb_ssp_isoc_ep_comp_descriptor *desc;
+
+	/*
+	 * The SuperSpeedPlus Isoc endpoint companion descriptor immediately
+	 * follows the SuperSpeed Endpoint Companion descriptor
+	 */
+	desc = (struct usb_ssp_isoc_ep_comp_descriptor *) buffer;
+	if (desc->bDescriptorType != USB_DT_SSP_ISOC_ENDPOINT_COMP ||
+	    size < USB_DT_SSP_ISOC_EP_COMP_SIZE) {
+		dev_warn(ddev, "Invalid SuperSpeedPlus isoc endpoint companion"
+			 "for config %d interface %d altsetting %d ep %d.\n",
+			 cfgno, inum, asnum, ep->desc.bEndpointAddress);
+		return;
+	}
+	memcpy(&ep->ssp_isoc_ep_comp, desc, USB_DT_SSP_ISOC_EP_COMP_SIZE);
+}
+
 static void usb_parse_ss_endpoint_companion(struct device *ddev, int cfgno,
 		int inum, int asnum, struct usb_host_endpoint *ep,
 		unsigned char *buffer, int size)
@@ -54,6 +80,7 @@ static void usb_parse_ss_endpoint_companion(struct device *ddev, int cfgno,
 	 * be the first thing immediately following the endpoint descriptor.
 	 */
 	desc = (struct usb_ss_ep_comp_descriptor *) buffer;
+
 	if (desc->bDescriptorType != USB_DT_SS_ENDPOINT_COMP ||
 			size < USB_DT_SS_EP_COMP_SIZE) {
 		dev_warn(ddev, "No SuperSpeed endpoint companion for config %d "
@@ -76,7 +103,8 @@ static void usb_parse_ss_endpoint_companion(struct device *ddev, int cfgno,
 					ep->desc.wMaxPacketSize;
 		return;
 	}
-
+	buffer += desc->bLength;
+	size -= desc->bLength;
 	memcpy(&ep->ss_ep_comp, desc, USB_DT_SS_EP_COMP_SIZE);
 
 	/* Check the various values */
@@ -112,6 +140,7 @@ static void usb_parse_ss_endpoint_companion(struct device *ddev, int cfgno,
 				cfgno, inum, asnum, ep->desc.bEndpointAddress);
 		ep->ss_ep_comp.bmAttributes = 16;
 	} else if (usb_endpoint_xfer_isoc(&ep->desc) &&
+		   !USB_SS_SSP_ISOC_COMP(desc->bmAttributes) &&
 		   USB_SS_MULT(desc->bmAttributes) > 3) {
 		dev_warn(ddev, "Isoc endpoint has Mult of %d in "
 				"config %d interface %d altsetting %d ep %d: "
@@ -140,6 +169,11 @@ static void usb_parse_ss_endpoint_companion(struct device *ddev, int cfgno,
 				max_tx);
 		ep->ss_ep_comp.wBytesPerInterval = cpu_to_le16(max_tx);
 	}
+	/* Parse a possible SuperSpeedPlus isoc ep companion descriptor */
+	if (usb_endpoint_xfer_isoc(&ep->desc) &&
+	    USB_SS_SSP_ISOC_COMP(desc->bmAttributes))
+		usb_parse_ssp_isoc_endpoint_companion(ddev, cfgno, inum, asnum,
+							ep, buffer, size);
 }
 
 static const unsigned short low_speed_maxpacket_maxes[4] = {
@@ -391,9 +425,9 @@ static int usb_parse_endpoint(struct device *ddev, int cfgno,
 		maxpacket_maxes = full_speed_maxpacket_maxes;
 		break;
 	case USB_SPEED_HIGH:
-		/* Bits 12..11 are allowed only for HS periodic endpoints */
+		/* Multiple-transactions bits are allowed only for HS periodic endpoints */
 		if (usb_endpoint_xfer_int(d) || usb_endpoint_xfer_isoc(d)) {
-			i = maxp & (BIT(12) | BIT(11));
+			i = maxp & USB_EP_MAXP_MULT_MASK;
 			maxp &= ~i;
 		}
 		/* fallthrough */
@@ -1057,7 +1091,7 @@ int usb_get_bos_descriptor(struct usb_device *dev)
 				(struct usb_ptm_cap_descriptor *)buffer;
 			break;
 		case USB_CAP_TYPE_CONFIG_SUMMARY:
-			/* one such desc per configuration */
+			/* one such desc per function */
 			if (!dev->bos->num_config_summary_desc)
 				dev->bos->config_summary =
 				(struct usb_config_summary_descriptor *)buffer;

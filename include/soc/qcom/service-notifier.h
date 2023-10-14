@@ -1,16 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+ * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ */
+/*
  * Process Domain Service Notifier API header
+ *
  */
 
 #ifndef _SERVICE_NOTIFIER_H
@@ -21,6 +15,7 @@ enum qmi_servreg_notif_service_state_enum_type_v01 {
 	QMI_SERVREG_NOTIF_SERVICE_STATE_ENUM_TYPE_MAX_VAL_V01 = INT_MAX,
 	SERVREG_NOTIF_SERVICE_STATE_DOWN_V01 = 0x0FFFFFFF,
 	SERVREG_NOTIF_SERVICE_STATE_UP_V01 = 0x1FFFFFFF,
+	SERVREG_NOTIF_SERVICE_STATE_EARLY_DOWN_V01 = 0x2FFFFFFF,
 	SERVREG_NOTIF_SERVICE_STATE_UNINIT_V01 = 0x7FFFFFFF,
 };
 

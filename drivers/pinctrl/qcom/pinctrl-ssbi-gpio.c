@@ -1,15 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015, Sony Mobile Communications AB.
  * Copyright (c) 2013, 2018 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #include <linux/module.h>
@@ -200,7 +192,7 @@ static const struct pinctrl_ops pm8xxx_pinctrl_ops = {
 	.get_group_name		= pm8xxx_get_group_name,
 	.get_group_pins         = pm8xxx_get_group_pins,
 	.dt_node_to_map		= pinconf_generic_dt_node_to_map_group,
-	.dt_free_map		= pinctrl_utils_dt_free_map,
+	.dt_free_map		= pinctrl_utils_free_map,
 };
 
 static int pm8xxx_get_functions_count(struct pinctrl_dev *pctldev)
@@ -458,7 +450,7 @@ static struct pinctrl_desc pm8xxx_pinctrl_desc = {
 static int pm8xxx_gpio_direction_input(struct gpio_chip *chip,
 				       unsigned offset)
 {
-	struct pm8xxx_gpio *pctrl = container_of(chip, struct pm8xxx_gpio, chip);
+	struct pm8xxx_gpio *pctrl = gpiochip_get_data(chip);
 	struct pm8xxx_pin_data *pin = pctrl->desc.pins[offset].drv_data;
 	u8 val;
 
@@ -474,7 +466,7 @@ static int pm8xxx_gpio_direction_output(struct gpio_chip *chip,
 					unsigned offset,
 					int value)
 {
-	struct pm8xxx_gpio *pctrl = container_of(chip, struct pm8xxx_gpio, chip);
+	struct pm8xxx_gpio *pctrl = gpiochip_get_data(chip);
 	struct pm8xxx_pin_data *pin = pctrl->desc.pins[offset].drv_data;
 	u8 val;
 
@@ -492,7 +484,7 @@ static int pm8xxx_gpio_direction_output(struct gpio_chip *chip,
 
 static int pm8xxx_gpio_get(struct gpio_chip *chip, unsigned offset)
 {
-	struct pm8xxx_gpio *pctrl = container_of(chip, struct pm8xxx_gpio, chip);
+	struct pm8xxx_gpio *pctrl = gpiochip_get_data(chip);
 	struct pm8xxx_pin_data *pin = pctrl->desc.pins[offset].drv_data;
 	bool state;
 	int ret;
@@ -510,7 +502,7 @@ static int pm8xxx_gpio_get(struct gpio_chip *chip, unsigned offset)
 
 static void pm8xxx_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
 {
-	struct pm8xxx_gpio *pctrl = container_of(chip, struct pm8xxx_gpio, chip);
+	struct pm8xxx_gpio *pctrl = gpiochip_get_data(chip);
 	struct pm8xxx_pin_data *pin = pctrl->desc.pins[offset].drv_data;
 	u8 val;
 
@@ -539,7 +531,7 @@ static int pm8xxx_gpio_of_xlate(struct gpio_chip *chip,
 
 static int pm8xxx_gpio_to_irq(struct gpio_chip *chip, unsigned offset)
 {
-	struct pm8xxx_gpio *pctrl = container_of(chip, struct pm8xxx_gpio, chip);
+	struct pm8xxx_gpio *pctrl = gpiochip_get_data(chip);
 	struct pm8xxx_pin_data *pin = pctrl->desc.pins[offset].drv_data;
 
 	return pin->irq;
@@ -554,7 +546,7 @@ static void pm8xxx_gpio_dbg_show_one(struct seq_file *s,
 				  unsigned offset,
 				  unsigned gpio)
 {
-	struct pm8xxx_gpio *pctrl = container_of(chip, struct pm8xxx_gpio, chip);
+	struct pm8xxx_gpio *pctrl = gpiochip_get_data(chip);
 	struct pm8xxx_pin_data *pin = pctrl->desc.pins[offset].drv_data;
 
 	static const char * const modes[] = {
@@ -602,7 +594,7 @@ static void pm8xxx_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 #define pm8xxx_gpio_dbg_show NULL
 #endif
 
-static struct gpio_chip pm8xxx_gpio_template = {
+static const struct gpio_chip pm8xxx_gpio_template = {
 	.direction_input = pm8xxx_gpio_direction_input,
 	.direction_output = pm8xxx_gpio_direction_output,
 	.get = pm8xxx_gpio_get,
@@ -743,7 +735,7 @@ static int pm8xxx_gpio_probe(struct platform_device *pdev)
 	pctrl->desc.custom_conf_items = pm8xxx_conf_items;
 #endif
 
-	pctrl->pctrl = pinctrl_register(&pctrl->desc, &pdev->dev, pctrl);
+	pctrl->pctrl = devm_pinctrl_register(&pdev->dev, &pctrl->desc, pctrl);
 	if (IS_ERR(pctrl->pctrl)) {
 		dev_err(&pdev->dev, "couldn't register pm8xxx gpio driver\n");
 		return PTR_ERR(pctrl->pctrl);
@@ -751,15 +743,15 @@ static int pm8xxx_gpio_probe(struct platform_device *pdev)
 
 	pctrl->chip = pm8xxx_gpio_template;
 	pctrl->chip.base = -1;
-	pctrl->chip.dev = &pdev->dev;
+	pctrl->chip.parent = &pdev->dev;
 	pctrl->chip.of_node = pdev->dev.of_node;
 	pctrl->chip.of_gpio_n_cells = 2;
 	pctrl->chip.label = dev_name(pctrl->dev);
 	pctrl->chip.ngpio = pctrl->npins;
-	ret = gpiochip_add(&pctrl->chip);
+	ret = gpiochip_add_data(&pctrl->chip, pctrl);
 	if (ret) {
 		dev_err(&pdev->dev, "failed register gpiochip\n");
-		goto unregister_pinctrl;
+		return ret;
 	}
 
 	/*
@@ -790,9 +782,6 @@ static int pm8xxx_gpio_probe(struct platform_device *pdev)
 unregister_gpiochip:
 	gpiochip_remove(&pctrl->chip);
 
-unregister_pinctrl:
-	pinctrl_unregister(pctrl->pctrl);
-
 	return ret;
 }
 
@@ -801,8 +790,6 @@ static int pm8xxx_gpio_remove(struct platform_device *pdev)
 	struct pm8xxx_gpio *pctrl = platform_get_drvdata(pdev);
 
 	gpiochip_remove(&pctrl->chip);
-
-	pinctrl_unregister(pctrl->pctrl);
 
 	return 0;
 }

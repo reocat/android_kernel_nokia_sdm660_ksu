@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 # Unified Makefile for i386 and x86_64
 
 # select defconfig based on actual architecture
@@ -30,8 +31,7 @@ endif
 CODE16GCC_CFLAGS := -m32 -Wa,$(srctree)/arch/x86/boot/code16gcc.h
 M16_CFLAGS	 := $(call cc-option, -m16, $(CODE16GCC_CFLAGS))
 
-REALMODE_CFLAGS	:= $(M16_CFLAGS) -g -Os -D__KERNEL__ \
-		   -DDISABLE_BRANCH_PROFILING \
+REALMODE_CFLAGS	:= $(M16_CFLAGS) -g -Os -DDISABLE_BRANCH_PROFILING \
 		   -Wall -Wstrict-prototypes -march=i386 -mregparm=3 \
 		   -fno-strict-aliasing -fomit-frame-pointer -fno-pic \
 		   -mno-mmx -mno-sse $(call cc-option,-fcf-protection=none)
@@ -85,11 +85,6 @@ ifeq ($(CONFIG_X86_32),y)
         # alignment instructions.
         KBUILD_CFLAGS += $(call cc-option,$(cc_stack_align4))
 
-        # Disable unit-at-a-time mode on pre-gcc-4.0 compilers, it makes gcc use
-        # a lot more stack due to the lack of sharing of stacklots:
-        KBUILD_CFLAGS += $(call cc-ifversion, -lt, 0400, \
-				$(call cc-option,-fno-unit-at-a-time))
-
         # CPU-specific tuning. Anything which can be shared with UML should go here.
         include arch/x86/Makefile_32.cpu
         KBUILD_CFLAGS += $(cflags-y)
@@ -99,7 +94,7 @@ ifeq ($(CONFIG_X86_32),y)
 else
         BITS := 64
         UTS_MACHINE := x86_64
-        CHECKFLAGS += -D__x86_64__ -m64
+        CHECKFLAGS += -D__x86_64__
 
         biarch := -m64
         KBUILD_AFLAGS += -m64
@@ -114,8 +109,6 @@ else
         # Don't autogenerate traditional x87 instructions
         KBUILD_CFLAGS += $(call cc-option,-mno-80387)
         KBUILD_CFLAGS += $(call cc-option,-mno-fp-ret-in-387)
-
-        KBUILD_CFLAGS += -fno-pic
 
         # By default gcc and clang use a stack alignment of 16 bytes for x86.
         # However the standard kernel entry on x86-64 leaves the stack on an
@@ -146,18 +139,6 @@ else
         # -funit-at-a-time shrinks the kernel .text considerably
         # unfortunately it makes reading oopses harder.
         KBUILD_CFLAGS += $(call cc-option,-funit-at-a-time)
-
-        # this works around some issues with generating unwind tables in older gccs
-        # newer gccs do it by default
-        KBUILD_CFLAGS += $(call cc-option,-maccumulate-outgoing-args)
-endif
-
-# Make sure compiler does not have buggy stack-protector support.
-ifdef CONFIG_CC_STACKPROTECTOR
-	cc_has_sp := $(srctree)/scripts/gcc-x86_$(BITS)-has-stack-protector.sh
-        ifneq ($(shell $(CONFIG_SHELL) $(cc_has_sp) $(CC) $(KBUILD_CPPFLAGS) $(biarch)),y)
-                $(warning stack-protector enabled but compiler support broken)
-        endif
 endif
 
 ifdef CONFIG_X86_X32
@@ -176,9 +157,32 @@ ifdef CONFIG_X86_X32
 endif
 export CONFIG_X86_X32_ABI
 
-# Don't unroll struct assignments with kmemcheck enabled
-ifeq ($(CONFIG_KMEMCHECK),y)
-	KBUILD_CFLAGS += $(call cc-option,-fno-builtin-memcpy)
+#
+# If the function graph tracer is used with mcount instead of fentry,
+# '-maccumulate-outgoing-args' is needed to prevent a GCC bug
+# (https://gcc.gnu.org/bugzilla/show_bug.cgi?id=42109)
+#
+ifdef CONFIG_FUNCTION_GRAPH_TRACER
+  ifndef CONFIG_HAVE_FENTRY
+	ACCUMULATE_OUTGOING_ARGS := 1
+  else
+    ifeq ($(call cc-option-yn, -mfentry), n)
+	ACCUMULATE_OUTGOING_ARGS := 1
+
+	# GCC ignores '-maccumulate-outgoing-args' when used with '-Os'.
+	# If '-Os' is enabled, disable it and print a warning.
+        ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
+          undefine CONFIG_CC_OPTIMIZE_FOR_SIZE
+          $(warning Disabling CONFIG_CC_OPTIMIZE_FOR_SIZE.  Your compiler does not have -mfentry so you cannot optimize for size with CONFIG_FUNCTION_GRAPH_TRACER.)
+        endif
+
+    endif
+  endif
+endif
+
+ifeq ($(ACCUMULATE_OUTGOING_ARGS), 1)
+	# This compiler flag is not supported by Clang:
+	KBUILD_CFLAGS += $(call cc-option,-maccumulate-outgoing-args,)
 endif
 
 # Stackpointer is addressed different for 32 bit and 64 bit x86
@@ -197,13 +201,30 @@ asinstr += $(call as-instr,pshufb %xmm0$(comma)%xmm0,-DCONFIG_AS_SSSE3=1)
 asinstr += $(call as-instr,crc32l %eax$(comma)%eax,-DCONFIG_AS_CRC32=1)
 avx_instr := $(call as-instr,vxorps %ymm0$(comma)%ymm1$(comma)%ymm2,-DCONFIG_AS_AVX=1)
 avx2_instr :=$(call as-instr,vpbroadcastb %xmm0$(comma)%ymm1,-DCONFIG_AS_AVX2=1)
+avx512_instr :=$(call as-instr,vpmovm2b %k1$(comma)%zmm5,-DCONFIG_AS_AVX512=1)
 sha1_ni_instr :=$(call as-instr,sha1msg1 %xmm0$(comma)%xmm1,-DCONFIG_AS_SHA1_NI=1)
 sha256_ni_instr :=$(call as-instr,sha256msg1 %xmm0$(comma)%xmm1,-DCONFIG_AS_SHA256_NI=1)
+adx_instr := $(call as-instr,adox %r10$(comma)%r10,-DCONFIG_AS_ADX=1)
 
-KBUILD_AFLAGS += $(cfi) $(cfi-sigframe) $(cfi-sections) $(asinstr) $(avx_instr) $(avx2_instr) $(sha1_ni_instr) $(sha256_ni_instr)
-KBUILD_CFLAGS += $(cfi) $(cfi-sigframe) $(cfi-sections) $(asinstr) $(avx_instr) $(avx2_instr) $(sha1_ni_instr) $(sha256_ni_instr)
+KBUILD_AFLAGS += $(cfi) $(cfi-sigframe) $(cfi-sections) $(asinstr) $(avx_instr) $(avx2_instr) $(avx512_instr) $(sha1_ni_instr) $(sha256_ni_instr) $(adx_instr)
+KBUILD_CFLAGS += $(cfi) $(cfi-sigframe) $(cfi-sections) $(asinstr) $(avx_instr) $(avx2_instr) $(avx512_instr) $(sha1_ni_instr) $(sha256_ni_instr) $(adx_instr)
 
-LDFLAGS := -m elf_$(UTS_MACHINE)
+KBUILD_LDFLAGS := -m elf_$(UTS_MACHINE)
+
+#
+# The 64-bit kernel must be aligned to 2MB.  Pass -z max-page-size=0x200000 to
+# the linker to force 2MB page size regardless of the default page size used
+# by the linker.
+#
+ifdef CONFIG_X86_64
+KBUILD_LDFLAGS += $(call ld-option, -z max-page-size=0x200000)
+endif
+
+ifdef CONFIG_LTO_CLANG
+ifeq ($(shell test $(CONFIG_LLD_VERSION) -lt 130000; echo $$?),0)
+KBUILD_LDFLAGS	+= -plugin-opt=-stack-alignment=$(if $(CONFIG_X86_32),4,8)
+endif
+endif
 
 #
 # The 64-bit kernel must be aligned to 2MB.  Pass -z max-page-size=0x200000 to
@@ -221,8 +242,19 @@ KBUILD_CFLAGS += -Wno-sign-compare
 #
 KBUILD_CFLAGS += -fno-asynchronous-unwind-tables
 
-KBUILD_CFLAGS += $(mflags-y)
-KBUILD_AFLAGS += $(mflags-y)
+# Avoid indirect branches in kernel to deal with Spectre
+ifdef CONFIG_RETPOLINE
+  KBUILD_CFLAGS += $(RETPOLINE_CFLAGS)
+  # Additionally, avoid generating expensive indirect jumps which
+  # are subject to retpolines for small number of switch cases.
+  # clang turns off jump table generation by default when under
+  # retpoline builds, however, gcc does not for x86. This has
+  # only been fixed starting from gcc stable version 8.4.0 and
+  # onwards, but not for older ones. See gcc bug #86952.
+  ifndef CONFIG_CC_IS_CLANG
+    KBUILD_CFLAGS += $(call cc-option,-fno-jump-tables)
+  endif
+endif
 
 # Avoid indirect branches in kernel to deal with Spectre
 ifdef CONFIG_RETPOLINE
@@ -241,17 +273,13 @@ archscripts: scripts_basic
 archheaders:
 	$(Q)$(MAKE) $(build)=arch/x86/entry/syscalls all
 
-archprepare:
-ifeq ($(CONFIG_KEXEC_FILE),y)
-	$(Q)$(MAKE) $(build)=arch/x86/purgatory arch/x86/purgatory/kexec-purgatory.c
-endif
-
 ###
 # Kernel objects
 
 head-y := arch/x86/kernel/head_$(BITS).o
 head-y += arch/x86/kernel/head$(BITS).o
-head-y += arch/x86/kernel/head.o
+head-y += arch/x86/kernel/ebda.o
+head-y += arch/x86/kernel/platform-quirks.o
 
 libs-y  += arch/x86/lib/
 
@@ -269,8 +297,6 @@ drivers-$(CONFIG_OPROFILE) += arch/x86/oprofile/
 drivers-$(CONFIG_PM) += arch/x86/power/
 
 drivers-$(CONFIG_FB) += arch/x86/video/
-
-drivers-$(CONFIG_RAS) += arch/x86/ras/
 
 ####
 # boot loader support. Several targets are kept for legacy purposes
@@ -306,12 +332,21 @@ PHONY += vdso_install
 vdso_install:
 	$(Q)$(MAKE) $(build)=arch/x86/entry/vdso $@
 
+archprepare: checkbin
+checkbin:
+ifdef CONFIG_RETPOLINE
+ifeq ($(RETPOLINE_CFLAGS),)
+	@echo "You are building kernel with non-retpoline compiler." >&2
+	@echo "Please update your compiler." >&2
+	@false
+endif
+endif
+
 archclean:
 	$(Q)rm -rf $(objtree)/arch/i386
 	$(Q)rm -rf $(objtree)/arch/x86_64
 	$(Q)$(MAKE) $(clean)=$(boot)
 	$(Q)$(MAKE) $(clean)=arch/x86/tools
-	$(Q)$(MAKE) $(clean)=arch/x86/purgatory
 
 define archhelp
   echo  '* bzImage      - Compressed kernel image (arch/x86/boot/bzImage)'

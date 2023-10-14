@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * MDIO bus driver for the Xilinx Axi Ethernet device
  *
@@ -212,7 +213,6 @@ issue:
 	bus->read = axienet_mdio_read;
 	bus->write = axienet_mdio_write;
 	bus->parent = lp->dev;
-	bus->irq = lp->mdio_irqs; /* preallocated IRQ table */
 	lp->mii_bus = bus;
 
 	ret = of_mdiobus_register(bus, np1);
@@ -233,7 +233,6 @@ issue:
 void axienet_mdio_teardown(struct axienet_local *lp)
 {
 	mdiobus_unregister(lp->mii_bus);
-	kfree(lp->mii_bus->irq);
 	mdiobus_free(lp->mii_bus);
 	lp->mii_bus = NULL;
 }

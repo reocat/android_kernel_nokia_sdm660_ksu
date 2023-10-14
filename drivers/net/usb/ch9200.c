@@ -155,12 +155,11 @@ static int control_write(struct usbnet *dev, unsigned char request,
 		   index, size);
 
 	if (data) {
-		buf = kmalloc(size, GFP_KERNEL);
+		buf = kmemdup(data, size, GFP_KERNEL);
 		if (!buf) {
 			err = -ENOMEM;
 			goto err_out;
 		}
-		memcpy(buf, data, size);
 	}
 
 	err = usb_control_msg(dev->udev,
@@ -311,8 +310,8 @@ static int get_mac_address(struct usbnet *dev, unsigned char *data)
 	int rd_mac_len = 0;
 
 	netdev_dbg(dev->net, "get_mac_address:\n\tusbnet VID:%0x PID:%0x\n",
-		   dev->udev->descriptor.idVendor,
-		   dev->udev->descriptor.idProduct);
+		   le16_to_cpu(dev->udev->descriptor.idVendor),
+		   le16_to_cpu(dev->udev->descriptor.idProduct));
 
 	memset(mac_addr, 0, sizeof(mac_addr));
 	rd_mac_len = control_read(dev, REQUEST_READ, 0,

@@ -1,14 +1,7 @@
-/* Copyright (c) 2012, 2014-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+// SPDX-License-Identifier: GPL-2.0-only
+
+/*
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "%s: " fmt, __func__
@@ -37,7 +30,7 @@
 struct event_timer_info {
 	struct timerqueue_node node;
 	struct irq_affinity_notify notify;
-	void (*function)(void *);
+	void (*function)(void *v);
 	void *data;
 	int irq;
 	int cpu;
@@ -66,9 +59,7 @@ static void irq_affinity_change_notifier(struct irq_affinity_notify *notify,
 static void irq_affinity_release(struct kref *ref);
 
 static int msm_event_debug_mask;
-module_param_named(
-	debug_mask, msm_event_debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP
-);
+module_param_named(debug_mask, msm_event_debug_mask, int, 0664);
 
 enum {
 	MSM_EVENT_TIMER_DEBUG = 1U << 0,
@@ -87,7 +78,7 @@ struct event_timer_info *add_event_timer(uint32_t irq,
 				void (*function)(void *), void *data)
 {
 	struct event_timer_info *event_info =
-			kzalloc(sizeof(struct event_timer_info), GFP_KERNEL);
+			kcalloc(1, sizeof(*event_info), GFP_KERNEL);
 
 	if (!event_info)
 		return NULL;
@@ -112,7 +103,7 @@ struct event_timer_info *add_event_timer(uint32_t irq,
 
 	/* Init rb node and hr timer */
 	timerqueue_init(&event_info->node);
-	pr_debug("New Event Added. Event %p(on cpu%d). irq %d.\n",
+	pr_debug("New Event Added. Event %pK(on cpu%d). irq %d\n",
 					event_info, event_info->cpu, irq);
 
 	return event_info;
@@ -135,8 +126,6 @@ static bool is_event_next(struct event_timer_info *event)
 		goto exit_is_next_event;
 
 	next_event = container_of(next, struct event_timer_info, node);
-	if (!next_event)
-		goto exit_is_next_event;
 
 	if (next_event == event)
 		ret = true;
@@ -209,13 +198,11 @@ static enum hrtimer_restart event_hrtimer_cb(struct hrtimer *hrtimer)
 	while (next && (ktime_to_ns(next->expires)
 		<= ktime_to_ns(hrtimer->node.expires))) {
 		event = container_of(next, struct event_timer_info, node);
-		if (!event)
-			goto hrtimer_cb_exit;
 
 		WARN_ON_ONCE(event->cpu != cpu);
 
 		if (msm_event_debug_mask && MSM_EVENT_TIMER_DEBUG)
-			pr_debug("Deleting event %p @ %lu(on cpu%d)\n", event,
+			pr_debug("Deleting event %pK @ %lu(on cpu%d)\n", event,
 				(unsigned long)ktime_to_ns(next->expires), cpu);
 
 		timerqueue_del(&per_cpu(timer_head, cpu), &event->node);
@@ -230,7 +217,7 @@ static enum hrtimer_restart event_hrtimer_cb(struct hrtimer *hrtimer)
 		event = container_of(next, struct event_timer_info, node);
 		create_hrtimer(event);
 	}
-hrtimer_cb_exit:
+
 	spin_unlock_irqrestore(&event_timer_lock, flags);
 	return HRTIMER_NORESTART;
 }
@@ -254,7 +241,7 @@ static void create_timer_smp(void *data)
 	timerqueue_add(&per_cpu(timer_head, event->cpu), &event->node);
 
 	if (msm_event_debug_mask && MSM_EVENT_TIMER_DEBUG)
-		pr_debug("Adding Event %p(on cpu%d) for %lu\n", event,
+		pr_debug("Adding Event %pK(on cpu%d) for %lu\n", event,
 		event->cpu,
 		(unsigned long)ktime_to_ns(event->node.expires));
 
@@ -287,7 +274,7 @@ static void irq_affinity_release(struct kref *ref)
 			container_of(ref, struct irq_affinity_notify, kref);
 
 	event = container_of(notify, struct event_timer_info, notify);
-	pr_debug("event = %p\n", event);
+	pr_debug("event = %pK\n", event);
 }
 
 static void irq_affinity_change_notifier(struct irq_affinity_notify *notify,
@@ -316,7 +303,7 @@ static void irq_affinity_change_notifier(struct irq_affinity_notify *notify,
 	old_cpu = event->cpu;
 
 	if (msm_event_debug_mask && MSM_EVENT_TIMER_DEBUG)
-		pr_debug("irq %d, event %p, old_cpu(%d)->new_cpu(%d).\n",
+		pr_debug("irq %d, event %pK, old_cpu(%d)->new_cpu(%d)\n",
 						irq, event, old_cpu, new_cpu);
 
 	/* No change in IRQ affinity */
@@ -332,12 +319,12 @@ static void irq_affinity_change_notifier(struct irq_affinity_notify *notify,
 	 */
 	if (!is_event_active(event) ||
 		(is_event_next(event) &&
-		(hrtimer_try_to_cancel(&per_cpu(per_cpu_hrtimer.
-				event_hrtimer, old_cpu)) < 0))) {
+		(hrtimer_try_to_cancel(&per_cpu(per_cpu_hrtimer.event_hrtimer,
+						old_cpu)) < 0))) {
 		event->cpu = new_cpu;
 		spin_unlock_irqrestore(&event_timer_lock, flags);
 		if (msm_event_debug_mask && MSM_EVENT_TIMER_DEBUG)
-			pr_debug("Event:%p is not active or in callback\n",
+			pr_debug("Event:%pK is not active or in callback\n",
 					event);
 		return;
 	}
@@ -355,7 +342,7 @@ static void irq_affinity_change_notifier(struct irq_affinity_notify *notify,
 	timerqueue_del(&per_cpu(timer_head, old_cpu), &event->node);
 
 	if (msm_event_debug_mask && MSM_EVENT_TIMER_DEBUG)
-		pr_debug("Event:%p is in the list\n", event);
+		pr_debug("Event:%pK is in the list\n", event);
 
 	spin_unlock_irqrestore(&event_timer_lock, flags);
 
@@ -418,7 +405,7 @@ void activate_event_timer(struct event_timer_info *event, ktime_t event_time)
 		return;
 
 	if (msm_event_debug_mask && MSM_EVENT_TIMER_DEBUG)
-		pr_debug("Adding event %p timer @ %lu(on cpu%d)\n", event,
+		pr_debug("Adding event %pK timer @ %lu(on cpu%d)\n", event,
 				(unsigned long)ktime_to_us(event_time),
 				event->cpu);
 
@@ -431,8 +418,8 @@ void activate_event_timer(struct event_timer_info *event, ktime_t event_time)
 EXPORT_SYMBOL(activate_event_timer);
 
 /**
- * deactivate_event_timer() : Deactivate an event timer, this removes the event from
- *                            the time ordered queue of event timers.
+ * deactivate_event_timer() : Deactivate an event timer, this removes the event
+ *				from the time ordered queue of event timers.
  * @event: event handle.
  */
 void deactivate_event_timer(struct event_timer_info *event)

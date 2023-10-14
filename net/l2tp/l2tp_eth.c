@@ -41,8 +41,6 @@
 
 /* via netdev_priv() */
 struct l2tp_eth {
-	struct net_device	*dev;
-	struct sock		*tunnel_sock;
 	struct l2tp_session	*session;
 	atomic_long_t		tx_bytes;
 	atomic_long_t		tx_packets;
@@ -58,15 +56,12 @@ struct l2tp_eth_sess {
 };
 
 
-static struct lock_class_key l2tp_eth_tx_busylock;
 static int l2tp_eth_dev_init(struct net_device *dev)
 {
-	struct l2tp_eth *priv = netdev_priv(dev);
-
-	priv->dev = dev;
 	eth_hw_addr_random(dev);
 	eth_broadcast_addr(dev->broadcast);
-	dev->qdisc_tx_busylock = &l2tp_eth_tx_busylock;
+	netdev_lockdep_set_classes(dev);
+
 	return 0;
 }
 
@@ -98,22 +93,21 @@ static int l2tp_eth_dev_xmit(struct sk_buff *skb, struct net_device *dev)
 	return NETDEV_TX_OK;
 }
 
-static struct rtnl_link_stats64 *l2tp_eth_get_stats64(struct net_device *dev,
-						      struct rtnl_link_stats64 *stats)
+static void l2tp_eth_get_stats64(struct net_device *dev,
+				 struct rtnl_link_stats64 *stats)
 {
 	struct l2tp_eth *priv = netdev_priv(dev);
 
-	stats->tx_bytes   = atomic_long_read(&priv->tx_bytes);
-	stats->tx_packets = atomic_long_read(&priv->tx_packets);
-	stats->tx_dropped = atomic_long_read(&priv->tx_dropped);
-	stats->rx_bytes   = atomic_long_read(&priv->rx_bytes);
-	stats->rx_packets = atomic_long_read(&priv->rx_packets);
-	stats->rx_errors  = atomic_long_read(&priv->rx_errors);
-	return stats;
+	stats->tx_bytes   = (unsigned long) atomic_long_read(&priv->tx_bytes);
+	stats->tx_packets = (unsigned long) atomic_long_read(&priv->tx_packets);
+	stats->tx_dropped = (unsigned long) atomic_long_read(&priv->tx_dropped);
+	stats->rx_bytes   = (unsigned long) atomic_long_read(&priv->rx_bytes);
+	stats->rx_packets = (unsigned long) atomic_long_read(&priv->rx_packets);
+	stats->rx_errors  = (unsigned long) atomic_long_read(&priv->rx_errors);
+
 }
 
-
-static struct net_device_ops l2tp_eth_netdev_ops = {
+static const struct net_device_ops l2tp_eth_netdev_ops = {
 	.ndo_init		= l2tp_eth_dev_init,
 	.ndo_uninit		= l2tp_eth_dev_uninit,
 	.ndo_start_xmit		= l2tp_eth_dev_xmit,
@@ -121,13 +115,18 @@ static struct net_device_ops l2tp_eth_netdev_ops = {
 	.ndo_set_mac_address	= eth_mac_addr,
 };
 
+static struct device_type l2tpeth_type = {
+	.name = "l2tpeth",
+};
+
 static void l2tp_eth_dev_setup(struct net_device *dev)
 {
+	SET_NETDEV_DEVTYPE(dev, &l2tpeth_type);
 	ether_setup(dev);
 	dev->priv_flags		&= ~IFF_TX_SKB_SHARING;
 	dev->features		|= NETIF_F_LLTX;
 	dev->netdev_ops		= &l2tp_eth_netdev_ops;
-	dev->destructor		= free_netdev;
+	dev->needs_free_netdev	= true;
 }
 
 static void l2tp_eth_dev_recv(struct l2tp_session *session, struct sk_buff *skb, int data_len)
@@ -200,7 +199,6 @@ static void l2tp_eth_delete(struct l2tp_session *session)
 	}
 }
 
-#if defined(CONFIG_L2TP_DEBUGFS) || defined(CONFIG_L2TP_DEBUGFS_MODULE)
 static void l2tp_eth_show(struct seq_file *m, void *arg)
 {
 	struct l2tp_session *session = arg;
@@ -220,29 +218,25 @@ static void l2tp_eth_show(struct seq_file *m, void *arg)
 
 	dev_put(dev);
 }
-#endif
 
 static void l2tp_eth_adjust_mtu(struct l2tp_tunnel *tunnel,
 				struct l2tp_session *session,
 				struct net_device *dev)
 {
 	unsigned int overhead = 0;
-	struct dst_entry *dst;
 	u32 l3_overhead = 0;
+	u32 mtu;
 
 	/* if the encap is UDP, account for UDP header size */
 	if (tunnel->encap == L2TP_ENCAPTYPE_UDP) {
 		overhead += sizeof(struct udphdr);
 		dev->needed_headroom += sizeof(struct udphdr);
 	}
-	if (session->mtu != 0) {
-		dev->mtu = session->mtu;
-		dev->needed_headroom += session->hdr_len;
-		return;
-	}
+
 	lock_sock(tunnel->sock);
 	l3_overhead = kernel_sock_ip_overhead(tunnel->sock);
 	release_sock(tunnel->sock);
+
 	if (l3_overhead == 0) {
 		/* L3 Overhead couldn't be identified, this could be
 		 * because tunnel->sock was NULL or the socket's
@@ -256,18 +250,12 @@ static void l2tp_eth_adjust_mtu(struct l2tp_tunnel *tunnel,
 	 */
 	overhead += session->hdr_len + ETH_HLEN + l3_overhead;
 
-	/* If PMTU discovery was enabled, use discovered MTU on L2TP device */
-	dst = sk_dst_get(tunnel->sock);
-	if (dst) {
-		/* dst_mtu will use PMTU if found, else fallback to intf MTU */
-		u32 pmtu = dst_mtu(dst);
+	mtu = l2tp_tunnel_dst_mtu(tunnel) - overhead;
+	if (mtu < dev->min_mtu || mtu > dev->max_mtu)
+		dev->mtu = ETH_DATA_LEN - overhead;
+	else
+		dev->mtu = mtu;
 
-		if (pmtu != 0)
-			dev->mtu = pmtu;
-		dst_release(dst);
-	}
-	session->mtu = dev->mtu - overhead;
-	dev->mtu = session->mtu;
 	dev->needed_headroom += session->hdr_len;
 }
 
@@ -275,6 +263,7 @@ static int l2tp_eth_create(struct net *net, struct l2tp_tunnel *tunnel,
 			   u32 session_id, u32 peer_session_id,
 			   struct l2tp_session_cfg *cfg)
 {
+	unsigned char name_assign_type;
 	struct net_device *dev;
 	char name[IFNAMSIZ];
 	struct l2tp_session *session;
@@ -283,15 +272,12 @@ static int l2tp_eth_create(struct net *net, struct l2tp_tunnel *tunnel,
 	int rc;
 
 	if (cfg->ifname) {
-		dev = dev_get_by_name(net, cfg->ifname);
-		if (dev) {
-			dev_put(dev);
-			rc = -EEXIST;
-			goto err;
-		}
 		strlcpy(name, cfg->ifname, IFNAMSIZ);
-	} else
+		name_assign_type = NET_NAME_USER;
+	} else {
 		strcpy(name, L2TP_ETH_DEV_NAME);
+		name_assign_type = NET_NAME_ENUM;
+	}
 
 	session = l2tp_session_create(sizeof(*spriv), tunnel, session_id,
 				      peer_session_id, cfg);
@@ -300,7 +286,7 @@ static int l2tp_eth_create(struct net *net, struct l2tp_tunnel *tunnel,
 		goto err;
 	}
 
-	dev = alloc_netdev(sizeof(*priv), name, NET_NAME_UNKNOWN,
+	dev = alloc_netdev(sizeof(*priv), name, name_assign_type,
 			   l2tp_eth_dev_setup);
 	if (!dev) {
 		rc = -ENOMEM;
@@ -308,18 +294,17 @@ static int l2tp_eth_create(struct net *net, struct l2tp_tunnel *tunnel,
 	}
 
 	dev_net_set(dev, net);
+	dev->min_mtu = 0;
+	dev->max_mtu = ETH_MAX_MTU;
 	l2tp_eth_adjust_mtu(tunnel, session, dev);
 
 	priv = netdev_priv(dev);
-	priv->dev = dev;
 	priv->session = session;
 
-	priv->tunnel_sock = tunnel->sock;
 	session->recv_skb = l2tp_eth_dev_recv;
 	session->session_close = l2tp_eth_delete;
-#if defined(CONFIG_L2TP_DEBUGFS) || defined(CONFIG_L2TP_DEBUGFS_MODULE)
-	session->show = l2tp_eth_show;
-#endif
+	if (IS_ENABLED(CONFIG_L2TP_DEBUGFS))
+		session->show = l2tp_eth_show;
 
 	spriv = l2tp_session_priv(session);
 

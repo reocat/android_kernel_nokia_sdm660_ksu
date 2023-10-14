@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
 ccflags-y += -Idrivers/media/dvb-core/
 ccflags-y += -Idrivers/media/platform/msm/dvb/include/
 ccflags-y += -Idrivers/media/platform/msm/dvb/demux/

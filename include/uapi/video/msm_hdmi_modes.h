@@ -1,10 +1,15 @@
+/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
+/*
+ * Copyright (c) 2017-2018, 2020, The Linux Foundation. All rights reserved.
+ */
+
 #ifndef _UAPI_MSM_HDMI_MODES_H__
 #define _UAPI_MSM_HDMI_MODES_H__
 #include <linux/types.h>
 #include <linux/errno.h>
 
-#define MSM_HDMI_RGB_888_24BPP_FORMAT       BIT(0)
-#define MSM_HDMI_YUV_420_12BPP_FORMAT       BIT(1)
+#define MSM_HDMI_RGB_888_24BPP_FORMAT       1
+#define MSM_HDMI_YUV_420_12BPP_FORMAT       2
 
 enum aspect_ratio {
 	HDMI_RES_AR_INVALID,
@@ -50,9 +55,9 @@ struct msm_hdmi_mode_timing_info {
 
 #define MSM_HDMI_INIT_RES_PAGE          1
 
-#define MSM_HDMI_MODES_CEA		(1 << 0)
-#define MSM_HDMI_MODES_XTND		(1 << 1)
-#define MSM_HDMI_MODES_DVI		(1 << 2)
+#define MSM_HDMI_MODES_CEA		1
+#define MSM_HDMI_MODES_XTND		2
+#define MSM_HDMI_MODES_DVI		4
 #define MSM_HDMI_MODES_ALL		(MSM_HDMI_MODES_CEA |\
 					 MSM_HDMI_MODES_XTND |\
 					 MSM_HDMI_MODES_DVI)
@@ -271,13 +276,13 @@ struct msm_hdmi_mode_timing_info {
 	 720, 5, 5, 20, false, 74250, 60000, false, true, HDMI_RES_AR_16_9, 0}
 #define HDMI_VFRMT_1920x1080i60_16_9_TIMING				\
 	{HDMI_VFRMT_1920x1080i60_16_9, 1920, 88, 44, 148, false,	\
-	 540, 2, 5, 5, false, 74250, 60000, true, false, HDMI_RES_AR_16_9, 0}
+	 540, 2, 5, 5, false, 74250, 60000, true, true, HDMI_RES_AR_16_9, 0}
 #define HDMI_VFRMT_1440x480i60_4_3_TIMING				\
 	{HDMI_VFRMT_1440x480i60_4_3, 1440, 38, 124, 114, true,		\
-	 240, 4, 3, 15, true, 27000, 60000, true, false, HDMI_RES_AR_4_3, 0}
+	 240, 4, 3, 15, true, 27000, 60000, true, true, HDMI_RES_AR_4_3, 0}
 #define HDMI_VFRMT_1440x480i60_16_9_TIMING				\
 	{HDMI_VFRMT_1440x480i60_16_9, 1440, 38, 124, 114, true,		\
-	 240, 4, 3, 15, true, 27000, 60000, true, false, HDMI_RES_AR_16_9, 0}
+	 240, 4, 3, 15, true, 27000, 60000, true, true, HDMI_RES_AR_16_9, 0}
 #define HDMI_VFRMT_1920x1080p60_16_9_TIMING				\
 	{HDMI_VFRMT_1920x1080p60_16_9, 1920, 88, 44, 148, false,	\
 	 1080, 4, 5, 36, false, 148500, 60000, false, true, HDMI_RES_AR_16_9, 0}
@@ -292,10 +297,10 @@ struct msm_hdmi_mode_timing_info {
 	 720,  5, 5, 20, false, 74250, 50000, false, true, HDMI_RES_AR_16_9, 0}
 #define HDMI_VFRMT_1440x576i50_4_3_TIMING				\
 	{HDMI_VFRMT_1440x576i50_4_3, 1440, 24, 126, 138, true,		\
-	 288,  2, 3, 19, true, 27000, 50000, true, false, HDMI_RES_AR_4_3, 0}
+	 288,  2, 3, 19, true, 27000, 50000, true, true, HDMI_RES_AR_4_3, 0}
 #define HDMI_VFRMT_1440x576i50_16_9_TIMING				\
 	{HDMI_VFRMT_1440x576i50_16_9, 1440, 24, 126, 138, true,		\
-	 288,  2, 3, 19, true, 27000, 50000, true, false, HDMI_RES_AR_16_9, 0}
+	 288,  2, 3, 19, true, 27000, 50000, true, true, HDMI_RES_AR_16_9, 0}
 #define HDMI_VFRMT_1920x1080p50_16_9_TIMING				\
 	{HDMI_VFRMT_1920x1080p50_16_9, 1920, 528, 44, 148, false,	\
 	 1080, 4, 5, 36, false, 148500, 50000, false, true, HDMI_RES_AR_16_9, 0}

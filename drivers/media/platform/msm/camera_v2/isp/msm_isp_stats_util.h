@@ -1,4 +1,5 @@
-/* Copyright (c) 2013-2016, 2018 The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2013-2016, 2018, 2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -16,8 +17,11 @@
 #define STATS_IDX(idx) (idx & 0xFF)
 
 void msm_isp_process_stats_irq(struct vfe_device *vfe_dev,
-	uint32_t irq_status0, uint32_t irq_status1,
+	uint32_t irq_status0, uint32_t irq_status1, uint32_t dual_irq_status,
 	uint32_t pingpong_status, struct msm_isp_timestamp *ts);
+int msm_isp_stats_create_stream(struct vfe_device *vfe_dev,
+	struct msm_vfe_stats_stream_request_cmd *stream_req_cmd,
+	struct msm_vfe_stats_stream *stream_info);
 void msm_isp_stats_stream_update(struct vfe_device *vfe_dev);
 int msm_isp_cfg_stats_stream(struct vfe_device *vfe_dev, void *arg);
 int msm_isp_update_stats_stream(struct vfe_device *vfe_dev, void *arg);

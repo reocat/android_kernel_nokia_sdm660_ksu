@@ -74,10 +74,10 @@ struct mtd_dev_param {
 };
 
 /* Numbers of elements set in the @mtd_dev_param array */
-static int __initdata mtd_devs;
+static int mtd_devs;
 
 /* MTD devices specification parameters */
-static struct mtd_dev_param __initdata mtd_dev_param[UBI_MAX_DEVICES];
+static struct mtd_dev_param mtd_dev_param[UBI_MAX_DEVICES];
 #ifdef CONFIG_MTD_UBI_FASTMAP
 /* UBI module parameter to enable fastmap automatically on non-fastmap images */
 static bool fm_autoconvert;
@@ -104,23 +104,25 @@ DEFINE_MUTEX(ubi_devices_mutex);
 static DEFINE_SPINLOCK(ubi_devices_lock);
 
 /* "Show" method for files in '/<sysfs>/class/ubi/' */
-static ssize_t ubi_version_show(struct class *class,
-				struct class_attribute *attr, char *buf)
+/* UBI version attribute ('/<sysfs>/class/ubi/version') */
+static ssize_t version_show(struct class *class, struct class_attribute *attr,
+			    char *buf)
 {
 	return sprintf(buf, "%d\n", UBI_VERSION);
 }
+static CLASS_ATTR_RO(version);
 
-/* UBI version attribute ('/<sysfs>/class/ubi/version') */
-static struct class_attribute ubi_class_attrs[] = {
-	__ATTR(version, S_IRUGO, ubi_version_show, NULL),
-	__ATTR_NULL
+static struct attribute *ubi_class_attrs[] = {
+	&class_attr_version.attr,
+	NULL,
 };
+ATTRIBUTE_GROUPS(ubi_class);
 
 /* Root UBI "class" object (corresponds to '/<sysfs>/class/ubi/') */
 struct class ubi_class = {
 	.name		= UBI_NAME_STR,
 	.owner		= THIS_MODULE,
-	.class_attrs	= ubi_class_attrs,
+	.class_groups	= ubi_class_groups,
 };
 
 static ssize_t dev_attribute_show(struct device *dev,
@@ -152,13 +154,8 @@ static struct device_attribute dev_bgt_enabled =
 	__ATTR(bgt_enabled, S_IRUGO, dev_attribute_show, NULL);
 static struct device_attribute dev_mtd_num =
 	__ATTR(mtd_num, S_IRUGO, dev_attribute_show, NULL);
-static struct device_attribute dev_mtd_trigger_scrub =
-	__ATTR(scrub_all, S_IRUGO | S_IWUSR,
-		dev_attribute_show, dev_attribute_store);
-static struct device_attribute dev_mtd_max_scrub_sqnum =
-	__ATTR(scrub_max_sqnum, S_IRUGO, dev_attribute_show, NULL);
-static struct device_attribute dev_mtd_min_scrub_sqnum =
-	__ATTR(scrub_min_sqnum, S_IRUGO, dev_attribute_show, NULL);
+static struct device_attribute dev_ro_mode =
+	__ATTR(ro_mode, S_IRUGO, dev_attribute_show, NULL);
 
 /**
  * ubi_volume_notify - send a volume change notification.
@@ -380,9 +377,6 @@ static ssize_t dev_attribute_show(struct device *dev,
 	 * we still can use 'ubi->ubi_num'.
 	 */
 	ubi = container_of(dev, struct ubi_device, dev);
-	ubi = ubi_get_device(ubi->ubi_num);
-	if (!ubi)
-		return -ENODEV;
 
 	if (attr == &dev_eraseblock_size)
 		ret = sprintf(buf, "%d\n", ubi->leb_size);
@@ -406,16 +400,11 @@ static ssize_t dev_attribute_show(struct device *dev,
 		ret = sprintf(buf, "%d\n", ubi->thread_enabled);
 	else if (attr == &dev_mtd_num)
 		ret = sprintf(buf, "%d\n", ubi->mtd->index);
-	else if (attr == &dev_mtd_trigger_scrub)
-		ret = sprintf(buf, "%d\n", atomic_read(&ubi->scrub_work_count));
-	else if (attr == &dev_mtd_max_scrub_sqnum)
-		ret = sprintf(buf, "%llu\n", get_max_sqnum(ubi));
-	else if (attr == &dev_mtd_min_scrub_sqnum)
-		ret = sprintf(buf, "%llu\n", ubi_wl_scrub_get_min_sqnum(ubi));
+	else if (attr == &dev_ro_mode)
+		ret = sprintf(buf, "%d\n", ubi->ro_mode);
 	else
 		ret = -EINVAL;
 
-	ubi_put_device(ubi);
 	return ret;
 }
 
@@ -431,9 +420,7 @@ static struct attribute *ubi_dev_attrs[] = {
 	&dev_min_io_size.attr,
 	&dev_bgt_enabled.attr,
 	&dev_mtd_num.attr,
-	&dev_mtd_trigger_scrub.attr,
-	&dev_mtd_max_scrub_sqnum.attr,
-	&dev_mtd_min_scrub_sqnum.attr,
+	&dev_ro_mode.attr,
 	NULL
 };
 ATTRIBUTE_GROUPS(ubi_dev);
@@ -478,41 +465,6 @@ static void dev_release(struct device *dev)
 }
 
 /**
- * ubi_sysfs_init - initialize sysfs for an UBI device.
- * @ubi: UBI device description object
- * @ref: set to %1 on exit in case of failure if a reference to @ubi->dev was
- *       taken
- *
- * This function returns zero in case of success and a negative error code in
- * case of failure.
- */
-static int ubi_sysfs_init(struct ubi_device *ubi, int *ref)
-{
-	int err;
-
-	ubi->dev.release = dev_release;
-	ubi->dev.devt = ubi->cdev.dev;
-	ubi->dev.class = &ubi_class;
-	ubi->dev.groups = ubi_dev_groups;
-	dev_set_name(&ubi->dev, UBI_NAME_STR"%d", ubi->ubi_num);
-	err = device_register(&ubi->dev);
-	if (err)
-		return err;
-
-	*ref = 1;
-	return 0;
-}
-
-/**
- * ubi_sysfs_close - close sysfs for an UBI device.
- * @ubi: UBI device description object
- */
-static void ubi_sysfs_close(struct ubi_device *ubi)
-{
-	device_unregister(&ubi->dev);
-}
-
-/**
  * kill_volumes - destroy all user volumes.
  * @ubi: UBI device description object
  */
@@ -528,27 +480,19 @@ static void kill_volumes(struct ubi_device *ubi)
 /**
  * uif_init - initialize user interfaces for an UBI device.
  * @ubi: UBI device description object
- * @ref: set to %1 on exit in case of failure if a reference to @ubi->dev was
- *       taken, otherwise set to %0
  *
  * This function initializes various user interfaces for an UBI device. If the
  * initialization fails at an early stage, this function frees all the
- * resources it allocated, returns an error, and @ref is set to %0. However,
- * if the initialization fails after the UBI device was registered in the
- * driver core subsystem, this function takes a reference to @ubi->dev, because
- * otherwise the release function ('dev_release()') would free whole @ubi
- * object. The @ref argument is set to %1 in this case. The caller has to put
- * this reference.
+ * resources it allocated, returns an error.
  *
  * This function returns zero in case of success and a negative error code in
  * case of failure.
  */
-static int uif_init(struct ubi_device *ubi, int *ref)
+static int uif_init(struct ubi_device *ubi)
 {
 	int i, err;
 	dev_t dev;
 
-	*ref = 0;
 	sprintf(ubi->ubi_name, UBI_NAME_STR "%d", ubi->ubi_num);
 
 	/*
@@ -565,26 +509,24 @@ static int uif_init(struct ubi_device *ubi, int *ref)
 		return err;
 	}
 
+	ubi->dev.devt = dev;
+
 	ubi_assert(MINOR(dev) == 0);
 	cdev_init(&ubi->cdev, &ubi_cdev_operations);
 	dbg_gen("%s major is %u", ubi->ubi_name, MAJOR(dev));
 	ubi->cdev.owner = THIS_MODULE;
 
-	err = cdev_add(&ubi->cdev, dev, 1);
-	if (err) {
-		ubi_err(ubi, "cannot add character device");
-		goto out_unreg;
-	}
-
-	err = ubi_sysfs_init(ubi, ref);
+	dev_set_name(&ubi->dev, UBI_NAME_STR "%d", ubi->ubi_num);
+	err = cdev_device_add(&ubi->cdev, &ubi->dev);
 	if (err)
-		goto out_sysfs;
+		goto out_unreg;
 
 	for (i = 0; i < ubi->vtbl_slots; i++)
 		if (ubi->volumes[i]) {
 			err = ubi_add_volume(ubi, ubi->volumes[i]);
 			if (err) {
 				ubi_err(ubi, "cannot add volume %d", i);
+				ubi->volumes[i] = NULL;
 				goto out_volumes;
 			}
 		}
@@ -593,11 +535,7 @@ static int uif_init(struct ubi_device *ubi, int *ref)
 
 out_volumes:
 	kill_volumes(ubi);
-out_sysfs:
-	if (*ref)
-		get_device(&ubi->dev);
-	ubi_sysfs_close(ubi);
-	cdev_del(&ubi->cdev);
+	cdev_device_del(&ubi->cdev, &ubi->dev);
 out_unreg:
 	unregister_chrdev_region(ubi->cdev.dev, ubi->vtbl_slots + 1);
 	ubi_err(ubi, "cannot initialize UBI %s, error %d",
@@ -616,8 +554,7 @@ out_unreg:
 static void uif_close(struct ubi_device *ubi)
 {
 	kill_volumes(ubi);
-	ubi_sysfs_close(ubi);
-	cdev_del(&ubi->cdev);
+	cdev_device_del(&ubi->cdev, &ubi->dev);
 	unregister_chrdev_region(ubi->cdev.dev, ubi->vtbl_slots + 1);
 }
 
@@ -631,7 +568,8 @@ void ubi_free_internal_volumes(struct ubi_device *ubi)
 
 	for (i = ubi->vtbl_slots;
 	     i < ubi->vtbl_slots + UBI_INT_VOL_COUNT; i++) {
-		kfree(ubi->volumes[i]->eba_tbl);
+		ubi_eba_replace_table(ubi->volumes[i], NULL);
+		ubi_fastmap_destroy_checkmap(ubi->volumes[i]);
 		kfree(ubi->volumes[i]);
 	}
 }
@@ -641,8 +579,17 @@ static int get_bad_peb_limit(const struct ubi_device *ubi, int max_beb_per1024)
 	int limit, device_pebs;
 	uint64_t device_size;
 
-	if (!max_beb_per1024)
-		return 0;
+	if (!max_beb_per1024) {
+		/*
+		 * Since max_beb_per1024 has not been set by the user in either
+		 * the cmdline or Kconfig, use mtd_max_bad_blocks to set the
+		 * limit if it is supported by the device.
+		 */
+		limit = mtd_max_bad_blocks(ubi->mtd, 0, ubi->mtd->size);
+		if (limit < 0)
+			return 0;
+		return limit;
+	}
 
 	/*
 	 * Here we are using size of the entire flash chip and
@@ -771,6 +718,21 @@ static int io_init(struct ubi_device *ubi, int max_beb_per1024)
 						~(ubi->hdrs_min_io_size - 1);
 		ubi->vid_hdr_shift = ubi->vid_hdr_offset -
 						ubi->vid_hdr_aloffset;
+	}
+
+	/*
+	 * Memory allocation for VID header is ubi->vid_hdr_alsize
+	 * which is described in comments in io.c.
+	 * Make sure VID header shift + UBI_VID_HDR_SIZE not exceeds
+	 * ubi->vid_hdr_alsize, so that all vid header operations
+	 * won't access memory out of bounds.
+	 */
+	if ((ubi->vid_hdr_shift + UBI_VID_HDR_SIZE) > ubi->vid_hdr_alsize) {
+		ubi_err(ubi, "Invalid VID header offset %d, VID header shift(%d)"
+			" + VID header size(%zu) > VID header aligned size(%d).",
+			ubi->vid_hdr_offset, ubi->vid_hdr_shift,
+			UBI_VID_HDR_SIZE, ubi->vid_hdr_alsize);
+		return -EINVAL;
 	}
 
 	/* Similar for the data offset */
@@ -914,7 +876,7 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 		       int vid_hdr_offset, int max_beb_per1024)
 {
 	struct ubi_device *ubi;
-	int i, err, ref = 0;
+	int i, err;
 
 	if (max_beb_per1024 < 0 || max_beb_per1024 > MAX_MTD_UBI_BEB_LIMIT)
 		return -EINVAL;
@@ -931,7 +893,7 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 	for (i = 0; i < UBI_MAX_DEVICES; i++) {
 		ubi = ubi_devices[i];
 		if (ubi && mtd->index == ubi->mtd->index) {
-			pr_err("ubi: mtd%d is already attached to ubi%d",
+			pr_err("ubi: mtd%d is already attached to ubi%d\n",
 				mtd->index, i);
 			return -EEXIST;
 		}
@@ -946,7 +908,7 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 	 * no sense to attach emulated MTD devices, so we prohibit this.
 	 */
 	if (mtd->type == MTD_UBIVOLUME) {
-		pr_err("ubi: refuse attaching mtd%d - it is already emulated on top of UBI",
+		pr_err("ubi: refuse attaching mtd%d - it is already emulated on top of UBI\n",
 			mtd->index);
 		return -EINVAL;
 	}
@@ -968,7 +930,7 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 			if (!ubi_devices[ubi_num])
 				break;
 		if (ubi_num == UBI_MAX_DEVICES) {
-			pr_err("ubi: only %d UBI devices may be created",
+			pr_err("ubi: only %d UBI devices may be created\n",
 				UBI_MAX_DEVICES);
 			return -ENFILE;
 		}
@@ -978,7 +940,7 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 
 		/* Make sure ubi_num is not busy */
 		if (ubi_devices[ubi_num]) {
-			pr_err("ubi: ubi%i already exists", ubi_num);
+			pr_err("ubi: ubi%i already exists\n", ubi_num);
 			return -EEXIST;
 		}
 	}
@@ -986,6 +948,11 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 	ubi = kzalloc(sizeof(struct ubi_device), GFP_KERNEL);
 	if (!ubi)
 		return -ENOMEM;
+
+	device_initialize(&ubi->dev);
+	ubi->dev.release = dev_release;
+	ubi->dev.class = &ubi_class;
+	ubi->dev.groups = ubi_dev_groups;
 
 	ubi->mtd = mtd;
 	ubi->ubi_num = ubi_num;
@@ -1060,10 +1027,7 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 			goto out_detach;
 	}
 
-	/* Make device "available" before it becomes accessible via sysfs */
-	ubi_devices[ubi_num] = ubi;
-
-	err = uif_init(ubi, &ref);
+	err = uif_init(ubi);
 	if (err)
 		goto out_detach;
 
@@ -1113,8 +1077,6 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 out_debugfs:
 	ubi_debugfs_exit_dev(ubi);
 out_uif:
-	get_device(&ubi->dev);
-	ubi_assert(ref);
 	uif_close(ubi);
 out_detach:
 	ubi_devices[ubi_num] = NULL;
@@ -1124,10 +1086,7 @@ out_detach:
 out_free:
 	vfree(ubi->peb_buf);
 	vfree(ubi->fm_buf);
-	if (ref)
-		put_device(&ubi->dev);
-	else
-		kfree(ubi);
+	put_device(&ubi->dev);
 	return err;
 }
 
@@ -1188,12 +1147,6 @@ int ubi_detach_mtd_dev(int ubi_num, int anyway)
 	if (ubi->bgt_thread)
 		kthread_stop(ubi->bgt_thread);
 
-	/*
-	 * Get a reference to the device in order to prevent 'dev_release()'
-	 * from freeing the @ubi object.
-	 */
-	get_device(&ubi->dev);
-
 #ifdef CONFIG_MTD_UBI_FASTMAP
 	cancel_work_sync(&ubi->fm_work);
 #endif
@@ -1221,21 +1174,25 @@ int ubi_detach_mtd_dev(int ubi_num, int anyway)
  */
 static struct mtd_info * __init open_mtd_by_chdev(const char *mtd_dev)
 {
-	int err, major, minor, mode;
+	int err, minor;
 	struct path path;
+	struct kstat stat;
 
 	/* Probably this is an MTD character device node path */
 	err = kern_path(mtd_dev, LOOKUP_FOLLOW, &path);
 	if (err)
 		return ERR_PTR(err);
 
-	/* MTD device number is defined by the major / minor numbers */
-	major = imajor(d_backing_inode(path.dentry));
-	minor = iminor(d_backing_inode(path.dentry));
-	mode = d_backing_inode(path.dentry)->i_mode;
+	err = vfs_getattr(&path, &stat, STATX_TYPE, AT_STATX_SYNC_AS_STAT);
 	path_put(&path);
-	if (major != MTD_CHAR_MAJOR || !S_ISCHR(mode))
+	if (err)
+		return ERR_PTR(err);
+
+	/* MTD device number is defined by the major / minor numbers */
+	if (MAJOR(stat.rdev) != MTD_CHAR_MAJOR || !S_ISCHR(stat.mode))
 		return ERR_PTR(-EINVAL);
+
+	minor = MINOR(stat.rdev);
 
 	if (minor & 1)
 		/*
@@ -1288,7 +1245,7 @@ static int __init ubi_init(void)
 	BUILD_BUG_ON(sizeof(struct ubi_vid_hdr) != 64);
 
 	if (mtd_devs > UBI_MAX_DEVICES) {
-		pr_err("UBI error: too many MTD devices, maximum is %d",
+		pr_err("UBI error: too many MTD devices, maximum is %d\n",
 		       UBI_MAX_DEVICES);
 		return -EINVAL;
 	}
@@ -1300,7 +1257,7 @@ static int __init ubi_init(void)
 
 	err = misc_register(&ubi_ctrl_cdev);
 	if (err) {
-		pr_err("UBI error: cannot register device");
+		pr_err("UBI error: cannot register device\n");
 		goto out;
 	}
 
@@ -1327,7 +1284,7 @@ static int __init ubi_init(void)
 		mtd = open_mtd_device(p->name);
 		if (IS_ERR(mtd)) {
 			err = PTR_ERR(mtd);
-			pr_err("UBI error: cannot open mtd %s, error %d",
+			pr_err("UBI error: cannot open mtd %s, error %d\n",
 			       p->name, err);
 			/* See comment below re-ubi_is_module(). */
 			if (ubi_is_module())
@@ -1340,7 +1297,7 @@ static int __init ubi_init(void)
 					 p->vid_hdr_offs, p->max_beb_per1024);
 		mutex_unlock(&ubi_devices_mutex);
 		if (err < 0) {
-			pr_err("UBI error: cannot attach mtd%d",
+			pr_err("UBI error: cannot attach mtd%d\n",
 			       mtd->index);
 			put_mtd_device(mtd);
 
@@ -1364,7 +1321,7 @@ static int __init ubi_init(void)
 
 	err = ubiblock_init();
 	if (err) {
-		pr_err("UBI error: block: cannot initialize, error %d", err);
+		pr_err("UBI error: block: cannot initialize, error %d\n", err);
 
 		/* See comment above re-ubi_is_module(). */
 		if (ubi_is_module())
@@ -1387,7 +1344,7 @@ out_dev_unreg:
 	misc_deregister(&ubi_ctrl_cdev);
 out:
 	class_unregister(&ubi_class);
-	pr_err("UBI error: cannot initialize UBI, error %d", err);
+	pr_err("UBI error: cannot initialize UBI, error %d\n", err);
 	return err;
 }
 late_initcall(ubi_init);
@@ -1418,7 +1375,7 @@ module_exit(ubi_exit);
  * This function returns positive resulting integer in case of success and a
  * negative error code in case of failure.
  */
-static int __init bytes_str_to_int(const char *str)
+static int bytes_str_to_int(const char *str)
 {
 	char *endp;
 	unsigned long result;
@@ -1456,7 +1413,7 @@ static int __init bytes_str_to_int(const char *str)
  * This function returns zero in case of success and a negative error code in
  * case of error.
  */
-static int __init ubi_mtd_param_parse(const char *val, struct kernel_param *kp)
+static int ubi_mtd_param_parse(const char *val, const struct kernel_param *kp)
 {
 	int i, len;
 	struct mtd_dev_param *p;
@@ -1537,7 +1494,7 @@ static int __init ubi_mtd_param_parse(const char *val, struct kernel_param *kp)
 	return 0;
 }
 
-module_param_call(mtd, ubi_mtd_param_parse, NULL, NULL, 000);
+module_param_call(mtd, ubi_mtd_param_parse, NULL, NULL, 0400);
 MODULE_PARM_DESC(mtd, "MTD devices to attach. Parameter format: mtd=<name|num|path>[,<vid_hdr_offs>[,max_beb_per1024[,ubi_num]]].\n"
 		      "Multiple \"mtd\" parameters may be specified.\n"
 		      "MTD devices may be specified by their number, name, or path to the MTD character device node.\n"

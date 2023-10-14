@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #include <linux/init.h>
 #include <linux/linkage.h>
 
@@ -5,6 +6,7 @@
 #include <asm/asm-offsets.h>
 #include <asm/errno.h>
 #include <asm/thread_info.h>
+#include <asm/uaccess-asm.h>
 #include <asm/v7m.h>
 
 @ Bad Abort numbers
@@ -90,7 +92,7 @@
 	@ Linux expects to have irqs off. Do it here before taking stack space
 	cpsid	i
 
-	sub	sp, #S_FRAME_SIZE-S_IP
+	sub	sp, #PT_REGS_SIZE-S_IP
 	stmdb	sp!, {r0-r11}
 
 	@ load saved r12, lr, return address and xPSR.
@@ -126,7 +128,8 @@
          */
 	.macro	v7m_exception_slow_exit ret_r0
 	cpsid	i
-	ldr	lr, =EXC_RET_THREADMODE_PROCESSSTACK
+	ldr	lr, =exc_ret
+	ldr	lr, [lr]
 
 	@ read original r12, sp, lr, pc and xPSR
 	add	r12, sp, #S_IP
@@ -160,7 +163,7 @@
 	ldmia	sp!, {r0-r11}
 
 	@ restore main sp
-	add	sp, sp, #S_FRAME_SIZE-S_IP
+	add	sp, sp, #PT_REGS_SIZE-S_IP
 
 	cpsie	i
 	bx	lr
@@ -215,7 +218,7 @@
 	blne	trace_hardirqs_off
 #endif
 	.endif
-	uaccess_restore
+	uaccess_exit tsk, r0, r1
 
 #ifndef CONFIG_THUMB2_KERNEL
 	@ ARM mode SVC restore
@@ -259,7 +262,7 @@
 	@ on the stack remains correct).
 	@
 	.macro  svc_exit_via_fiq
-	uaccess_restore
+	uaccess_exit tsk, r0, r1
 #ifndef CONFIG_THUMB2_KERNEL
 	@ ARM mode restore
 	mov	r0, sp
@@ -309,7 +312,7 @@
 	.endif
 	mov	r0, r0				@ ARMv5T and earlier require a nop
 						@ after ldm {}^
-	add	sp, sp, #\offset + S_FRAME_SIZE
+	add	sp, sp, #\offset + PT_REGS_SIZE
 	movs	pc, lr				@ return & move spsr_svc into cpsr
 1:	bug	"Returning to usermode but unexpected PSR bits set?", \@
 #elif defined(CONFIG_CPU_V7M)
@@ -339,7 +342,7 @@
 	.else
 	ldmdb	sp, {r0 - r12}			@ get calling r0 - r12
 	.endif
-	add	sp, sp, #S_FRAME_SIZE - S_SP
+	add	sp, sp, #PT_REGS_SIZE - S_SP
 	movs	pc, lr				@ return & move spsr_svc into cpsr
 1:	bug	"Returning to usermode but unexpected PSR bits set?", \@
 #endif	/* !CONFIG_THUMB2_KERNEL */

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM skb
 
@@ -58,8 +59,8 @@ TRACE_EVENT(print_skb_gso,
 
 	TP_STRUCT__entry(
 		__field(void *,	skbaddr)
-		__field(int   ,	len)
-		__field(int   ,	data_len)
+		__field(int, len)
+		__field(int, data_len)
 		__field(__be16, src)
 		__field(__be16, dest)
 	),

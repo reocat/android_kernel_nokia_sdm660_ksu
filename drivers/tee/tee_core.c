@@ -96,8 +96,10 @@ void teedev_ctx_put(struct tee_context *ctx)
 
 static void teedev_close_context(struct tee_context *ctx)
 {
-	tee_device_put(ctx->teedev);
+	struct tee_device *teedev = ctx->teedev;
+
 	teedev_ctx_put(ctx);
+	tee_device_put(teedev);
 }
 
 static int tee_release(struct inode *inode, struct file *filp)
@@ -173,6 +175,10 @@ tee_ioctl_shm_register(struct tee_context *ctx,
 	if (data.flags)
 		return -EINVAL;
 
+	if (!access_ok(VERIFY_WRITE, (void __user *)(unsigned long)data.addr,
+		       data.length))
+		return -EFAULT;
+
 	shm = tee_shm_register(ctx, data.addr, data.length,
 			       TEE_SHM_DMA_BUF | TEE_SHM_USER_MAPPED);
 	if (IS_ERR(shm))
@@ -237,6 +243,17 @@ static int params_from_user(struct tee_context *ctx, struct tee_param *params,
 			shm = tee_shm_get_from_id(ctx, ip.c);
 			if (IS_ERR(shm))
 				return PTR_ERR(shm);
+
+			/*
+			 * Ensure offset + size does not overflow offset
+			 * and does not overflow the size of the referred
+			 * shared memory object.
+			 */
+			if ((ip.a + ip.b) < ip.a ||
+			    (ip.a + ip.b) > shm->size) {
+				tee_shm_put(shm);
+				return -EINVAL;
+			}
 
 			params[n].u.memref.shm_offs = ip.a;
 			params[n].u.memref.size = ip.b;
@@ -693,7 +710,7 @@ struct tee_device *tee_device_alloc(const struct tee_desc *teedesc,
 {
 	struct tee_device *teedev;
 	void *ret;
-	int rc;
+	int rc, max_id;
 	int offs = 0;
 
 	if (!teedesc || !teedesc->name || !teedesc->ops ||
@@ -707,16 +724,20 @@ struct tee_device *tee_device_alloc(const struct tee_desc *teedesc,
 		goto err;
 	}
 
-	if (teedesc->flags & TEE_DESC_PRIVILEGED)
+	max_id = TEE_NUM_DEVICES / 2;
+
+	if (teedesc->flags & TEE_DESC_PRIVILEGED) {
 		offs = TEE_NUM_DEVICES / 2;
+		max_id = TEE_NUM_DEVICES;
+	}
 
 	spin_lock(&driver_lock);
-	teedev->id = find_next_zero_bit(dev_mask, TEE_NUM_DEVICES, offs);
-	if (teedev->id < TEE_NUM_DEVICES)
+	teedev->id = find_next_zero_bit(dev_mask, max_id, offs);
+	if (teedev->id < max_id)
 		set_bit(teedev->id, dev_mask);
 	spin_unlock(&driver_lock);
 
-	if (teedev->id >= TEE_NUM_DEVICES) {
+	if (teedev->id >= max_id) {
 		ret = ERR_PTR(-ENOMEM);
 		goto err;
 	}

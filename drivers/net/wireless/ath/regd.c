@@ -116,7 +116,7 @@ static const struct ieee80211_regdomain ath_world_regdom_67_68_6A_6C = {
 
 static bool dynamic_country_user_possible(struct ath_regulatory *reg)
 {
-	if (config_enabled(CONFIG_ATH_REG_DYNAMIC_USER_CERT_TESTING))
+	if (IS_ENABLED(CONFIG_ATH_REG_DYNAMIC_USER_CERT_TESTING))
 		return true;
 
 	switch (reg->country_code) {
@@ -188,7 +188,7 @@ static bool dynamic_country_user_possible(struct ath_regulatory *reg)
 
 static bool ath_reg_dyn_country_user_allow(struct ath_regulatory *reg)
 {
-	if (!config_enabled(CONFIG_ATH_REG_DYNAMIC_USER_REG_HINTS))
+	if (!IS_ENABLED(CONFIG_ATH_REG_DYNAMIC_USER_REG_HINTS))
 		return false;
 	if (!dynamic_country_user_possible(reg))
 		return false;
@@ -260,7 +260,7 @@ static bool ath_is_radar_freq(u16 center_freq,
 {
 	if (reg->country_code == CTRY_INDIA)
 		return (center_freq >= 5500 && center_freq <= 5700);
-	return (center_freq >= 5260 && center_freq <= 5720);
+	return (center_freq >= 5260 && center_freq <= 5700);
 }
 
 static void ath_force_clear_no_ir_chan(struct wiphy *wiphy,
@@ -454,7 +454,7 @@ static void ath_reg_apply_world_flags(struct wiphy *wiphy,
 	}
 }
 
-static u16 ath_regd_find_country_by_name(char *alpha2)
+u16 ath_regd_find_country_by_name(char *alpha2)
 {
 	unsigned int i;
 
@@ -465,6 +465,7 @@ static u16 ath_regd_find_country_by_name(char *alpha2)
 
 	return -1;
 }
+EXPORT_SYMBOL(ath_regd_find_country_by_name);
 
 static int __ath_reg_dyn_country(struct wiphy *wiphy,
 				 struct ath_regulatory *reg,
@@ -660,20 +661,6 @@ ath_regd_init_wiphy(struct ath_regulatory *reg,
 	}
 
 	wiphy_apply_custom_regulatory(wiphy, regd);
-
-	/* For regulatory rules similar to the following:
-	 * REG_RULE(2412-10, 2462+10, 40, 0, 20, 0), channels 12/13 are enabled
-	 * due to support of 5/10 MHz.
-	 * Therefore, disable 2.4 Ghz channels that dont have 20 mhz bw
-	 */
-	for (chan_num = 0;
-	     chan_num < wiphy->bands[NL80211_BAND_2GHZ]->n_channels;
-	     chan_num++) {
-		chan = &wiphy->bands[NL80211_BAND_2GHZ]->channels[chan_num];
-		if (chan->flags & IEEE80211_CHAN_NO_20MHZ)
-			chan->flags |= IEEE80211_CHAN_DISABLED;
-	}
-
 	ath_reg_apply_radar_flags(wiphy, reg);
 	ath_reg_apply_world_flags(wiphy, NL80211_REGDOM_SET_BY_DRIVER, reg);
 	return 0;

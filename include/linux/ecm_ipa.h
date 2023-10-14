@@ -1,13 +1,6 @@
-/* Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _ECM_IPA_H_
@@ -29,7 +22,7 @@ typedef void (*ecm_ipa_callback)(void *priv,
  *
  * @device_ready_notify: callback supplied by USB core driver.
  * This callback shall be called by the Netdev once the device
- * is ready to recieve data from tethered PC.
+ * is ready to receive data from tethered PC.
  * @ecm_ipa_rx_dp_notify: ecm_ipa will set this callback (out parameter).
  * this callback shall be supplied for ipa_connect upon pipe
  * connection (USB->IPA), once IPA driver receive data packets

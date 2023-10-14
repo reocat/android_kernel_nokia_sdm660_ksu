@@ -113,7 +113,7 @@ static int __init goldfish_pic_of_init(struct device_node *of_node,
 	if (!gfpic->irq_domain) {
 		pr_err("Failed to add irqdomain!\n");
 		ret = -ENOMEM;
-		goto out_iounmap;
+		goto out_destroy_generic_chip;
 	}
 
 	irq_set_chained_handler_and_data(parent_irq,
@@ -122,6 +122,9 @@ static int __init goldfish_pic_of_init(struct device_node *of_node,
 	pr_info("Successfully registered.\n");
 	return 0;
 
+out_destroy_generic_chip:
+	irq_destroy_generic_chip(gc, IRQ_MSK(GFPIC_NR_IRQS),
+				 IRQ_NOPROBE | IRQ_LEVEL, 0);
 out_iounmap:
 	iounmap(gfpic->base);
 out_unmap_irq:

@@ -79,7 +79,7 @@ void radeon_pm_acpi_event_handler(struct radeon_device *rdev)
 				radeon_dpm_enable_bapm(rdev, rdev->pm.dpm.ac_power);
 		}
 		mutex_unlock(&rdev->pm.mutex);
-        } else if (rdev->pm.pm_method == PM_METHOD_PROFILE) {
+	} else if (rdev->pm.pm_method == PM_METHOD_PROFILE) {
 		if (rdev->pm.profile == PM_PROFILE_AUTO) {
 			mutex_lock(&rdev->pm.mutex);
 			radeon_pm_update_profile(rdev);
@@ -246,6 +246,7 @@ static void radeon_set_power_state(struct radeon_device *rdev)
 
 static void radeon_pm_set_clocks(struct radeon_device *rdev)
 {
+	struct drm_crtc *crtc;
 	int i, r;
 
 	/* no need to take locks, etc. if nothing's going to change */
@@ -274,22 +275,30 @@ static void radeon_pm_set_clocks(struct radeon_device *rdev)
 	radeon_unmap_vram_bos(rdev);
 
 	if (rdev->irq.installed) {
-		for (i = 0; i < rdev->num_crtc; i++) {
+		i = 0;
+		drm_for_each_crtc(crtc, rdev->ddev) {
 			if (rdev->pm.active_crtcs & (1 << i)) {
-				rdev->pm.req_vblank |= (1 << i);
-				drm_vblank_get(rdev->ddev, i);
+				/* This can fail if a modeset is in progress */
+				if (drm_crtc_vblank_get(crtc) == 0)
+					rdev->pm.req_vblank |= (1 << i);
+				else
+					DRM_DEBUG_DRIVER("crtc %d no vblank, can glitch\n",
+							 i);
 			}
+			i++;
 		}
 	}
 
 	radeon_set_power_state(rdev);
 
 	if (rdev->irq.installed) {
-		for (i = 0; i < rdev->num_crtc; i++) {
+		i = 0;
+		drm_for_each_crtc(crtc, rdev->ddev) {
 			if (rdev->pm.req_vblank & (1 << i)) {
 				rdev->pm.req_vblank &= ~(1 << i);
-				drm_vblank_put(rdev->ddev, i);
+				drm_crtc_vblank_put(crtc);
 			}
+			i++;
 		}
 	}
 
@@ -713,7 +722,7 @@ static struct attribute *hwmon_attributes[] = {
 static umode_t hwmon_attributes_visible(struct kobject *kobj,
 					struct attribute *attr, int index)
 {
-	struct device *dev = container_of(kobj, struct device, kobj);
+	struct device *dev = kobj_to_dev(kobj);
 	struct radeon_device *rdev = dev_get_drvdata(dev);
 	umode_t effective_mode = attr->mode;
 
@@ -1706,6 +1715,7 @@ static void radeon_pm_compute_clocks_dpm(struct radeon_device *rdev)
 	struct drm_device *ddev = rdev->ddev;
 	struct drm_crtc *crtc;
 	struct radeon_crtc *radeon_crtc;
+	struct radeon_connector *radeon_connector;
 
 	if (!rdev->pm.dpm_enabled)
 		return;
@@ -1715,6 +1725,7 @@ static void radeon_pm_compute_clocks_dpm(struct radeon_device *rdev)
 	/* update active crtc counts */
 	rdev->pm.dpm.new_active_crtcs = 0;
 	rdev->pm.dpm.new_active_crtc_count = 0;
+	rdev->pm.dpm.high_pixelclock_count = 0;
 	if (rdev->num_crtc && rdev->mode_info.mode_config_initialized) {
 		list_for_each_entry(crtc,
 				    &ddev->mode_config.crtc_list, head) {
@@ -1722,6 +1733,12 @@ static void radeon_pm_compute_clocks_dpm(struct radeon_device *rdev)
 			if (crtc->enabled) {
 				rdev->pm.dpm.new_active_crtcs |= (1 << radeon_crtc->crtc_id);
 				rdev->pm.dpm.new_active_crtc_count++;
+				if (!radeon_crtc->connector)
+					continue;
+
+				radeon_connector = to_radeon_connector(radeon_crtc->connector);
+				if (radeon_connector->pixelclock_for_modeset > 297000)
+					rdev->pm.dpm.high_pixelclock_count++;
 			}
 		}
 	}

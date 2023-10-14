@@ -1,20 +1,42 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (c) 2015-2017,2019-2020 The Linux Foundation. All rights reserved.
  */
 
 #ifndef _ADRENO_A5XX_H_
 #define _ADRENO_A5XX_H_
 
 #include "a5xx_reg.h"
+
+/**
+ * struct adreno_a5xx_core - a5xx specific GPU core definitions
+ */
+struct adreno_a5xx_core {
+	/** @base: Container for the generic &struct adreno_gpu_core */
+	struct adreno_gpu_core base;
+	/** @gpmu_tsens: ID for the temperature sensor used by the GPMU */
+	unsigned int gpmu_tsens;
+	/** @max_power: Max possible power draw of a core */
+	unsigned int max_power;
+	/** pm4fw_name: Name of the PM4 microcode file */
+	const char *pm4fw_name;
+	/** pfpfw_name: Name of the PFP microcode file */
+	const char *pfpfw_name;
+	/** gpmufw_name: Name of the GPMU microcode file */
+	const char *gpmufw_name;
+	/** @regfw_name: Filename for the LM registers if applicable */
+	const char *regfw_name;
+	/** @zap_name: Name of the CPZ zap file */
+	const char *zap_name;
+	/** @hwcg: List of registers and values to write for HWCG */
+	const struct adreno_reglist *hwcg;
+	/** @hwcg_count: Number of registers in @hwcg */
+	u32 hwcg_count;
+	/** @vbif: List of registers and values to write for VBIF */
+	const struct adreno_reglist *vbif;
+	/** @vbif_count: Number of registers in @vbif */
+	u32 vbif_count;
+};
 
 #define A5XX_IRQ_FLAGS \
 	{ BIT(A5XX_INT_RBBM_GPU_IDLE), "RBBM_GPU_IDLE" }, \
@@ -112,7 +134,7 @@ void a5xx_crashdump_init(struct adreno_device *adreno_dev);
 
 void a5xx_hwcg_set(struct adreno_device *adreno_dev, bool on);
 
-#define A5XX_CP_RB_CNTL_DEFAULT (((ilog2(4) << 8) & 0x1F00) | \
+#define A5XX_CP_RB_CNTL_DEFAULT ((1 << 27) | ((ilog2(4) << 8) & 0x1F00) | \
 		(ilog2(KGSL_RB_DWORDS >> 1) & 0x3F))
 /* GPMU interrupt multiplexor */
 #define FW_INTR_INFO			(0)
@@ -150,24 +172,6 @@ void a5xx_hwcg_set(struct adreno_device *adreno_dev, bool on);
 #define GPMU_LLM_ENABLED		BIT(9)
 #define GPMU_ISENSE_STATUS		GENMASK(3, 0)
 #define GPMU_ISENSE_END_POINT_CAL_ERR	BIT(0)
-
-/* A5XX_GPU_CS_AMP_CALIBRATION_CONTROL1 */
-#define AMP_SW_TRIM_START		BIT(0)
-
-/* A5XX_GPU_CS_SENSOR_GENERAL_STATUS */
-#define SS_AMPTRIM_DONE			BIT(11)
-#define CS_PWR_ON_STATUS		BIT(10)
-
-/* A5XX_GPU_CS_AMP_CALIBRATION_STATUS*_* */
-#define AMP_OUT_OF_RANGE_ERR		BIT(4)
-#define AMP_OFFSET_CHECK_MAX_ERR	BIT(2)
-#define AMP_OFFSET_CHECK_MIN_ERR	BIT(1)
-
-/* A5XX_GPU_CS_AMP_CALIBRATION_DONE */
-#define SW_OPAMP_CAL_DONE           BIT(0)
-
-#define AMP_CALIBRATION_ERR (AMP_OFFSET_CHECK_MIN_ERR | \
-		AMP_OFFSET_CHECK_MAX_ERR | AMP_OUT_OF_RANGE_ERR)
 
 #define AMP_CALIBRATION_RETRY_CNT	3
 #define AMP_CALIBRATION_TIMEOUT		6
@@ -239,11 +243,27 @@ static inline bool lm_on(struct adreno_device *adreno_dev)
 		test_bit(ADRENO_LM_CTRL, &adreno_dev->pwrctrl_flag);
 }
 
+/**
+ * to_a5xx_core - return the a5xx specific GPU core struct
+ * @adreno_dev: An Adreno GPU device handle
+ *
+ * Returns:
+ * A pointer to the a5xx specific GPU core struct
+ */
+static inline const struct adreno_a5xx_core *
+to_a5xx_core(struct adreno_device *adreno_dev)
+{
+	const struct adreno_gpu_core *core = adreno_dev->gpucore;
+
+	return container_of(core, struct adreno_a5xx_core, base);
+}
+
 /* Preemption functions */
 void a5xx_preemption_trigger(struct adreno_device *adreno_dev);
 void a5xx_preemption_schedule(struct adreno_device *adreno_dev);
 void a5xx_preemption_start(struct adreno_device *adreno_dev);
 int a5xx_preemption_init(struct adreno_device *adreno_dev);
+void a5xx_preemption_close(struct adreno_device *adreno_dev);
 int a5xx_preemption_yield_enable(unsigned int *cmds);
 
 unsigned int a5xx_preemption_post_ibsubmit(struct adreno_device *adreno_dev,

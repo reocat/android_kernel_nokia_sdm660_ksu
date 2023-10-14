@@ -1,22 +1,17 @@
-/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SLIM_MSM_H
 #define _SLIM_MSM_H
 
+#include <linux/ipc_logging.h>
 #include <linux/irq.h>
 #include <linux/kthread.h>
-#include <soc/qcom/msm_qmi_interface.h>
-#include <linux/ipc_logging.h>
+#include <linux/qrtr.h>
+#include <linux/soc/qcom/qmi.h>
+#include <net/sock.h>
 
 /* Per spec.max 40 bytes per received message */
 #define SLIM_MSGQ_BUF_LEN	40
@@ -41,7 +36,7 @@
 #define MSM_SLIM_VE_MAX_MAP_ADDR	0xFFF
 #define SLIM_MAX_VE_SLC_BYTES		16
 
-#define MSM_SLIM_AUTOSUSPEND		MSEC_PER_SEC
+#define MSM_SLIM_AUTOSUSPEND		(MSEC_PER_SEC / 10)
 
 #define SLIM_RX_MSGQ_TIMEOUT_VAL	0x10000
 /*
@@ -94,8 +89,8 @@
 #define SLIMBUS_QMI_SVC_V1 1
 #define SLIMBUS_QMI_INS_ID 0
 
-/* QMI response timeout of 500ms */
-#define SLIM_QMI_RESP_TOUT 1000
+/* QMI response timeout of 1000ms */
+#define SLIM_QMI_RESP_TOUT (HZ)
 
 #define PGD_THIS_EE(r, v) ((v) ? PGD_THIS_EE_V2(r) : PGD_THIS_EE_V1(r))
 #define PGD_PORT(r, p, v) ((v) ? PGD_PORT_V2(r, p) : PGD_PORT_V1(r, p))
@@ -221,13 +216,14 @@ struct msm_slim_endp {
 
 struct msm_slim_qmi {
 	struct qmi_handle		*handle;
-	struct task_struct		*task;
+	struct sockaddr_qrtr		svc_info;
 	struct task_struct		*slave_thread;
 	struct completion		slave_notify;
-	struct kthread_work		kwork;
-	struct kthread_worker		kworker;
 	struct completion		qmi_comp;
-	struct notifier_block		nb;
+	struct qmi_handle		svc_event_hdl;
+	bool				deferred_resp;
+	struct qmi_response_type_v01	resp;
+	struct qmi_txn			deferred_txn;
 };
 
 enum msm_slim_dom {
@@ -259,11 +255,23 @@ struct msm_slim_bulk_wr {
 	bool		in_progress;
 };
 
+struct msm_slim_iommu {
+	struct device			*cb_dev;
+	struct dma_iommu_mapping	*iommu_map;
+	bool				s1_bypass;
+};
+
 struct msm_slim_ctrl {
 	struct slim_controller  ctrl;
 	struct slim_framer	framer;
 	struct device		*dev;
+	struct msm_slim_iommu	iommu_desc;
 	void __iomem		*base;
+	struct msm_slim_sps_bam	lpass;
+	struct resource		*lpass_mem;
+	u32			lpass_phy_base;
+	void __iomem		*lpass_virt_base;
+	bool			lpass_mem_usage;
 	struct resource		*slew_mem;
 	struct resource		*bam_mem;
 	u32			curr_bw;
@@ -311,10 +319,13 @@ struct msm_slim_ctrl {
 	int			ipc_log_mask;
 	bool			sysfs_created;
 	void			*ipc_slimbus_log;
+	void			*ipc_slimbus_log_err;
 	void (*rx_slim)(struct msm_slim_ctrl *dev, u8 *buf);
 	u32			current_rx_buf[10];
 	int			current_count;
 	atomic_t		ssr_in_progress;
+	atomic_t		init_in_progress;
+	struct completion	qmi_up;
 };
 
 struct msm_sat_chan {
@@ -366,6 +377,9 @@ enum {
 	if (dev->ipc_slimbus_log && dev->ipc_log_mask >= DBG_LEV) { \
 		ipc_log_string(dev->ipc_slimbus_log, x); \
 	} \
+	if (dev->ipc_slimbus_log_err && dev->ipc_log_mask == FATAL_LEV) { \
+		ipc_log_string(dev->ipc_slimbus_log_err, x); \
+	} \
 } while (0)
 
 #define SLIM_INFO(dev, x...) do { \
@@ -373,25 +387,35 @@ enum {
 	if (dev->ipc_slimbus_log && dev->ipc_log_mask >= INFO_LEV) {\
 		ipc_log_string(dev->ipc_slimbus_log, x); \
 	} \
+	if (dev->ipc_slimbus_log_err && dev->ipc_log_mask == FATAL_LEV) { \
+		ipc_log_string(dev->ipc_slimbus_log_err, x); \
+	} \
 } while (0)
 
 /* warnings and errors show up on console always */
 #define SLIM_WARN(dev, x...) do { \
-	pr_warn(x); \
-	if (dev->ipc_slimbus_log && dev->ipc_log_mask >= WARN_LEV) \
+	if (dev->ipc_slimbus_log && dev->ipc_log_mask >= WARN_LEV) { \
+		pr_warn(x); \
 		ipc_log_string(dev->ipc_slimbus_log, x); \
+	} \
+	if (dev->ipc_slimbus_log_err && dev->ipc_log_mask == FATAL_LEV) { \
+		ipc_log_string(dev->ipc_slimbus_log_err, x); \
+	} \
 } while (0)
 
 /* ERROR condition in the driver sets the hs_serial_debug_mask
  * to ERR_FATAL level, so that this message can be seen
- * in IPC logging. Further errors continue to log on the console
+ * in IPC logging. Further errors continue to log on the error IPC logging.
  */
 #define SLIM_ERR(dev, x...) do { \
-	pr_err(x); \
 	if (dev->ipc_slimbus_log && dev->ipc_log_mask >= ERR_LEV) { \
+		pr_err(x); \
 		ipc_log_string(dev->ipc_slimbus_log, x); \
 		dev->default_ipc_log_mask = dev->ipc_log_mask; \
 		dev->ipc_log_mask = FATAL_LEV; \
+	} \
+	if (dev->ipc_slimbus_log_err && dev->ipc_log_mask == FATAL_LEV) { \
+		ipc_log_string(dev->ipc_slimbus_log_err, x); \
 	} \
 } while (0)
 
@@ -412,7 +436,7 @@ void msm_dealloc_port(struct slim_controller *ctrl, u8 pn);
 int msm_slim_connect_pipe_port(struct msm_slim_ctrl *dev, u8 pn);
 enum slim_port_err msm_slim_port_xfer_status(struct slim_controller *ctr,
 				u8 pn, phys_addr_t *done_buf, u32 *done_len);
-int msm_slim_port_xfer(struct slim_controller *ctrl, u8 pn, phys_addr_t iobuf,
+int msm_slim_port_xfer(struct slim_controller *ctrl, u8 pn, void *buf,
 			u32 len, struct completion *comp);
 int msm_send_msg_buf(struct msm_slim_ctrl *dev, u32 *buf, u8 len, u32 tx_reg);
 u32 *msm_get_msg_buf(struct msm_slim_ctrl *dev, int len,
@@ -437,4 +461,5 @@ void msm_slim_qmi_exit(struct msm_slim_ctrl *dev);
 int msm_slim_qmi_init(struct msm_slim_ctrl *dev, bool apps_is_master);
 int msm_slim_qmi_power_request(struct msm_slim_ctrl *dev, bool active);
 int msm_slim_qmi_check_framer_request(struct msm_slim_ctrl *dev);
+int msm_slim_qmi_deferred_status_req(struct msm_slim_ctrl *dev);
 #endif

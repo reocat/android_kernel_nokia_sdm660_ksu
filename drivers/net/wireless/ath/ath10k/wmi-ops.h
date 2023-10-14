@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2005-2011 Atheros Communications Inc.
- * Copyright (c) 2011-2014, 2017 Qualcomm Atheros, Inc.
+ * Copyright (c) 2011-2017 Qualcomm Atheros, Inc.
+ * Copyright (c) 2018, The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -24,6 +25,7 @@ struct sk_buff;
 struct wmi_ops {
 	void (*rx)(struct ath10k *ar, struct sk_buff *skb);
 	void (*map_svc)(const __le32 *in, unsigned long *out, size_t len);
+	void (*map_svc_ext)(const __le32 *in, unsigned long *out, size_t len);
 
 	int (*pull_scan)(struct ath10k *ar, struct sk_buff *skb,
 			 struct wmi_scan_ev_arg *arg);
@@ -57,6 +59,11 @@ struct wmi_ops {
 			      struct wmi_wow_ev_arg *arg);
 	int (*pull_echo_ev)(struct ath10k *ar, struct sk_buff *skb,
 			    struct wmi_echo_ev_arg *arg);
+	int (*pull_dfs_status_ev)(struct ath10k *ar, struct sk_buff *skb,
+				  struct wmi_dfs_status_ev_arg *arg);
+	int (*pull_svc_avail)(struct ath10k *ar, struct sk_buff *skb,
+			      struct wmi_svc_avail_ev_arg *arg);
+
 	enum wmi_txbf_conf (*get_txbf_conf_scheme)(struct ath10k *ar);
 
 	struct sk_buff *(*gen_pdev_suspend)(struct ath10k *ar, u32 suspend_opt);
@@ -118,6 +125,8 @@ struct wmi_ops {
 					 u32 value);
 	struct sk_buff *(*gen_scan_chan_list)(struct ath10k *ar,
 					      const struct wmi_scan_chan_list_arg *arg);
+	struct sk_buff *(*gen_scan_prob_req_oui)(struct ath10k *ar,
+						 u32 prob_req_oui);
 	struct sk_buff *(*gen_beacon_dma)(struct ath10k *ar, u32 vdev_id,
 					  const void *bcn, size_t bcn_len,
 					  u32 bcn_paddr, bool dtim_zero,
@@ -132,6 +141,7 @@ struct wmi_ops {
 	struct sk_buff *(*gen_mgmt_tx_send)(struct ath10k *ar,
 					    struct sk_buff *skb,
 					    dma_addr_t paddr);
+	int (*cleanup_mgmt_tx_send)(struct ath10k *ar, struct sk_buff *msdu);
 	struct sk_buff *(*gen_dbglog_cfg)(struct ath10k *ar, u64 module_enable,
 					  u32 log_level);
 	struct sk_buff *(*gen_pktlog_enable)(struct ath10k *ar, u32 filter);
@@ -189,6 +199,9 @@ struct wmi_ops {
 						const struct wmi_tdls_peer_update_cmd_arg *arg,
 						const struct wmi_tdls_peer_capab_arg *cap,
 						const struct wmi_channel_arg *chan);
+	struct sk_buff *(*gen_radar_found)
+			(struct ath10k *ar,
+			 const struct ath10k_radar_found_info *arg);
 	struct sk_buff *(*gen_adaptive_qcs)(struct ath10k *ar, bool enable);
 	struct sk_buff *(*gen_pdev_get_tpc_config)(struct ath10k *ar,
 						   u32 param);
@@ -199,9 +212,6 @@ struct wmi_ops {
 							u8 enable,
 							u32 detect_level,
 							u32 detect_margin);
-	struct sk_buff *(*gen_set_pdev_mac_addr)(struct ath10k *ar, u32 pdev_id,
-						 u8 *mac_addr);
-
 	struct sk_buff *(*ext_resource_config)(struct ath10k *ar,
 					       enum wmi_host_platform_type type,
 					       u32 fw_feature_bitmap);
@@ -211,8 +221,9 @@ struct wmi_ops {
 					(struct ath10k *ar,
 					 enum wmi_bss_survey_req_type type);
 	struct sk_buff *(*gen_echo)(struct ath10k *ar, u32 value);
-	struct sk_buff *(*gen_csa_offload)(struct ath10k *ar,
-					   u32 vdev_id, bool enable);
+	struct sk_buff *(*gen_pdev_get_tpc_table_cmdid)(struct ath10k *ar,
+							u32 param);
+
 };
 
 int ath10k_wmi_cmd_send(struct ath10k *ar, struct sk_buff *skb, u32 cmd_id);
@@ -235,6 +246,17 @@ ath10k_wmi_map_svc(struct ath10k *ar, const __le32 *in, unsigned long *out,
 		return -EOPNOTSUPP;
 
 	ar->wmi.ops->map_svc(in, out, len);
+	return 0;
+}
+
+static inline int
+ath10k_wmi_map_svc_ext(struct ath10k *ar, const __le32 *in, unsigned long *out,
+		       size_t len)
+{
+	if (!ar->wmi.ops->map_svc_ext)
+		return -EOPNOTSUPP;
+
+	ar->wmi.ops->map_svc_ext(in, out, len);
 	return 0;
 }
 
@@ -359,6 +381,15 @@ ath10k_wmi_pull_rdy(struct ath10k *ar, struct sk_buff *skb,
 }
 
 static inline int
+ath10k_wmi_pull_svc_avail(struct ath10k *ar, struct sk_buff *skb,
+			  struct wmi_svc_avail_ev_arg *arg)
+{
+	if (!ar->wmi.ops->pull_svc_avail)
+		return -EOPNOTSUPP;
+	return ar->wmi.ops->pull_svc_avail(ar, skb, arg);
+}
+
+static inline int
 ath10k_wmi_pull_fw_stats(struct ath10k *ar, struct sk_buff *skb,
 			 struct ath10k_fw_stats *stats)
 {
@@ -398,6 +429,16 @@ ath10k_wmi_pull_echo_ev(struct ath10k *ar, struct sk_buff *skb,
 	return ar->wmi.ops->pull_echo_ev(ar, skb, arg);
 }
 
+static inline int
+ath10k_wmi_pull_dfs_status(struct ath10k *ar, struct sk_buff *skb,
+			   struct wmi_dfs_status_ev_arg *arg)
+{
+	if (!ar->wmi.ops->pull_dfs_status_ev)
+		return -EOPNOTSUPP;
+
+	return ar->wmi.ops->pull_dfs_status_ev(ar, skb, arg);
+}
+
 static inline enum wmi_txbf_conf
 ath10k_wmi_get_txbf_conf_scheme(struct ath10k *ar)
 {
@@ -405,6 +446,15 @@ ath10k_wmi_get_txbf_conf_scheme(struct ath10k *ar)
 		return WMI_TXBF_CONF_UNSUPPORTED;
 
 	return ar->wmi.ops->get_txbf_conf_scheme(ar);
+}
+
+static inline int
+ath10k_wmi_cleanup_mgmt_tx_send(struct ath10k *ar, struct sk_buff *msdu)
+{
+	if (!ar->wmi.ops->cleanup_mgmt_tx_send)
+		return -EOPNOTSUPP;
+
+	return ar->wmi.ops->cleanup_mgmt_tx_send(ar, msdu);
 }
 
 static inline int
@@ -449,7 +499,8 @@ ath10k_wmi_mgmt_tx(struct ath10k *ar, struct sk_buff *msdu)
 		return ret;
 
 	/* FIXME There's no ACK event for Management Tx. This probably
-	 * shouldn't be called here either. */
+	 * shouldn't be called here either.
+	 */
 	info->flags |= IEEE80211_TX_STAT_ACK;
 	ieee80211_tx_status_irqsafe(ar->hw, msdu);
 
@@ -916,6 +967,26 @@ ath10k_wmi_scan_chan_list(struct ath10k *ar,
 		return PTR_ERR(skb);
 
 	return ath10k_wmi_cmd_send(ar, skb, ar->wmi.cmd->scan_chan_list_cmdid);
+}
+
+static inline int
+ath10k_wmi_scan_prob_req_oui(struct ath10k *ar, const u8 mac_addr[ETH_ALEN])
+{
+	struct sk_buff *skb;
+	u32 prob_req_oui;
+
+	prob_req_oui = (((u32)mac_addr[0]) << 16) |
+		       (((u32)mac_addr[1]) << 8) | mac_addr[2];
+
+	if (!ar->wmi.ops->gen_scan_prob_req_oui)
+		return -EOPNOTSUPP;
+
+	skb = ar->wmi.ops->gen_scan_prob_req_oui(ar, prob_req_oui);
+	if (IS_ERR(skb))
+		return PTR_ERR(skb);
+
+	return ath10k_wmi_cmd_send(ar, skb,
+			ar->wmi.cmd->scan_prob_req_oui_cmdid);
 }
 
 static inline int
@@ -1495,23 +1566,6 @@ ath10k_wmi_pdev_bss_chan_info_request(struct ath10k *ar,
 }
 
 static inline int
-ath10k_wmi_csa_offload(struct ath10k *ar, u32 vdev_id, bool enable)
-{
-	struct sk_buff *skb;
-	u32 cmd_id;
-
-	if (!ar->wmi.ops->gen_csa_offload)
-		return -EOPNOTSUPP;
-
-	skb = ar->wmi.ops->gen_csa_offload(ar, vdev_id, enable);
-	if (IS_ERR(skb))
-		return PTR_ERR(skb);
-
-	cmd_id = ar->wmi.cmd->csa_offload_enable_cmdid;
-	return ath10k_wmi_cmd_send(ar, skb, cmd_id);
-}
-
-static inline int
 ath10k_wmi_echo(struct ath10k *ar, u32 value)
 {
 	struct ath10k_wmi *wmi = &ar->wmi;
@@ -1528,24 +1582,37 @@ ath10k_wmi_echo(struct ath10k *ar, u32 value)
 }
 
 static inline int
-ath10k_gen_set_base_mac_addr(struct ath10k *ar, u8 *mac)
+ath10k_wmi_pdev_get_tpc_table_cmdid(struct ath10k *ar, u32 param)
 {
 	struct sk_buff *skb;
-	int ret;
 
-	if (!ar->wmi.ops->gen_set_pdev_mac_addr)
+	if (!ar->wmi.ops->gen_pdev_get_tpc_table_cmdid)
 		return -EOPNOTSUPP;
 
-	skb = ar->wmi.ops->gen_set_pdev_mac_addr(ar, 0, mac);
+	skb = ar->wmi.ops->gen_pdev_get_tpc_table_cmdid(ar, param);
+
 	if (IS_ERR(skb))
 		return PTR_ERR(skb);
 
-	ret = ath10k_wmi_cmd_send(ar, skb,
-				  ar->wmi.cmd->pdev_set_base_macaddr_cmdid);
-	if (ret)
-		return ret;
+	return ath10k_wmi_cmd_send(ar, skb,
+				   ar->wmi.cmd->pdev_get_tpc_table_cmdid);
+}
 
-	return 0;
+static inline int
+ath10k_wmi_report_radar_found(struct ath10k *ar,
+			      const struct ath10k_radar_found_info *arg)
+{
+	struct sk_buff *skb;
+
+	if (!ar->wmi.ops->gen_radar_found)
+		return -EOPNOTSUPP;
+
+	skb = ar->wmi.ops->gen_radar_found(ar, arg);
+	if (IS_ERR(skb))
+		return PTR_ERR(skb);
+
+	return ath10k_wmi_cmd_send(ar, skb,
+				   ar->wmi.cmd->radar_found_cmdid);
 }
 
 #endif

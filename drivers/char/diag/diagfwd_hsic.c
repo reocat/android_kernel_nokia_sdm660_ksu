@@ -1,13 +1,5 @@
-/* Copyright (c) 2012-2014,2016,2018 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2012-2014, 2016-2018 The Linux Foundation. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -50,68 +42,10 @@ struct diag_hsic_info diag_hsic[NUM_HSIC_DEV] = {
 	}
 };
 
-static int hsic_buf_tbl_push(struct diag_hsic_info *ch, void *buf, int len)
-{
-	unsigned long flags;
-	struct diag_hsic_buf_tbl_t *item;
-
-	if (!ch || !buf || len < 0)
-		return -EINVAL;
-
-	item = kzalloc(sizeof(struct diag_hsic_buf_tbl_t), GFP_ATOMIC);
-	if (!item)
-		return -ENOMEM;
-	kmemleak_not_leak(item);
-
-	spin_lock_irqsave(&ch->lock, flags);
-	item->buf = buf;
-	item->len = len;
-	list_add_tail(&item->link, &ch->buf_tbl);
-	spin_unlock_irqrestore(&ch->lock, flags);
-
-	return 0;
-}
-
-static struct diag_hsic_buf_tbl_t *hsic_buf_tbl_pop(struct diag_hsic_info *ch)
-{
-	unsigned long flags;
-	struct diag_hsic_buf_tbl_t *item = NULL;
-
-	if (!ch || list_empty(&ch->buf_tbl))
-		return NULL;
-
-	spin_lock_irqsave(&ch->lock, flags);
-	item = list_first_entry(&ch->buf_tbl, struct diag_hsic_buf_tbl_t, link);
-	list_del(&item->link);
-	spin_unlock_irqrestore(&ch->lock, flags);
-
-	return item;
-}
-
-static void hsic_buf_tbl_clear(struct diag_hsic_info *ch)
-{
-	unsigned long flags;
-	struct list_head *start, *temp;
-	struct diag_hsic_buf_tbl_t *item = NULL;
-
-	if (!ch)
-		return;
-
-	/* At this point, the channel should already by closed */
-	spin_lock_irqsave(&ch->lock, flags);
-	list_for_each_safe(start, temp, &ch->buf_tbl) {
-		item = list_entry(start, struct diag_hsic_buf_tbl_t,
-				  link);
-		list_del(&item->link);
-		kfree(item);
-
-	}
-	spin_unlock_irqrestore(&ch->lock, flags);
-}
-
 static void diag_hsic_read_complete(void *ctxt, char *buf, int len,
 				    int actual_size)
 {
+	int err = 0;
 	int index = (int)(uintptr_t)ctxt;
 	struct diag_hsic_info *ch = NULL;
 
@@ -129,14 +63,14 @@ static void diag_hsic_read_complete(void *ctxt, char *buf, int len,
 	 */
 	if (!ch->opened || actual_size <= 0)
 		goto fail;
-	hsic_buf_tbl_push(ch, buf, actual_size);
-	queue_work(ch->hsic_wq, &ch->read_complete_work);
+	err = diag_remote_dev_read_done(ch->dev_id, buf, actual_size);
+	if (err)
+		goto fail;
 	return;
 
 fail:
 	diagmem_free(driver, buf, ch->mempool);
 	queue_work(ch->hsic_wq, &ch->read_work);
-	return;
 }
 
 static void diag_hsic_write_complete(void *ctxt, char *buf, int len,
@@ -153,7 +87,6 @@ static void diag_hsic_write_complete(void *ctxt, char *buf, int len,
 
 	ch = &diag_hsic[index];
 	diag_remote_dev_write_done(ch->dev_id, buf, actual_size, ch->id);
-	return;
 }
 
 static int diag_hsic_suspend(void *ctxt)
@@ -232,7 +165,7 @@ static int hsic_open(int id)
 
 	err = diag_bridge_open(ch->id, &diag_hsic_ops[ch->id]);
 	if (err) {
-		pr_err("diag: Unable to open HSIC channel %d, err: %d",
+		pr_err("diag: Unable to open HSIC channel %d, err: %d\n",
 		       ch->id, err);
 		return err;
 	}
@@ -242,7 +175,6 @@ static int hsic_open(int id)
 	diagmem_init(driver, ch->mempool);
 	/* Notify the bridge that the channel is open */
 	diag_remote_dev_open(ch->dev_id);
-	INIT_LIST_HEAD(&ch->buf_tbl);
 	queue_work(ch->hsic_wq, &(ch->read_work));
 	return 0;
 }
@@ -280,7 +212,6 @@ static int hsic_close(int id)
 	diag_bridge_close(ch->id);
 	diagmem_exit(driver, ch->mempool);
 	diag_remote_dev_close(ch->dev_id);
-	hsic_buf_tbl_clear(ch);
 	return 0;
 }
 
@@ -317,33 +248,9 @@ static void hsic_read_work_fn(struct work_struct *work)
 		}
 	} while (buf);
 
-	/* Read from the HSIC channel continously if the channel is present */
+	/* Read from the HSIC channel continuously if the channel is present */
 	if (!err)
 		queue_work(ch->hsic_wq, &ch->read_work);
-}
-
-static void hsic_read_complete_work_fn(struct work_struct *work)
-{
-	struct diag_hsic_info *ch = container_of(work, struct diag_hsic_info,
-						 read_complete_work);
-	struct diag_hsic_buf_tbl_t *item;
-
-	do {
-		item = hsic_buf_tbl_pop(ch);
-		if (item) {
-			if (diag_remote_dev_read_done(ch->dev_id,
-						      item->buf, item->len))
-				goto fail;
-			kfree(item);
-		}
-	} while (item);
-
-	return;
-
-fail:
-	diagmem_free(driver, item->buf, ch->mempool);
-	queue_work(ch->hsic_wq, &ch->read_work);
-	kfree(item);
 }
 
 static int diag_hsic_probe(struct platform_device *pdev)
@@ -410,7 +317,6 @@ static struct platform_driver msm_hsic_ch_driver = {
 	.remove = diag_hsic_remove,
 	.driver = {
 		   .name = "diag_bridge",
-		   .owner = THIS_MODULE,
 		   .pm   = &diagfwd_hsic_dev_pm_ops,
 		   },
 };
@@ -477,9 +383,10 @@ static struct diag_remote_dev_ops diag_hsic_fwd_ops = {
 	.queue_read = hsic_queue_read,
 	.write = hsic_write,
 	.fwd_complete = hsic_fwd_complete,
+	.remote_proc_check = NULL,
 };
 
-int diag_hsic_init()
+int diag_hsic_init(void)
 {
 	int i;
 	int err = 0;
@@ -490,12 +397,10 @@ int diag_hsic_init()
 		ch = &diag_hsic[i];
 		spin_lock_init(&ch->lock);
 		INIT_WORK(&(ch->read_work), hsic_read_work_fn);
-		INIT_WORK(&(ch->read_complete_work),
-			  hsic_read_complete_work_fn);
 		INIT_WORK(&(ch->open_work), hsic_open_work_fn);
 		INIT_WORK(&(ch->close_work), hsic_close_work_fn);
-		strlcpy(wq_name, "DIAG_HSIC_", DIAG_HSIC_STRING_SZ);
-		strlcat(wq_name, ch->name, sizeof(ch->name));
+		strlcpy(wq_name, "DIAG_HSIC_", sizeof(wq_name));
+		strlcat(wq_name, ch->name, sizeof(wq_name));
 		ch->hsic_wq = create_singlethread_workqueue(wq_name);
 		if (!ch->hsic_wq)
 			goto fail;
@@ -520,7 +425,7 @@ fail:
 	return -ENOMEM;
 }
 
-void diag_hsic_exit()
+void diag_hsic_exit(void)
 {
 	int i;
 	struct diag_hsic_info *ch = NULL;

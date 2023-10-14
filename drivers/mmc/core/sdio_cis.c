@@ -59,8 +59,9 @@ static int cistpl_vers_1(struct mmc_card *card, struct sdio_func *func,
 	string = (char*)(buffer + nr_strings);
 
 	for (i = 0; i < nr_strings; i++) {
+		size_t buf_len = strlen(buf);
 		buffer[i] = string;
-		strlcpy(string, buf, strlen(string) + 1);
+		strlcpy(string, buf, buf_len + 1);
 		string += strlen(string) + 1;
 		buf += strlen(buf) + 1;
 	}
@@ -182,8 +183,13 @@ static int cistpl_funce_func(struct mmc_card *card, struct sdio_func *func,
 	vsn = func->card->cccr.sdio_vsn;
 	min_size = (vsn == SDIO_SDIO_REV_1_00) ? 28 : 42;
 
-	if (size < min_size)
+	if (size == 28 && vsn == SDIO_SDIO_REV_1_10) {
+		pr_warn("%s: card has broken SDIO 1.1 CIS, forcing SDIO 1.0\n",
+			mmc_hostname(card->host));
+		vsn = SDIO_SDIO_REV_1_00;
+	} else if (size < min_size) {
 		return -EINVAL;
+	}
 
 	/* TPLFE_MAX_BLK_SIZE */
 	func->max_blksize = buf[12] | (buf[13] << 8);
@@ -228,6 +234,7 @@ static const struct cis_tpl cis_tpl_list[] = {
 	{	0x20,	4,	cistpl_manfid		},
 	{	0x21,	2,	/* cistpl_funcid */	},
 	{	0x22,	0,	cistpl_funce		},
+	{	0x91,	2,	/* cistpl_sdio_std */	},
 };
 
 static int sdio_read_cis(struct mmc_card *card, struct sdio_func *func)
@@ -261,7 +268,8 @@ static int sdio_read_cis(struct mmc_card *card, struct sdio_func *func)
 	else
 		prev = &card->tuples;
 
-	BUG_ON(*prev);
+	if (*prev)
+		return -EINVAL;
 
 	do {
 		unsigned char tpl_code, tpl_link;
@@ -280,14 +288,12 @@ static int sdio_read_cis(struct mmc_card *card, struct sdio_func *func)
 		if (tpl_code == 0x00) {
 			if (card->cis.vendor == 0x70 &&
 				(card->cis.device == 0x2460 ||
-				 card->cis.device == 0x0460 ||
-				 card->cis.device == 0x23F1 ||
-				 card->cis.device == 0x23F0))
+				card->cis.device == 0x0460 ||
+				card->cis.device == 0x23F1 ||
+				card->cis.device == 0x23F0))
 				break;
-			else
-				continue;
+			continue;
 		}
-
 		ret = mmc_io_rw_direct(card, 0, 0, ptr++, 0, &tpl_link);
 		if (ret)
 			break;
@@ -389,12 +395,6 @@ int sdio_read_func_cis(struct sdio_func *func)
 		return ret;
 
 	/*
-	 * Since we've linked to tuples in the card structure,
-	 * we must make sure we have a reference to it.
-	 */
-	get_device(&func->card->dev);
-
-	/*
 	 * Vendor/device id is optional for function CIS, so
 	 * copy it from the card structure as needed.
 	 */
@@ -419,11 +419,5 @@ void sdio_free_func_cis(struct sdio_func *func)
 	}
 
 	func->tuples = NULL;
-
-	/*
-	 * We have now removed the link to the tuples in the
-	 * card structure, so remove the reference.
-	 */
-	put_device(&func->card->dev);
 }
 

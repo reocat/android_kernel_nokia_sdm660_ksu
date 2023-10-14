@@ -1,4 +1,5 @@
-/* Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,7 +23,8 @@
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-event.h>
 #include <media/videobuf2-v4l2.h>
-#include <linux/clk/msm-clk.h>
+#include <linux/clk.h>
+#include <linux/clk/qcom.h>
 
 #include "msm_fd_dev.h"
 #include "msm_fd_hw.h"
@@ -151,7 +153,7 @@ static int msm_fd_fill_format_from_index(struct v4l2_format *f, int index)
  */
 static int msm_fd_fill_format_from_ctx(struct v4l2_format *f, struct fd_ctx *c)
 {
-	if (NULL == c->format.size)
+	if (c->format.size == NULL)
 		return -EINVAL;
 
 	f->fmt.pix.width = c->format.size->width;
@@ -174,21 +176,22 @@ static int msm_fd_fill_format_from_ctx(struct v4l2_format *f, struct fd_ctx *c)
  * @alloc_ctxs: Array of allocated contexts for each plane.
  */
 static int msm_fd_queue_setup(struct vb2_queue *q,
-	const void *parg,
+//	const void *parg,
 	unsigned int *num_buffers, unsigned int *num_planes,
-	unsigned int sizes[], void *alloc_ctxs[])
+	unsigned int sizes[], struct device *alloc_ctxs[])
 {
 	struct fd_ctx *ctx = vb2_get_drv_priv(q);
-	const struct v4l2_format *fmt = parg;
+	//const struct v4l2_format *fmt = parg;
+	const struct v4l2_format *fmt = NULL;
 
 	*num_planes = 1;
 
-	if (NULL == fmt)
+	if (fmt == NULL)
 		sizes[0] = ctx->format.sizeimage;
 	else
 		sizes[0] = fmt->fmt.pix.sizeimage;
 
-	alloc_ctxs[0] = &ctx->mem_pool;
+	alloc_ctxs[0] = (struct device *)&ctx->mem_pool;
 
 	return 0;
 }
@@ -197,7 +200,7 @@ static int msm_fd_queue_setup(struct vb2_queue *q,
  * msm_fd_buf_init - vb2_ops buf_init callback.
  * @vb: Pointer to vb2 buffer struct.
  */
-int msm_fd_buf_init(struct vb2_buffer *vb)
+static int msm_fd_buf_init(struct vb2_buffer *vb)
 {
 	struct msm_fd_buffer *fd_buffer =
 		(struct msm_fd_buffer *)vb;
@@ -226,7 +229,6 @@ static void msm_fd_buf_queue(struct vb2_buffer *vb)
 	if (vb->vb2_queue->streaming)
 		msm_fd_hw_schedule_and_start(ctx->fd_device);
 
-	return;
 }
 
 /*
@@ -288,11 +290,11 @@ static struct vb2_ops msm_fd_vb2_q_ops = {
  * @size: Size of the buffer
  * @write: True if buffer will be used for writing the data.
  */
-static void *msm_fd_get_userptr(void *alloc_ctx,
+static void *msm_fd_get_userptr(struct device *alloc_ctx,
 	unsigned long vaddr, unsigned long size,
 	enum dma_data_direction dma_dir)
 {
-	struct msm_fd_mem_pool *pool = alloc_ctx;
+	struct msm_fd_mem_pool *pool = (void *)alloc_ctx;
 	struct msm_fd_buf_handle *buf;
 	int ret;
 
@@ -306,7 +308,7 @@ static void *msm_fd_get_userptr(void *alloc_ctx,
 
 	return buf;
 error:
-	kzfree(buf);
+	kfree(buf);
 	return ERR_PTR(-ENOMEM);
 }
 
@@ -364,7 +366,9 @@ static int msm_fd_vbif_error_handler(void *handle, uint32_t error)
 		msm_fd_hw_get(fd, ctx->settings.speed);
 
 		/* Get active buffer */
+		MSM_FD_SPIN_LOCK(fd->slock, 1);
 		active_buf = msm_fd_hw_get_active_buffer(fd, 1);
+		MSM_FD_SPIN_UNLOCK(fd->slock, 1);
 
 		if (active_buf == NULL) {
 			dev_dbg(fd->dev, "no active buffer, return\n");
@@ -1032,22 +1036,24 @@ static int msm_fd_s_ctrl(struct file *file, void *fh, struct v4l2_control *a)
 	case V4L2_CID_FD_FACE_ANGLE:
 		idx = msm_fd_get_idx_from_value(a->value, msm_fd_angle,
 			ARRAY_SIZE(msm_fd_angle));
-
-		ctx->settings.angle_index = idx;
+		if (idx < ARRAY_SIZE(msm_fd_angle))
+			ctx->settings.angle_index = idx;
 		a->value = msm_fd_angle[ctx->settings.angle_index];
 		break;
 	case V4L2_CID_FD_FACE_DIRECTION:
 		idx = msm_fd_get_idx_from_value(a->value, msm_fd_dir,
 			ARRAY_SIZE(msm_fd_dir));
 
-		ctx->settings.direction_index = idx;
+		if (idx < ARRAY_SIZE(msm_fd_dir))
+			ctx->settings.direction_index = idx;
 		a->value = msm_fd_dir[ctx->settings.direction_index];
 		break;
 	case V4L2_CID_FD_MIN_FACE_SIZE:
 		idx = msm_fd_get_idx_from_value(a->value, msm_fd_min_size,
 			ARRAY_SIZE(msm_fd_min_size));
 
-		ctx->settings.min_size_index = idx;
+		if (idx < ARRAY_SIZE(msm_fd_min_size))
+			ctx->settings.min_size_index = idx;
 		a->value = msm_fd_min_size[ctx->settings.min_size_index];
 		break;
 	case V4L2_CID_FD_DETECTION_THRESHOLD:
@@ -1087,7 +1093,7 @@ static int msm_fd_s_ctrl(struct file *file, void *fh, struct v4l2_control *a)
 }
 
 /*
- * msm_fd_cropcap - V4l2 ioctl crop capabilites.
+ * msm_fd_cropcap - V4l2 ioctl crop capabilities.
  * @file: Pointer to file struct.
  * @fh: V4l2 File handle.
  * @sub: Pointer to v4l2_cropcap struct need to be set.
@@ -1440,7 +1446,7 @@ static int fd_device_remove(struct platform_device *pdev)
 	struct msm_fd_device *fd;
 
 	fd = platform_get_drvdata(pdev);
-	if (NULL == fd) {
+	if (fd == NULL) {
 		dev_err(&pdev->dev, "Can not get fd drvdata\n");
 		return 0;
 	}
@@ -1469,7 +1475,6 @@ static struct platform_driver fd_driver = {
 	.remove = fd_device_remove,
 	.driver = {
 		.name = MSM_FD_DRV_NAME,
-		.owner = THIS_MODULE,
 		.of_match_table = msm_fd_dt_match,
 		.suppress_bind_attrs = true,
 	},

@@ -1,5 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015,2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -53,9 +54,6 @@
  * @MSM_DBA_CB_POST_RESET: This callback is called after device reset is
  *			   complete and the driver has applied back all the
  *			   properties.
- * @MSM_DBA_CB_DDC_I2C_ERROR: Detected a failure in DDC block for i2c error.
- * @MSM_DBA_CB_DDC_TIMEOUT: Detected a failure in DDC block for timed out
- *				waiting for downstream receiver.
  *
  * Clients for this driver can register for receiving callbacks for specific
  * events. This enum defines the type of events supported by the driver. An
@@ -74,8 +72,6 @@ enum msm_dba_callback_event {
 	MSM_DBA_CB_CEC_READ_PENDING = BIT(9),
 	MSM_DBA_CB_PRE_RESET = BIT(10),
 	MSM_DBA_CB_POST_RESET = BIT(11),
-	MSM_DBA_CB_DDC_I2C_ERROR = BIT(12),
-	MSM_DBA_CB_DDC_TIMEOUT = BIT(13),
 };
 
 /**
@@ -165,9 +161,9 @@ enum msm_dba_audio_sampling_rates_type {
  * @MSM_DBA_AUDIO_WORD_32BIT: 32 bits per word
  */
 enum msm_dba_audio_word_bit_depth {
-	MSM_DBA_AUDIO_WORD_16BIT = BIT(0),
-	MSM_DBA_AUDIO_WORD_24BIT = BIT(1),
-	MSM_DBA_AUDIO_WORD_32BIT = BIT(2),
+	MSM_DBA_AUDIO_WORD_16BIT = BIT(1),
+	MSM_DBA_AUDIO_WORD_24BIT = BIT(2),
+	MSM_DBA_AUDIO_WORD_32BIT = BIT(3),
 };
 
 /**
@@ -374,6 +370,14 @@ struct msm_dba_video_cfg {
 	u8 scaninfo;
 };
 
+struct mdss_dba_timing_info {
+	u16 xres;
+	u16 yres;
+	u8 bpp;
+	u8 fps;
+	u8 lanes;
+};
+
 /**
  * struct msm_dba_ops- operation supported by bridge chip
  * @get_caps: returns the bridge chip capabilities
@@ -575,6 +579,7 @@ struct msm_dba_ops {
 	int (*check_hpd)(void *client, u32 flags);
 	void (*set_audio_block)(void *client, u32 size, void *buf);
 	void (*get_audio_block)(void *client, u32 size, void *buf);
+	void* (*get_supp_timing_info)(void);
 };
 
 /**

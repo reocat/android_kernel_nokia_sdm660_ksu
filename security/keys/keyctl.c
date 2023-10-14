@@ -12,18 +12,21 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/sched.h>
+#include <linux/sched/task.h>
 #include <linux/slab.h>
 #include <linux/syscalls.h>
 #include <linux/key.h>
 #include <linux/keyctl.h>
 #include <linux/fs.h>
 #include <linux/capability.h>
+#include <linux/cred.h>
 #include <linux/string.h>
 #include <linux/err.h>
 #include <linux/vmalloc.h>
 #include <linux/security.h>
 #include <linux/uio.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
+#include <keys/request_key_auth-type.h>
 #include "internal.h"
 
 #define KEY_MAX_DESC_SIZE 4096
@@ -99,14 +102,9 @@ SYSCALL_DEFINE5(add_key, const char __user *, _type,
 
 	if (plen) {
 		ret = -ENOMEM;
-		payload = kmalloc(plen, GFP_KERNEL | __GFP_NOWARN);
-		if (!payload) {
-			if (plen <= PAGE_SIZE)
-				goto error2;
-			payload = vmalloc(plen);
-			if (!payload)
-				goto error2;
-		}
+		payload = kvmalloc(plen, GFP_KERNEL);
+		if (!payload)
+			goto error2;
 
 		ret = -EFAULT;
 		if (copy_from_user(payload, _payload, plen) != 0)
@@ -135,7 +133,7 @@ SYSCALL_DEFINE5(add_key, const char __user *, _type,
 
 	key_ref_put(keyring_ref);
  error3:
-	kvfree(payload);
+	kvfree_sensitive(payload, plen);
  error2:
 	kfree(description);
  error:
@@ -329,7 +327,7 @@ long keyctl_update_key(key_serial_t id,
 	payload = NULL;
 	if (plen) {
 		ret = -ENOMEM;
-		payload = kmalloc(plen, GFP_KERNEL);
+		payload = kvmalloc(plen, GFP_KERNEL);
 		if (!payload)
 			goto error;
 
@@ -350,7 +348,7 @@ long keyctl_update_key(key_serial_t id,
 
 	key_ref_put(key_ref);
 error2:
-	kfree(payload);
+	kvfree_sensitive(payload, plen);
 error:
 	return ret;
 }
@@ -363,11 +361,14 @@ error:
  * and any links to the key will be automatically garbage collected after a
  * certain amount of time (/proc/sys/kernel/keys/gc_delay).
  *
+ * Keys with KEY_FLAG_KEEP set should not be revoked.
+ *
  * If successful, 0 is returned.
  */
 long keyctl_revoke_key(key_serial_t id)
 {
 	key_ref_t key_ref;
+	struct key *key;
 	long ret;
 
 	key_ref = lookup_user_key(id, 0, KEY_NEED_WRITE);
@@ -382,8 +383,12 @@ long keyctl_revoke_key(key_serial_t id)
 		}
 	}
 
-	key_revoke(key_ref_to_ptr(key_ref));
+	key = key_ref_to_ptr(key_ref);
 	ret = 0;
+	if (test_bit(KEY_FLAG_KEEP, &key->flags))
+		ret = -EPERM;
+	else
+		key_revoke(key);
 
 	key_ref_put(key_ref);
 error:
@@ -397,11 +402,14 @@ error:
  * The key and any links to the key will be automatically garbage collected
  * immediately.
  *
+ * Keys with KEY_FLAG_KEEP set should not be invalidated.
+ *
  * If successful, 0 is returned.
  */
 long keyctl_invalidate_key(key_serial_t id)
 {
 	key_ref_t key_ref;
+	struct key *key;
 	long ret;
 
 	kenter("%d", id);
@@ -425,8 +433,12 @@ long keyctl_invalidate_key(key_serial_t id)
 	}
 
 invalidate:
-	key_invalidate(key_ref_to_ptr(key_ref));
+	key = key_ref_to_ptr(key_ref);
 	ret = 0;
+	if (test_bit(KEY_FLAG_KEEP, &key->flags))
+		ret = -EPERM;
+	else
+		key_invalidate(key);
 error_put:
 	key_ref_put(key_ref);
 error:
@@ -438,12 +450,13 @@ error:
  * Clear the specified keyring, creating an empty process keyring if one of the
  * special keyring IDs is used.
  *
- * The keyring must grant the caller Write permission for this to work.  If
- * successful, 0 will be returned.
+ * The keyring must grant the caller Write permission and not have
+ * KEY_FLAG_KEEP set for this to work.  If successful, 0 will be returned.
  */
 long keyctl_keyring_clear(key_serial_t ringid)
 {
 	key_ref_t keyring_ref;
+	struct key *keyring;
 	long ret;
 
 	keyring_ref = lookup_user_key(ringid, KEY_LOOKUP_CREATE, KEY_NEED_WRITE);
@@ -465,7 +478,11 @@ long keyctl_keyring_clear(key_serial_t ringid)
 	}
 
 clear:
-	ret = keyring_clear(key_ref_to_ptr(keyring_ref));
+	keyring = key_ref_to_ptr(keyring_ref);
+	if (test_bit(KEY_FLAG_KEEP, &keyring->flags))
+		ret = -EPERM;
+	else
+		ret = keyring_clear(keyring);
 error_put:
 	key_ref_put(keyring_ref);
 error:
@@ -516,11 +533,14 @@ error:
  * itself need not grant the caller anything.  If the last link to a key is
  * removed then that key will be scheduled for destruction.
  *
+ * Keys or keyrings with KEY_FLAG_KEEP set should not be unlinked.
+ *
  * If successful, 0 will be returned.
  */
 long keyctl_keyring_unlink(key_serial_t id, key_serial_t ringid)
 {
 	key_ref_t keyring_ref, key_ref;
+	struct key *keyring, *key;
 	long ret;
 
 	keyring_ref = lookup_user_key(ringid, 0, KEY_NEED_WRITE);
@@ -535,7 +555,13 @@ long keyctl_keyring_unlink(key_serial_t id, key_serial_t ringid)
 		goto error2;
 	}
 
-	ret = key_unlink(key_ref_to_ptr(keyring_ref), key_ref_to_ptr(key_ref));
+	keyring = key_ref_to_ptr(keyring_ref);
+	key = key_ref_to_ptr(key_ref);
+	if (test_bit(KEY_FLAG_KEEP, &keyring->flags) &&
+	    test_bit(KEY_FLAG_KEEP, &key->flags))
+		ret = -EPERM;
+	else
+		ret = key_unlink(keyring, key);
 
 	key_ref_put(key_ref);
 error2:
@@ -714,6 +740,21 @@ error:
 }
 
 /*
+ * Call the read method
+ */
+static long __keyctl_read_key(struct key *key, char *buffer, size_t buflen)
+{
+	long ret;
+
+	down_read(&key->sem);
+	ret = key_validate(key);
+	if (ret == 0)
+		ret = key->type->read(key, buffer, buflen);
+	up_read(&key->sem);
+	return ret;
+}
+
+/*
  * Read a key's payload.
  *
  * The key must either grant the caller Read permission, or it must grant the
@@ -728,26 +769,28 @@ long keyctl_read_key(key_serial_t keyid, char __user *buffer, size_t buflen)
 	struct key *key;
 	key_ref_t key_ref;
 	long ret;
+	char *key_data = NULL;
+	size_t key_data_len;
 
 	/* find the key first */
 	key_ref = lookup_user_key(keyid, 0, 0);
 	if (IS_ERR(key_ref)) {
 		ret = -ENOKEY;
-		goto error;
+		goto out;
 	}
 
 	key = key_ref_to_ptr(key_ref);
 
 	ret = key_read_state(key);
 	if (ret < 0)
-		goto error2; /* Negatively instantiated */
+		goto key_put_out; /* Negatively instantiated */
 
 	/* see if we can read it directly */
 	ret = key_permission(key_ref, KEY_NEED_READ);
 	if (ret == 0)
 		goto can_read_key;
 	if (ret != -EACCES)
-		goto error;
+		goto key_put_out;
 
 	/* we can't; see if it's searchable from this process's keyrings
 	 * - we automatically take account of the fact that it may be
@@ -755,26 +798,78 @@ long keyctl_read_key(key_serial_t keyid, char __user *buffer, size_t buflen)
 	 */
 	if (!is_key_possessed(key_ref)) {
 		ret = -EACCES;
-		goto error2;
+		goto key_put_out;
 	}
 
 	/* the key is probably readable - now try to read it */
 can_read_key:
-	ret = -EOPNOTSUPP;
-	if (key->type->read) {
-		/* Read the data with the semaphore held (since we might sleep)
-		 * to protect against the key being updated or revoked.
-		 */
-		down_read(&key->sem);
-		ret = key_validate(key);
-		if (ret == 0)
-			ret = key->type->read(key, buffer, buflen);
-		up_read(&key->sem);
+	if (!key->type->read) {
+		ret = -EOPNOTSUPP;
+		goto key_put_out;
 	}
 
-error2:
+	if (!buffer || !buflen) {
+		/* Get the key length from the read method */
+		ret = __keyctl_read_key(key, NULL, 0);
+		goto key_put_out;
+	}
+
+	/*
+	 * Read the data with the semaphore held (since we might sleep)
+	 * to protect against the key being updated or revoked.
+	 *
+	 * Allocating a temporary buffer to hold the keys before
+	 * transferring them to user buffer to avoid potential
+	 * deadlock involving page fault and mmap_sem.
+	 *
+	 * key_data_len = (buflen <= PAGE_SIZE)
+	 *		? buflen : actual length of key data
+	 *
+	 * This prevents allocating arbitrary large buffer which can
+	 * be much larger than the actual key length. In the latter case,
+	 * at least 2 passes of this loop is required.
+	 */
+	key_data_len = (buflen <= PAGE_SIZE) ? buflen : 0;
+	for (;;) {
+		if (key_data_len) {
+			key_data = kvmalloc(key_data_len, GFP_KERNEL);
+			if (!key_data) {
+				ret = -ENOMEM;
+				goto key_put_out;
+			}
+		}
+
+		ret = __keyctl_read_key(key, key_data, key_data_len);
+
+		/*
+		 * Read methods will just return the required length without
+		 * any copying if the provided length isn't large enough.
+		 */
+		if (ret <= 0 || ret > buflen)
+			break;
+
+		/*
+		 * The key may change (unlikely) in between 2 consecutive
+		 * __keyctl_read_key() calls. In this case, we reallocate
+		 * a larger buffer and redo the key read when
+		 * key_data_len < ret <= buflen.
+		 */
+		if (ret > key_data_len) {
+			if (unlikely(key_data))
+				kvfree_sensitive(key_data, key_data_len);
+			key_data_len = ret;
+			continue;	/* Allocate buffer */
+		}
+
+		if (copy_to_user(buffer, key_data, ret))
+			ret = -EFAULT;
+		break;
+	}
+	kvfree_sensitive(key_data, key_data_len);
+
+key_put_out:
 	key_put(key);
-error:
+out:
 	return ret;
 }
 
@@ -827,14 +922,19 @@ long keyctl_chown_key(key_serial_t id, uid_t user, gid_t group)
 	ret = -EACCES;
 	down_write(&key->sem);
 
-	if (!capable(CAP_SYS_ADMIN)) {
+	{
+		bool is_privileged_op = false;
+
 		/* only the sysadmin can chown a key to some other UID */
 		if (user != (uid_t) -1 && !uid_eq(key->uid, uid))
-			goto error_put;
+			is_privileged_op = true;
 
 		/* only the sysadmin can set the key's GID to a group other
 		 * than one of those that the current process subscribes to */
 		if (group != (gid_t) -1 && !gid_eq(gid, key->gid) && !in_group_p(gid))
+			is_privileged_op = true;
+
+		if (is_privileged_op && !capable(CAP_SYS_ADMIN))
 			goto error_put;
 	}
 
@@ -934,7 +1034,7 @@ long keyctl_setperm_key(key_serial_t id, key_perm_t perm)
 	down_write(&key->sem);
 
 	/* if we're not the sysadmin, we can only change a key that we own */
-	if (capable(CAP_SYS_ADMIN) || uid_eq(key->uid, current_fsuid())) {
+	if (uid_eq(key->uid, current_fsuid()) || capable(CAP_SYS_ADMIN)) {
 		key->perm = perm;
 		ret = 0;
 	}
@@ -1045,17 +1145,12 @@ long keyctl_instantiate_key_common(key_serial_t id,
 
 	if (from) {
 		ret = -ENOMEM;
-		payload = kmalloc(plen, GFP_KERNEL);
-		if (!payload) {
-			if (plen <= PAGE_SIZE)
-				goto error;
-			payload = vmalloc(plen);
-			if (!payload)
-				goto error;
-		}
+		payload = kvmalloc(plen, GFP_KERNEL);
+		if (!payload)
+			goto error;
 
 		ret = -EFAULT;
-		if (copy_from_iter(payload, plen, from) != plen)
+		if (!copy_from_iter_full(payload, plen, from))
 			goto error2;
 	}
 
@@ -1077,7 +1172,7 @@ long keyctl_instantiate_key_common(key_serial_t id,
 		keyctl_change_reqkey_auth(NULL);
 
 error2:
-	kvfree(payload);
+	kvfree_sensitive(payload, plen);
 error:
 	return ret;
 }
@@ -1295,6 +1390,8 @@ error:
  * the current time.  The key and any links to the key will be automatically
  * garbage collected after the timeout expires.
  *
+ * Keys with KEY_FLAG_KEEP set should not be timed out.
+ *
  * If successful, 0 is returned.
  */
 long keyctl_set_timeout(key_serial_t id, unsigned timeout)
@@ -1326,10 +1423,13 @@ long keyctl_set_timeout(key_serial_t id, unsigned timeout)
 
 okay:
 	key = key_ref_to_ptr(key_ref);
-	key_set_timeout(key, timeout);
+	ret = 0;
+	if (test_bit(KEY_FLAG_KEEP, &key->flags))
+		ret = -EPERM;
+	else
+		key_set_timeout(key, timeout);
 	key_put(key);
 
-	ret = 0;
 error:
 	return ret;
 }
@@ -1379,11 +1479,9 @@ long keyctl_assume_authority(key_serial_t id)
 	}
 
 	ret = keyctl_change_reqkey_auth(authkey);
-	if (ret < 0)
-		goto error;
+	if (ret == 0)
+		ret = authkey->serial;
 	key_put(authkey);
-
-	ret = authkey->serial;
 error:
 	return ret;
 }
@@ -1554,6 +1652,55 @@ error_keyring:
 }
 
 /*
+ * Apply a restriction to a given keyring.
+ *
+ * The caller must have Setattr permission to change keyring restrictions.
+ *
+ * The requested type name may be a NULL pointer to reject all attempts
+ * to link to the keyring.  In this case, _restriction must also be NULL.
+ * Otherwise, both _type and _restriction must be non-NULL.
+ *
+ * Returns 0 if successful.
+ */
+long keyctl_restrict_keyring(key_serial_t id, const char __user *_type,
+			     const char __user *_restriction)
+{
+	key_ref_t key_ref;
+	char type[32];
+	char *restriction = NULL;
+	long ret;
+
+	key_ref = lookup_user_key(id, 0, KEY_NEED_SETATTR);
+	if (IS_ERR(key_ref))
+		return PTR_ERR(key_ref);
+
+	ret = -EINVAL;
+	if (_type) {
+		if (!_restriction)
+			goto error;
+
+		ret = key_get_type_from_user(type, _type, sizeof(type));
+		if (ret < 0)
+			goto error;
+
+		restriction = strndup_user(_restriction, PAGE_SIZE);
+		if (IS_ERR(restriction)) {
+			ret = PTR_ERR(restriction);
+			goto error;
+		}
+	} else {
+		if (_restriction)
+			goto error;
+	}
+
+	ret = keyring_restrict(key_ref, _type ? type : NULL, restriction);
+	kfree(restriction);
+error:
+	key_ref_put(key_ref);
+	return ret;
+}
+
+/*
  * The key control system call
  */
 SYSCALL_DEFINE5(keyctl, int, option, unsigned long, arg2, unsigned long, arg3,
@@ -1658,6 +1805,16 @@ SYSCALL_DEFINE5(keyctl, int, option, unsigned long, arg2, unsigned long, arg3,
 
 	case KEYCTL_GET_PERSISTENT:
 		return keyctl_get_persistent((uid_t)arg2, (key_serial_t)arg3);
+
+	case KEYCTL_DH_COMPUTE:
+		return keyctl_dh_compute((struct keyctl_dh_params __user *) arg2,
+					 (char __user *) arg3, (size_t) arg4,
+					 (struct keyctl_kdf_params __user *) arg5);
+
+	case KEYCTL_RESTRICT_KEYRING:
+		return keyctl_restrict_keyring((key_serial_t) arg2,
+					       (const char __user *) arg3,
+					       (const char __user *) arg4);
 
 	default:
 		return -EOPNOTSUPP;

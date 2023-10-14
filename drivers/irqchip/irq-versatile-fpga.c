@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  Support for Versatile FPGA-based IRQ controllers
  */
@@ -221,12 +222,7 @@ int __init fpga_irq_of_init(struct device_node *node,
 		parent_irq = -1;
 	}
 
-#ifdef CONFIG_ARCH_VERSATILE
-	fpga_irq_init(base, node->name, IRQ_SIC_START, parent_irq, valid_mask,
-				  node);
-#else
 	fpga_irq_init(base, node->name, 0, parent_irq, valid_mask, node);
-#endif
 
 	/*
 	 * On Versatile AB/PB, some secondary interrupts have a direct
@@ -240,4 +236,5 @@ int __init fpga_irq_of_init(struct device_node *node,
 }
 IRQCHIP_DECLARE(arm_fpga, "arm,versatile-fpga-irq", fpga_irq_of_init);
 IRQCHIP_DECLARE(arm_fpga_sic, "arm,versatile-sic", fpga_irq_of_init);
+IRQCHIP_DECLARE(ox810se_rps, "oxsemi,ox810se-rps-irq", fpga_irq_of_init);
 #endif

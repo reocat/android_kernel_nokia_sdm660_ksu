@@ -1,14 +1,5 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2013-2018, 2020-2021, The Linux Foundation. All rights reserved. */
 
 #include <linux/workqueue.h>
 #include <linux/delay.h>
@@ -113,8 +104,7 @@ void mdss_check_dsi_ctrl_status(struct work_struct *work, uint32_t interval)
 	if (ctrl_pdata->status_mode == ESD_TE) {
 		if (mdss_check_te_status(ctrl_pdata, pstatus_data, interval))
 			return;
-		else
-			goto status_dead;
+		goto status_dead;
 	}
 
 
@@ -161,14 +151,16 @@ void mdss_check_dsi_ctrl_status(struct work_struct *work, uint32_t interval)
 	MDSS_XLOG(mipi->mode);
 
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
+	mutex_lock(&pstatus_data->mfd->sd_lock);
 	ret = ctrl_pdata->check_status(ctrl_pdata);
+	mutex_unlock(&pstatus_data->mfd->sd_lock);
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
 
 	mutex_unlock(&ctl->offlock);
 	if ((mipi->mode == DSI_CMD_MODE) && !ctrl_pdata->burst_mode_enabled)
 		mutex_unlock(&mdp5_data->ov_lock);
 
-	if ((pstatus_data->mfd->panel_power_state == MDSS_PANEL_POWER_ON)) {
+	if (pstatus_data->mfd->panel_power_state == MDSS_PANEL_POWER_ON) {
 		if (ret > 0)
 			schedule_delayed_work(&pstatus_data->check_status,
 				msecs_to_jiffies(interval));

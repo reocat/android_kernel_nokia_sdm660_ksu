@@ -991,7 +991,7 @@ static int carl9170_tx_prepare(struct ar9170 *ar,
 	else
 		cvif = NULL;
 
-	txc = (void *)skb_push(skb, sizeof(*txc));
+	txc = skb_push(skb, sizeof(*txc));
 	memset(txc, 0, sizeof(*txc));
 
 	SET_VAL(CARL9170_TX_SUPER_MISC_QUEUE, txc->s.misc, hw_queue);
@@ -1554,6 +1554,9 @@ static struct carl9170_vif_info *carl9170_pick_beaconing_vif(struct ar9170 *ar)
 					goto out;
 			}
 		} while (ar->beacon_enabled && i--);
+
+		/* no entry found in list */
+		return NULL;
 	}
 
 out:

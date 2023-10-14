@@ -1,29 +1,29 @@
 Introduction:
 =============
 
-The Qualcomm crypto engine (qce) driver is a module that
-provides common services for accessing the Qualcomm crypto device.
+The QTI crypto engine (qce) driver is a module that
+provides common services for accessing the QTI crypto device.
 Currently, the two main clients of qce are
 -qcrypto driver (module provided for accessing CE HW by kernel space apps)
 -qcedev driver (module provided for accessing CE HW by user space apps)
 
 
-The crypto engine (qce) driver is a client to the DMA driver for the Qualcomm
+The crypto engine (qce) driver is a client to the DMA driver for the QTI
 DMA device - Application Data Mover (ADM). ADM is used to provide the DMA
-transfer capability between Qualcomm crypto device hardware and DDR memory
+transfer capability between QTI crypto device hardware and DDR memory
 for crypto operations.
 
   Figure 1.
   ---------
 
   Linux kernel
-  (ex:IPSec)<--*Qualcomm crypto driver----+
+  (ex:IPSec)<-----*  QTI crypto driver----+
 			(qcrypto)	  |
 		   (for kernel space app) |
 					  |
 					  +-->|
 					      |
-					      | *qce   <----> Qualcomm
+					      | *qce   <----> QTI
 					      | driver        ADM driver <---> ADM HW
 					  +-->|			|		|
 					  |			|		|
@@ -39,11 +39,11 @@ for crypto operations.
 								    \	    /
 								     \	   /
 								      \	  /
-								Qualcomm crypto CE3 HW
+								QTI crypto CE3 HW
 
 
  The entities marked with (*) in the Figure 1, are the software components of
- the Linux Qualcomm crypto modules.
+ the Linux QTI crypto modules.
 
 ===============
 IMPORTANT NOTE:
@@ -58,20 +58,20 @@ IMPORTANT NOTE:
 	- If your device has kernel space apps that needs to access the
 	  crypto hardware, make sure to have qcedev module disabled/unloaded
 	  and implement your user space application to use the software
-	  implemenation (ex: openssl/crypto) of the crypto algorithms.
+	  implementation (ex: openssl/crypto) of the crypto algorithms.
 
 (2) If your device has Playready(Windows Media DRM) application enabled and
-    uses the qcedev module to access the crypto hardware accelarator,
+    uses the qcedev module to access the crypto hardware accelerator,
     please be informed that for performance reasons, the CE hardware will need
     to be dedicated to playready application.  Any other user space application
-    should be implemented to use the software implemenation (ex: openssl/crypto)
+    should be implemented to use the SW implementation (ex: openssl/crypto)
     of the crypto algorithms.
 
 
 Hardware description:
 =====================
 
-Qualcomm Crypto HW device family provides a series of algorithms implemented
+QTI Crypto HW device family provides a series of algorithms implemented
 in the device hardware.
 
 Crypto 2 hardware provides hashing - SHA-1, SHA-256, ciphering - DES, 3DES, AES
@@ -111,7 +111,7 @@ The command list for the first DMA channel is set up as follows:
   crypto device to input data to crypto device. The dst crci of the command
   is set for crci-in for this crypto device.
 
-  2nd command is for the DMA tansfer is from crypto device to DDR memory for
+  2nd command is for the DMA transfer is from crypto device to DDR memory for
   the authentication result. The src crci is set as crci-hash-done of the
   crypto device. If authentication is not required in the operation,
   the 2nd command is not used.
@@ -164,7 +164,7 @@ Power Management
 Interface:
 ==========
 
-The interface is defined in kernel/drivers/crypto/msm/inc/qce.h
+The interface is defined in qce.h
 
 The clients qcrypto, qcedev drivers are the clients using
 the interfaces.
@@ -174,7 +174,7 @@ The following services are provided by the qce driver -
      qce_open(), qce_close(), qce_ablk_cipher_req(),
      qce_hw_support(), qce_process_sha_req()
 
-  qce_open() is the first request from the client, ex. Qualcomm crypto
+  qce_open() is the first request from the client, ex. QTI crypto
   driver (qcedev, qcrypto), to open a crypto engine. It is normally
   called at the probe function of the client for a device. During the
   probe,
@@ -203,7 +203,7 @@ Module parameters:
 ==================
 
 The following module parameters are defined in the board init file.
--CE hardware nase register address
+-CE hardware base register address
 -Data mover channel used for transfer to/from CE hardware
 These parameters differ in each platform.
 

@@ -1,23 +1,27 @@
-/* Copyright (c) 2010-2017, 2019, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2010-2019,2021, The Linux Foundation. All rights reserved.
  */
 #ifndef __MSM_PERIPHERAL_LOADER_H
 #define __MSM_PERIPHERAL_LOADER_H
 
-#include <linux/dma-attrs.h>
+#include <linux/mailbox_client.h>
+#include <linux/mailbox/qmp.h>
+#include "minidump_private.h"
+#include <linux/ipc_logging.h>
 
 struct device;
 struct module;
 struct pil_priv;
 
+extern void *pil_ipc_log;
+
+#define pil_ipc(__msg, ...) \
+do { \
+	if (pil_ipc_log) \
+		ipc_log_string(pil_ipc_log, \
+			"[%s]: "__msg, __func__,  ##__VA_ARGS__); \
+} while (0)
 /**
  * struct pil_desc - PIL descriptor
  * @name: string used for pil_get()
@@ -39,19 +43,19 @@ struct pil_priv;
  * @modem_ssr: true if modem is restarting, false if booting for first time.
  * @clear_fw_region: Clear fw region on failure in loading.
  * @subsys_vmid: memprot id for the subsystem.
+ * @extra_size: extra memory allocated at the end of the image.
  */
 struct pil_desc {
 	const char *name;
 	const char *fw_name;
 	struct device *dev;
-	struct subsys_device *subsys_dev;
 	const struct pil_reset_ops *ops;
 	struct module *owner;
 	unsigned long proxy_timeout;
 	unsigned long flags;
 #define PIL_SKIP_ENTRY_CHECK	BIT(0)
 	struct pil_priv *priv;
-	struct dma_attrs attrs;
+	unsigned long attrs;
 	unsigned int proxy_unvote_irq;
 	void * (*map_fw_mem)(phys_addr_t phys, size_t size, void *data);
 	void (*unmap_fw_mem)(void *virt, size_t size, void *data);
@@ -59,7 +63,18 @@ struct pil_desc {
 	bool shutdown_fail;
 	bool modem_ssr;
 	bool clear_fw_region;
+	bool sequential_loading;
 	u32 subsys_vmid;
+	bool signal_aop;
+	struct mbox_client cl;
+	struct mbox_chan *mbox;
+	struct md_ss_toc *minidump_ss;
+	struct md_ss_toc **aux_minidump;
+	int minidump_id;
+	int *aux_minidump_ids;
+	int num_aux_minidump_ids;
+	bool minidump_as_elf32;
+	u32 extra_size;
 };
 
 /**
@@ -73,34 +88,6 @@ struct pil_image_info {
 	__le64 start;
 	__le32 size;
 } __attribute__((__packed__));
-
-#define MAX_NUM_OF_SS 3
-
-/**
- * struct md_ssr_ss_info - Info in imem about smem ToC
- * @md_ss_smem_regions_baseptr: Start physical address of SMEM TOC
- * @md_ss_num_of_regions: number of segments that need to be dumped
- * @md_ss_encryption_status: status of encryption of segments
- * @md_ss_ssr_cause: ssr cause enum
- */
-struct md_ssr_ss_info {
-	u32 md_ss_smem_regions_baseptr;
-	u8 md_ss_num_of_regions;
-	u8 md_ss_encryption_status;
-	u8 md_ss_ssr_cause;
-	u8 reserved;
-};
-
-/**
- * struct md_ssr_toc - Wrapper of struct md_ssr_ss_info
- * @md_ssr_toc_init: flag to indicate to MSS SW about imem init done
- * @md_ssr_ss: Instance of struct md_ssr_ss_info for a subsystem
- */
-struct md_ssr_toc /* Shared IMEM ToC struct */
-{
-	u32 md_ssr_toc_init;
-	struct md_ssr_ss_info	md_ssr_ss[MAX_NUM_OF_SS];
-};
 
 /**
  * struct pil_reset_ops - PIL operations
@@ -116,7 +103,7 @@ struct md_ssr_toc /* Shared IMEM ToC struct */
  */
 struct pil_reset_ops {
 	int (*init_image)(struct pil_desc *pil, const u8 *metadata,
-			  size_t size,  phys_addr_t addr, size_t sz);
+			  size_t size, phys_addr_t mdata_phys, void *region);
 	int (*mem_setup)(struct pil_desc *pil, phys_addr_t addr, size_t size);
 	int (*verify_blob)(struct pil_desc *pil, phys_addr_t phy_addr,
 			   size_t size);

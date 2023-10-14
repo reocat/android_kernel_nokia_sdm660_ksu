@@ -563,7 +563,7 @@ static int aem_init_aem1_inst(struct aem_ipmi_data *probe, u8 module_handle)
 
 	res = platform_device_add(data->pdev);
 	if (res)
-		goto ipmi_err;
+		goto dev_add_err;
 
 	platform_set_drvdata(data->pdev, data);
 
@@ -611,7 +611,9 @@ hwmon_reg_err:
 	ipmi_destroy_user(data->ipmi.user);
 ipmi_err:
 	platform_set_drvdata(data->pdev, NULL);
-	platform_device_unregister(data->pdev);
+	platform_device_del(data->pdev);
+dev_add_err:
+	platform_device_put(data->pdev);
 dev_err:
 	ida_simple_remove(&aem_ida, data->id);
 id_err:
@@ -703,7 +705,7 @@ static int aem_init_aem2_inst(struct aem_ipmi_data *probe,
 
 	res = platform_device_add(data->pdev);
 	if (res)
-		goto ipmi_err;
+		goto dev_add_err;
 
 	platform_set_drvdata(data->pdev, data);
 
@@ -751,7 +753,9 @@ hwmon_reg_err:
 	ipmi_destroy_user(data->ipmi.user);
 ipmi_err:
 	platform_set_drvdata(data->pdev, NULL);
-	platform_device_unregister(data->pdev);
+	platform_device_del(data->pdev);
+dev_add_err:
+	platform_device_put(data->pdev);
 dev_err:
 	ida_simple_remove(&aem_ida, data->id);
 id_err:
@@ -920,8 +924,8 @@ static ssize_t aem_set_power_period(struct device *dev,
 
 /* Discover sensors on an AEM device */
 static int aem_register_sensors(struct aem_data *data,
-				struct aem_ro_sensor_template *ro,
-				struct aem_rw_sensor_template *rw)
+				const struct aem_ro_sensor_template *ro,
+				const struct aem_rw_sensor_template *rw)
 {
 	struct device *dev = &data->pdev->dev;
 	struct sensor_device_attribute *sensors = data->sensors;
@@ -1020,19 +1024,19 @@ static void aem_remove_sensors(struct aem_data *data)
 /* Sensor probe functions */
 
 /* Description of AEM1 sensors */
-static struct aem_ro_sensor_template aem1_ro_sensors[] = {
+static const struct aem_ro_sensor_template aem1_ro_sensors[] = {
 {"energy1_input",  aem_show_energy, 0},
 {"power1_average", aem_show_power,  0},
 {NULL,		   NULL,	    0},
 };
 
-static struct aem_rw_sensor_template aem1_rw_sensors[] = {
+static const struct aem_rw_sensor_template aem1_rw_sensors[] = {
 {"power1_average_interval", aem_show_power_period, aem_set_power_period, 0},
 {NULL,			    NULL,                  NULL,                 0},
 };
 
 /* Description of AEM2 sensors */
-static struct aem_ro_sensor_template aem2_ro_sensors[] = {
+static const struct aem_ro_sensor_template aem2_ro_sensors[] = {
 {"energy1_input",	  aem_show_energy,	0},
 {"energy2_input",	  aem_show_energy,	1},
 {"power1_average",	  aem_show_power,	0},
@@ -1050,7 +1054,7 @@ static struct aem_ro_sensor_template aem2_ro_sensors[] = {
 {NULL,                    NULL,                 0},
 };
 
-static struct aem_rw_sensor_template aem2_rw_sensors[] = {
+static const struct aem_rw_sensor_template aem2_rw_sensors[] = {
 {"power1_average_interval", aem_show_power_period, aem_set_power_period, 0},
 {"power2_average_interval", aem_show_power_period, aem_set_power_period, 1},
 {NULL,			    NULL,                  NULL,                 0},

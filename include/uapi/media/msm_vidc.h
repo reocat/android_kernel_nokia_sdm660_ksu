@@ -1,3 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
+/*
+ * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
+ */
 #ifndef __MSM_VIDC_H__
 #define __MSM_VIDC_H__
 
@@ -5,6 +9,29 @@
 
 #define MSM_VIDC_HAL_INTERLACE_COLOR_FORMAT_NV12	0x2
 #define MSM_VIDC_HAL_INTERLACE_COLOR_FORMAT_NV12_UBWC	0x8002
+#define MSM_VIDC_4x_1 0x1
+#define MSM_VIDC_EXTRADATA_FRAME_QP_ADV 0x1
+
+
+static inline unsigned int VENUS_EXTRADATA_SIZE(int width, int height)
+{
+	(void)height;
+	(void)width;
+	/*
+	 * In the future, calculate the size based on the w/h but just
+	 * hardcode it for now since 16K satisfies all current usecases.
+	 */
+	return 16 * 1024;
+}
+
+#define V4L2_CID_MPEG_VIDC_VIDEO_IDR_PERIOD   (V4L2_CID_MPEG_MSM_VIDC_BASE+5)
+
+#define V4L2_CID_MPEG_VIDC_VIDEO_STREAM_OUTPUT_MODE \
+		(V4L2_CID_MPEG_MSM_VIDC_BASE + 22)
+enum v4l2_mpeg_vidc_video_decoder_multi_stream {
+	V4L2_CID_MPEG_VIDC_VIDEO_STREAM_OUTPUT_PRIMARY = 0,
+	V4L2_CID_MPEG_VIDC_VIDEO_STREAM_OUTPUT_SECONDARY = 1,
+};
 
 struct msm_vidc_extradata_header {
 	unsigned int size;
@@ -77,6 +104,12 @@ struct msm_vidc_input_crop_payload {
 	unsigned int height;
 };
 
+struct msm_vidc_misr_info {
+	unsigned int misr_dpb_luma;
+	unsigned int misr_dpb_chroma;
+	unsigned int misr_opb_luma;
+	unsigned int misr_opb_chroma;
+};
 struct msm_vidc_output_crop_payload {
 	unsigned int size;
 	unsigned int version;
@@ -87,6 +120,10 @@ struct msm_vidc_output_crop_payload {
 	unsigned int display_height;
 	unsigned int width;
 	unsigned int height;
+	unsigned int frame_num;
+	unsigned int bit_depth_y;
+	unsigned int bit_depth_c;
+	struct msm_vidc_misr_info misr_info[2];
 };
 
 
@@ -126,6 +163,10 @@ struct msm_vidc_stream_userdata_payload {
 
 struct msm_vidc_frame_qp_payload {
 	unsigned int frame_qp;
+	unsigned int qp_sum;
+	unsigned int skip_qp_sum;
+	unsigned int skip_num_blocks;
+	unsigned int total_num_blocks;
 };
 
 struct msm_vidc_frame_bits_info_payload {
@@ -157,6 +198,16 @@ struct msm_vidc_s3d_frame_packing_payload {
 struct msm_vidc_vqzip_sei_payload {
 	unsigned int size;
 	unsigned int data[1];
+};
+
+struct msm_vidc_ubwc_cr_stats_info {
+	unsigned int stats_tile_32;
+	unsigned int stats_tile_64;
+	unsigned int stats_tile_96;
+	unsigned int stats_tile_128;
+	unsigned int stats_tile_160;
+	unsigned int stats_tile_192;
+	unsigned int stats_tile_256;
 };
 
 struct msm_vidc_yuv_stats_payload {
@@ -229,6 +280,9 @@ enum msm_vidc_extradata_type {
 	MSM_VIDC_EXTRADATA_FRAME_BITS_INFO = 0x00000010,
 	MSM_VIDC_EXTRADATA_VQZIP_SEI = 0x00000011,
 	MSM_VIDC_EXTRADATA_ROI_QP = 0x00000013,
+#define MSM_VIDC_EXTRADATA_VPX_COLORSPACE_INFO \
+	MSM_VIDC_EXTRADATA_VPX_COLORSPACE_INFO
+	MSM_VIDC_EXTRADATA_VPX_COLORSPACE_INFO = 0x00000014,
 #define MSM_VIDC_EXTRADATA_MASTERING_DISPLAY_COLOUR_SEI \
 	MSM_VIDC_EXTRADATA_MASTERING_DISPLAY_COLOUR_SEI
 	MSM_VIDC_EXTRADATA_MASTERING_DISPLAY_COLOUR_SEI = 0x00000015,
@@ -238,14 +292,17 @@ enum msm_vidc_extradata_type {
 #define MSM_VIDC_EXTRADATA_PQ_INFO \
 	MSM_VIDC_EXTRADATA_PQ_INFO
 	MSM_VIDC_EXTRADATA_PQ_INFO = 0x00000017,
+#define MSM_VIDC_EXTRADATA_COLOUR_REMAPPING_INFO_SEI \
+	MSM_VIDC_EXTRADATA_COLOUR_REMAPPING_INFO_SEI
+	MSM_VIDC_EXTRADATA_COLOUR_REMAPPING_INFO_SEI = 0x00000018,
+#define MSM_VIDC_EXTRADATA_UBWC_CR_STAT_INFO \
+	MSM_VIDC_EXTRADATA_UBWC_CR_STAT_INFO
+	MSM_VIDC_EXTRADATA_UBWC_CR_STAT_INFO = 0x00000019,
 	MSM_VIDC_EXTRADATA_INPUT_CROP = 0x0700000E,
 #define MSM_VIDC_EXTRADATA_OUTPUT_CROP \
 	MSM_VIDC_EXTRADATA_OUTPUT_CROP
 	MSM_VIDC_EXTRADATA_OUTPUT_CROP = 0x0700000F,
 	MSM_VIDC_EXTRADATA_DIGITAL_ZOOM = 0x07000010,
-#define MSM_VIDC_EXTRADATA_VPX_COLORSPACE_INFO \
-	MSM_VIDC_EXTRADATA_VPX_COLORSPACE_INFO
-	MSM_VIDC_EXTRADATA_VPX_COLORSPACE_INFO = 0x00000014,
 	MSM_VIDC_EXTRADATA_MULTISLICE_INFO = 0x7F100000,
 	MSM_VIDC_EXTRADATA_NUM_CONCEALED_MB = 0x7F100001,
 	MSM_VIDC_EXTRADATA_INDEX = 0x7F100002,
@@ -264,6 +321,9 @@ enum msm_vidc_interlace_type {
 	MSM_VIDC_INTERLACE_INTERLEAVE_FRAME_BOTTOMFIELDFIRST = 0x04,
 	MSM_VIDC_INTERLACE_FRAME_TOPFIELDFIRST = 0x08,
 	MSM_VIDC_INTERLACE_FRAME_BOTTOMFIELDFIRST = 0x10,
+#define MSM_VIDC_INTERLACE_FRAME_MBAFF \
+	MSM_VIDC_INTERLACE_FRAME_MBAFF
+	MSM_VIDC_INTERLACE_FRAME_MBAFF = 0x20,
 };
 
 /* enum msm_vidc_framepack_type */
@@ -381,5 +441,8 @@ enum msm_vidc_color_desc_flag {
 /*enum msm_vidc_pic_struct */
 #define MSM_VIDC_PIC_STRUCT_MAYBE_INTERLACED 0x0
 #define MSM_VIDC_PIC_STRUCT_PROGRESSIVE 0x1
+#define MSM_VIDC_PIC_STRUCT_UNKNOWN 0XFFFFFFFF
+/*default when layer ID isn't specified*/
+#define MSM_VIDC_ALL_LAYER_ID 0xFF
 
 #endif

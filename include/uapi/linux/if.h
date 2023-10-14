@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ WITH Linux-syscall-note */
 /*
  * INET		An implementation of the TCP/IP protocol suite for the LINUX
  *		operating system.  INET is implemented using the  BSD Socket
@@ -24,6 +25,10 @@
 #include <linux/socket.h>		/* for "struct sockaddr" et al	*/
 #include <linux/compiler.h>		/* for "__user" et al           */
 
+#ifndef __KERNEL__
+#include <sys/socket.h>			/* for struct sockaddr.		*/
+#endif
+
 #if __UAPI_DEF_IF_IFNAMSIZ
 #define	IFNAMSIZ	16
 #endif /* __UAPI_DEF_IF_IFNAMSIZ */
@@ -43,7 +48,7 @@
  * are shared for all types of net_devices. The sysfs entries are available
  * via /sys/class/net/<dev>/flags. Flags which can be toggled through sysfs
  * are annotated below, note that only a few flags can be toggled and some
- * other flags are always always preserved from the original net_device flags
+ * other flags are always preserved from the original net_device flags
  * even if you try to set them via sysfs. Flags which are always preserved
  * are kept under the flag grouping @IFF_VOLATILE. Flags which are volatile
  * are annotated below as such.

@@ -1,4 +1,5 @@
-/* Copyright (c) 2013-2017, 2019 The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -27,10 +28,10 @@
 #include <soc/qcom/cx_ipeak.h>
 
 /* hw version info:
-  31:28  Major version
-  27:16  Minor version
-  15:0   Revision bits
-**/
+ * 31:28  Major version
+ * 27:16  Minor version
+ * 15:0   Revision bits
+ */
 #define CPP_HW_VERSION_1_1_0  0x10010000
 #define CPP_HW_VERSION_1_1_1  0x10010001
 #define CPP_HW_VERSION_2_0_0  0x20000000
@@ -259,7 +260,6 @@ struct cpp_device {
 	uint32_t min_clk_rate;
 
 	int iommu_hdl;
-	struct ion_client *ion_client;
 	enum smmu_attach_mode security_mode;
 	/* Reusing proven tasklet from msm isp */
 	atomic_t irq_cnt;

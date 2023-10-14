@@ -1,13 +1,6 @@
-/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _IPA_UC_OFFLOAD_H_
@@ -70,12 +63,28 @@ struct ipa_uc_offload_intf_params {
 };
 
 /**
+ * struct ntn_buff_smmu_map -  IPA iova->pa SMMU mapping
+ * @iova: virtual address of the data buffer
+ * @pa: physical address of the data buffer
+ */
+struct ntn_buff_smmu_map {
+	dma_addr_t iova;
+	phys_addr_t pa;
+};
+
+/**
  * struct  ipa_ntn_setup_info - NTN TX/Rx configuration
  * @client: type of "client" (IPA_CLIENT_ODU#_PROD/CONS)
+ * @smmu_enabled: SMMU is enabled for uC or not
  * @ring_base_pa: physical address of the base of the Tx/Rx ring
+ * @ring_base_iova: virtual address of the base of the Tx/Rx ring
+ * @ring_base_sgt:Scatter table for ntn_rings,contains valid non NULL
+ *			value when ENAC S1-SMMU enabed, else NULL.
  * @ntn_ring_size: size of the Tx/Rx ring (in terms of elements)
- * @buff_pool_base_pa: physical address of the base of the Tx/Rx
- *						buffer pool
+ * @buff_pool_base_pa: physical address of the base of the Tx/Rx buffer pool
+ * @buff_pool_base_iova: virtual address of the base of the Tx/Rx buffer pool
+ * @buff_pool_base_sgt: Scatter table for buffer pools,contains valid non NULL
+ *			 value when EMAC S1-SMMU enabed, else NULL.
  * @num_buffers: Rx/Tx buffer pool size (in terms of elements)
  * @data_buff_size: size of the each data buffer allocated in DDR
  * @ntn_reg_base_ptr_pa: physical address of the Tx/Rx NTN Ring's
@@ -83,11 +92,21 @@ struct ipa_uc_offload_intf_params {
  */
 struct ipa_ntn_setup_info {
 	enum ipa_client_type client;
+	bool smmu_enabled;
 	phys_addr_t ring_base_pa;
+	dma_addr_t ring_base_iova;
+	struct sg_table *ring_base_sgt;
+
 	u32 ntn_ring_size;
 
 	phys_addr_t buff_pool_base_pa;
+	dma_addr_t buff_pool_base_iova;
+	struct sg_table *buff_pool_base_sgt;
+
+	struct ntn_buff_smmu_map *data_buff_list;
+
 	u32 num_buffers;
+
 	u32 data_buff_size;
 
 	phys_addr_t ntn_reg_base_ptr_pa;
@@ -286,7 +305,7 @@ static inline int ipa_uc_offload_reg_rdyCB(struct ipa_uc_ready_params *param)
 	return -EPERM;
 }
 
-static void ipa_uc_offload_dereg_rdyCB(enum ipa_uc_offload_proto proto)
+static inline void ipa_uc_offload_dereg_rdyCB(enum ipa_uc_offload_proto proto)
 {
 }
 

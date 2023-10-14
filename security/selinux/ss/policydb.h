@@ -2,7 +2,7 @@
  * A policy database (policydb) specifies the
  * configuration data for the security policy.
  *
- * Author : Stephen Smalley, <sds@epoch.ncsc.mil>
+ * Author : Stephen Smalley, <sds@tycho.nsa.gov>
  */
 
 /*
@@ -187,6 +187,15 @@ struct ocontext {
 			u32 addr[4];
 			u32 mask[4];
 		} node6;        /* IPv6 node information */
+		struct {
+			u64 subnet_prefix;
+			u16 low_pkey;
+			u16 high_pkey;
+		} ibpkey;
+		struct {
+			char *dev_name;
+			u8 port;
+		} ibendport;
 	} u;
 	union {
 		u32 sclass;  /* security class for genfs */
@@ -215,18 +224,22 @@ struct genfs {
 #define SYM_NUM     8
 
 /* object context array indices */
-#define OCON_ISID  0	/* initial SIDs */
-#define OCON_FS    1	/* unlabeled file systems */
-#define OCON_PORT  2	/* TCP and UDP port numbers */
-#define OCON_NETIF 3	/* network interfaces */
-#define OCON_NODE  4	/* nodes */
-#define OCON_FSUSE 5	/* fs_use */
-#define OCON_NODE6 6	/* IPv6 nodes */
-#define OCON_NUM   7
+#define OCON_ISID	0 /* initial SIDs */
+#define OCON_FS		1 /* unlabeled file systems */
+#define OCON_PORT	2 /* TCP and UDP port numbers */
+#define OCON_NETIF	3 /* network interfaces */
+#define OCON_NODE	4 /* nodes */
+#define OCON_FSUSE	5 /* fs_use */
+#define OCON_NODE6	6 /* IPv6 nodes */
+#define OCON_IBPKEY	7 /* Infiniband PKeys */
+#define OCON_IBENDPORT	8 /* Infiniband end ports */
+#define OCON_NUM	9
 
 /* The policy database */
 struct policydb {
 	int mls_enabled;
+	int android_netlink_route;
+	int android_netlink_getneigh;
 
 	/* symbol tables */
 	struct symtab symtab[SYM_NUM];
@@ -313,6 +326,8 @@ extern int policydb_write(struct policydb *p, void *fp);
 #define PERM_SYMTAB_SIZE 32
 
 #define POLICYDB_CONFIG_MLS    1
+#define POLICYDB_CONFIG_ANDROID_NETLINK_ROUTE    (1 << 31)
+#define POLICYDB_CONFIG_ANDROID_NETLINK_GETNEIGH (1 << 30)
 
 /* the config flags related to unknown classes/perms are bits 2 and 3 */
 #define REJECT_UNKNOWN	0x00000002
@@ -349,6 +364,8 @@ static inline int put_entry(const void *buf, size_t bytes, int num, struct polic
 {
 	size_t len = bytes * num;
 
+	if (len > fp->len)
+		return -EINVAL;
 	memcpy(fp->data, buf, len);
 	fp->data += len;
 	fp->len -= len;

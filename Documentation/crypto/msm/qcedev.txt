@@ -103,8 +103,8 @@ Interface:
 ==========
 
 Linux user space applications will need to open a handle
-(file desrciptor) to the qcedev device.  This is achieved by doing
-the following to retrieve a file desrciptor to the device.
+(file descriptor) to the qcedev device.  This is achieved by doing
+the following to retrieve a file descriptor to the device.
 
      fd = open("/dev/qce", O_RDWR);
      ..
@@ -170,8 +170,7 @@ The following IOCTLS are available to the user space application(s)-
 		struct qcedev_sha_ctxt		ctxt;
 	};
 
-The IOCTLs and associated request data structures are defined in
-  kernel/drivers/crypto/msm/inc/qcedev.h..
+The IOCTLs and associated request data structures are defined in qcedev.h
 
 
 Module parameters:
@@ -220,13 +219,13 @@ Limitations:
   (3) Do not load this driver if your device already has kernel space apps
       that need to access the crypto hardware.
       Make sure to have qcedev module disabled/unloaded and implement your user
-      space application to use the software implemenation (ex: openssl/crypto)
+      space application to use the software implementation (ex: openssl/crypto)
       of the crypto algorithms.
       (NOTE:  Please refer to details on the limitations listed in qce.txt)
 
   (4) If your device has Playready (Windows Media DRM) application enabled
-      and uses the qcedev module to access the crypto hardware accelarator,
+      and uses the qcedev module to access the crypto hardware accelerator,
       please be informed that for performance reasons, the CE hardware will
       need to be dedicated to playready application.  Any other user space
-      application should be implemented to use the software implemenation
+      application should be implemented to use the software implementation
       (ex: openssl/crypto) of the crypto algorithms.

@@ -1,15 +1,5 @@
-/* Copyright (c) 2015-2016, 2018 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2015-2016,2018-2020, The Linux Foundation. All rights reserved.*/
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
@@ -21,6 +11,7 @@
 #include "mdss-pll.h"
 #include "mdss-dsi-pll.h"
 #include "mdss-dsi-pll-14nm.h"
+#include <dt-bindings/clock/mdss-14nm-pll-clk.h>
 
 #define VCO_DELAY_USEC		1
 
@@ -53,8 +44,15 @@ static struct regmap_bus dsi_mux_regmap_bus = {
 	.reg_read = dsi_mux_get_parent_14nm,
 };
 
+static const char * const dsi_vco_clk_parent_names[] = {
+#ifdef CONFIG_FB_MSM_MDSS
+	"xo_board"
+#else
+	"bi_tcxo"
+#endif
+};
 /* Op structures */
-static struct clk_ops clk_ops_dsi_vco = {
+static const struct clk_ops clk_ops_dsi_vco = {
 	.recalc_rate = pll_vco_recalc_rate_14nm,
 	.set_rate = pll_vco_set_rate_14nm,
 	.round_rate = pll_vco_round_rate_14nm,
@@ -63,7 +61,7 @@ static struct clk_ops clk_ops_dsi_vco = {
 };
 
 /* Shadow ops for dynamic refresh */
-static struct clk_ops clk_ops_shadow_dsi_vco = {
+static const struct clk_ops clk_ops_shadow_dsi_vco = {
 	.recalc_rate = pll_vco_recalc_rate_14nm,
 	.set_rate = shadow_pll_vco_set_rate_14nm,
 	.round_rate = pll_vco_round_rate_14nm,
@@ -77,8 +75,9 @@ static struct dsi_pll_vco_clk dsi0pll_vco_clk = {
 	.pll_enable_seqs[0] = dsi_pll_enable_seq_14nm,
 	.hw.init = &(struct clk_init_data){
 			.name = "dsi0pll_vco_clk_14nm",
-			.parent_names = (const char *[]){ "xo_board" },
+			.parent_names = dsi_vco_clk_parent_names,
 			.num_parents = 1,
+			.flags = CLK_GET_RATE_NOCACHE,
 			.ops = &clk_ops_dsi_vco,
 		},
 };
@@ -89,8 +88,9 @@ static struct dsi_pll_vco_clk dsi0pll_shadow_vco_clk = {
 	.max_rate = 2600000000u,
 	.hw.init = &(struct clk_init_data){
 			.name = "dsi0pll_shadow_vco_clk_14nm",
-			.parent_names = (const char *[]){ "xo_board" },
+			.parent_names = dsi_vco_clk_parent_names,
 			.num_parents = 1,
+			.flags = CLK_GET_RATE_NOCACHE,
 			.ops = &clk_ops_shadow_dsi_vco,
 		},
 };
@@ -103,8 +103,9 @@ static struct dsi_pll_vco_clk dsi1pll_vco_clk = {
 	.pll_enable_seqs[0] = dsi_pll_enable_seq_14nm,
 	.hw.init = &(struct clk_init_data){
 			.name = "dsi1pll_vco_clk_14nm",
-			.parent_names = (const char *[]){ "xo_board" },
+			.parent_names = dsi_vco_clk_parent_names,
 			.num_parents = 1,
+			.flags = CLK_GET_RATE_NOCACHE,
 			.ops = &clk_ops_dsi_vco,
 		},
 };
@@ -117,8 +118,9 @@ static struct dsi_pll_vco_clk dsi1pll_shadow_vco_clk = {
 	.pll_enable_seqs[0] = dsi_pll_enable_seq_14nm,
 	.hw.init = &(struct clk_init_data){
 			.name = "dsi1pll_shadow_vco_clk_14nm",
-			.parent_names = (const char *[]){ "xo_board" },
+			.parent_names = dsi_vco_clk_parent_names,
 			.num_parents = 1,
+			.flags = CLK_GET_RATE_NOCACHE,
 			.ops = &clk_ops_shadow_dsi_vco,
 		},
 };
@@ -318,13 +320,13 @@ static struct clk_regmap_mux dsi0pll_pixel_clk_mux = {
 
 	.clkr = {
 		.hw.init = &(struct clk_init_data){
-			.name = "dsi0pll_pixel_clk_mux",
+			.name = "dsi0_phy_pll_out_dsiclk",
 			.parent_names =
 				(const char *[]){ "dsi0pll_pixel_clk_src",
 					"dsi0pll_shadow_pixel_clk_src"},
 			.num_parents = 2,
 			.flags = (CLK_GET_RATE_NOCACHE | CLK_SET_RATE_PARENT |
-				CLK_SET_RATE_NO_REPARENT),
+					CLK_SET_RATE_NO_REPARENT),
 			.ops = &clk_regmap_mux_closest_ops,
 		},
 	},
@@ -337,13 +339,13 @@ static struct clk_regmap_mux dsi1pll_pixel_clk_mux = {
 
 	.clkr = {
 		.hw.init = &(struct clk_init_data){
-			.name = "dsi1pll_pixel_clk_mux",
+			.name = "dsi1_phy_pll_out_dsiclk",
 			.parent_names =
 				(const char *[]){ "dsi1pll_pixel_clk_src",
 					"dsi1pll_shadow_pixel_clk_src"},
 			.num_parents = 2,
 			.flags = (CLK_GET_RATE_NOCACHE | CLK_SET_RATE_PARENT |
-				CLK_SET_RATE_NO_REPARENT),
+					CLK_SET_RATE_NO_REPARENT),
 			.ops = &clk_regmap_mux_closest_ops,
 		},
 	},
@@ -410,14 +412,14 @@ static struct clk_regmap_mux dsi0pll_byte_clk_mux = {
 
 	.clkr = {
 		.hw.init = &(struct clk_init_data){
-			.name = "dsi0pll_byte_clk_mux",
+			.name = "dsi0_phy_pll_out_byteclk",
 			.parent_names =
 				(const char *[]){"dsi0pll_byte_clk_src",
 					"dsi0pll_shadow_byte_clk_src"},
 			.num_parents = 2,
 			.ops = &clk_regmap_mux_closest_ops,
 			.flags = (CLK_GET_RATE_NOCACHE | CLK_SET_RATE_PARENT |
-				CLK_SET_RATE_NO_REPARENT),
+					CLK_SET_RATE_NO_REPARENT),
 		},
 	},
 };
@@ -429,14 +431,14 @@ static struct clk_regmap_mux dsi1pll_byte_clk_mux = {
 
 	.clkr = {
 		.hw.init = &(struct clk_init_data){
-			.name = "dsi1pll_byte_clk_mux",
+			.name = "dsi1_phy_pll_out_byteclk",
 			.parent_names =
 				(const char *[]){"dsi1pll_byte_clk_src",
 					"dsi1pll_shadow_byte_clk_src"},
 			.num_parents = 2,
 			.ops = &clk_regmap_mux_closest_ops,
 			.flags = (CLK_GET_RATE_NOCACHE | CLK_SET_RATE_PARENT |
-				CLK_SET_RATE_NO_REPARENT),
+					CLK_SET_RATE_NO_REPARENT),
 		},
 	},
 };
@@ -517,10 +519,8 @@ int dsi_pll_clock_register_14nm(struct platform_device *pdev,
 
 	clk_data->clks = devm_kzalloc(&pdev->dev, (num_clks *
 				sizeof(struct clk *)), GFP_KERNEL);
-	if (!clk_data->clks) {
-		devm_kfree(&pdev->dev, clk_data);
+	if (!clk_data->clks)
 		return -ENOMEM;
-	}
 
 	clk_data->clk_num = num_clks;
 
@@ -612,7 +612,5 @@ int dsi_pll_clock_register_14nm(struct platform_device *pdev,
 	}
 
 clk_reg_fail:
-	devm_kfree(&pdev->dev, clk_data->clks);
-	devm_kfree(&pdev->dev, clk_data);
 	return rc;
 }

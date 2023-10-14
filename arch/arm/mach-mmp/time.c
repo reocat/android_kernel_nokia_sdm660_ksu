@@ -29,14 +29,13 @@
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
 #include <linux/sched_clock.h>
-
-#include <mach/addr-map.h>
-#include <mach/regs-timers.h>
-#include <mach/regs-apbc.h>
-#include <mach/irqs.h>
-#include <mach/cputype.h>
 #include <asm/mach/time.h>
 
+#include "addr-map.h"
+#include "regs-timers.h"
+#include "regs-apbc.h"
+#include "irqs.h"
+#include "cputype.h"
 #include "clock.h"
 
 #ifdef CONFIG_CPU_MMP2
@@ -53,18 +52,21 @@
 static void __iomem *mmp_timer_base = TIMERS_VIRT_BASE;
 
 /*
- * FIXME: the timer needs some delay to stablize the counter capture
+ * Read the timer through the CVWR register. Delay is required after requesting
+ * a read. The CR register cannot be directly read due to metastability issues
+ * documented in the PXA168 software manual.
  */
 static inline uint32_t timer_read(void)
 {
-	int delay = 100;
+	uint32_t val;
+	int delay = 3;
 
 	__raw_writel(1, mmp_timer_base + TMR_CVWR(1));
 
 	while (delay--)
-		cpu_relax();
+		val = __raw_readl(mmp_timer_base + TMR_CVWR(1));
 
-	return __raw_readl(mmp_timer_base + TMR_CVWR(1));
+	return val;
 }
 
 static u64 notrace mmp_read_sched_clock(void)
@@ -145,7 +147,7 @@ static struct clock_event_device ckevt = {
 	.set_state_oneshot	= timer_set_shutdown,
 };
 
-static cycle_t clksrc_read(struct clocksource *cs)
+static u64 clksrc_read(struct clocksource *cs)
 {
 	return timer_read();
 }

@@ -21,7 +21,7 @@
 		};
 	};
 
-	memory {
+	memory@80000000 {
 		device_type = "memory";
 		reg = <0x80000000 0x20000000>; /* 512 MB */
 	};
@@ -29,6 +29,15 @@
 	aliases {
 		display0 = &lcd;
 		display1 = &tv0;
+		/delete-property/ mmc2;
+		/delete-property/ mmc3;
+	};
+
+	/* fixed 26MHz oscillator */
+	hfclk_26m: oscillator {
+		#clock-cells = <0>;
+		compatible = "fixed-clock";
+		clock-frequency = <26000000>;
 	};
 
 	gpio-keys {
@@ -38,7 +47,7 @@
 			label = "aux";
 			linux,code = <169>;
 			gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>;
-			gpio-key,wakeup;
+			wakeup-source;
 		};
 	};
 
@@ -56,7 +65,8 @@
 		simple-audio-card,bitclock-master = <&telephony_link_master>;
 		simple-audio-card,frame-master = <&telephony_link_master>;
 		simple-audio-card,format = "i2s";
-
+		simple-audio-card,bitclock-inversion;
+		simple-audio-card,frame-inversion;
 		simple-audio-card,cpu {
 			sound-dai = <&mcbsp4>;
 		};
@@ -86,7 +96,7 @@
 
 		/* lcd panel */
 		lcd: td028ttec1@0 {
-			compatible = "toppoly,td028ttec1";
+			compatible = "tpo,td028ttec1";
 			reg = <0>;
 			spi-max-frequency = <100000>;
 			spi-cpol;
@@ -101,13 +111,30 @@
 		};
 	};
 
+	backlight {
+		compatible = "pwm-backlight";
+		pwms = <&pwm11 0 12000000 0>;
+		pwm-names = "backlight";
+		brightness-levels = <0 11 20 30 40 50 60 70 80 90 100>;
+		default-brightness-level = <9>;	/* => 90 */
+		pinctrl-names = "default";
+		pinctrl-0 = <&backlight_pins>;
+	};
+
+	pwm11: dmtimer-pwm {
+		compatible = "ti,omap-dmtimer-pwm";
+		ti,timers = <&timer11>;
+		#pwm-cells = <3>;
+	};
+
 	hsusb2_phy: hsusb2_phy {
 		compatible = "usb-nop-xceiv";
 		reset-gpios = <&gpio6 14 GPIO_ACTIVE_LOW>;
+		#phy-cells = <0>;
 	};
 
-	tv0: connector@1 {
-		compatible = "svideo-connector";
+	tv0: connector {
+		compatible = "composite-video-connector";
 		label = "tv";
 
 		port {
@@ -119,7 +146,7 @@
 
 	tv_amp: opa362 {
 		compatible = "ti,opa362";
-		enable-gpios = <&gpio1 23 GPIO_ACTIVE_HIGH>;
+		enable-gpios = <&gpio1 23 GPIO_ACTIVE_HIGH>;	/* GPIO_23 to enable video out amplifier */
 
 		ports {
 			#address-cells = <1>;
@@ -127,18 +154,23 @@
 
 			port@0 {
 				reg = <0>;
-				opa_in: endpoint@0 {
+				opa_in: endpoint {
 					remote-endpoint = <&venc_out>;
 				};
 			};
 
 			port@1 {
 				reg = <1>;
-				opa_out: endpoint@0 {
+				opa_out: endpoint {
 					remote-endpoint = <&tv_connector_in>;
 				};
 			};
 		};
+	};
+
+	wifi_pwrseq: wifi_pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		reset-gpios = <&tca6507 0 GPIO_ACTIVE_LOW>;	/* W2CBW003 reset through tca6507 */
 	};
 };
 
@@ -191,6 +223,12 @@
 		>;
 	};
 
+	backlight_pins: backlight_pins_pimnux {
+		pinctrl-single,pins = <
+			OMAP3_CORE1_IOPAD(0x20ba, MUX_MODE3)		/* gpt11/gpio57 */
+		>;
+	};
+
 	dss_dpi_pins: pinmux_dss_dpi_pins {
                pinctrl-single,pins = <
 			OMAP3_CORE1_IOPAD(0x20d4, PIN_OUTPUT | MUX_MODE0)   /* dss_pclk.dss_pclk */
@@ -227,6 +265,31 @@
 	hdq_pins: hdq_pins {
 		pinctrl-single,pins = <
 			OMAP3_CORE1_IOPAD(0x21c6, PIN_INPUT_PULLUP | MUX_MODE0) /* i2c3_sda.hdq */
+		>;
+	};
+
+	bma180_pins: pinmux_bma180_pins {
+		pinctrl-single,pins = <
+			OMAP3_CORE1_IOPAD(0x213a, PIN_INPUT_PULLUP | MUX_MODE4) /* gpio115 */
+		>;
+	};
+
+	itg3200_pins: pinmux_itg3200_pins {
+		pinctrl-single,pins = <
+			OMAP3_CORE1_IOPAD(0x20b8, PIN_INPUT_PULLUP | MUX_MODE4) /* gpio56 */
+		>;
+	};
+
+	hmc5843_pins: pinmux_hmc5843_pins {
+		pinctrl-single,pins = <
+			OMAP3_CORE1_IOPAD(0x2134, PIN_INPUT_PULLUP | MUX_MODE4) /* gpio112 */
+		>;
+	};
+
+	penirq_pins: pinmux_penirq_pins {
+		pinctrl-single,pins = <
+			/* here we could enable to wakeup the cpu from suspend by a pen touch */
+			OMAP3_CORE1_IOPAD(0x2194, PIN_INPUT_PULLUP | MUX_MODE4) /* gpio160 */
 		>;
 	};
 };
@@ -266,6 +329,9 @@
 		interrupts = <7>; /* SYS_NIRQ cascaded to intc */
 		interrupt-parent = <&intc>;
 
+		clocks = <&hfclk_26m>;
+		clock-names = "fck";
+
 		twl_audio: audio {
 			compatible = "ti,twl4030-audio";
 			ti,enable-vibra = <1>;
@@ -299,6 +365,8 @@
 	bma180@41 {
 		compatible = "bosch,bma180";
 		reg = <0x41>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&bma180_pins>;
 		interrupt-parent = <&gpio4>;
 		interrupts = <19 IRQ_TYPE_LEVEL_HIGH>; /* GPIO_115 */
 	};
@@ -307,12 +375,14 @@
 	itg3200@68 {
 		compatible = "invensense,itg3200";
 		reg = <0x68>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&itg3200_pins>;
 		interrupt-parent = <&gpio2>;
-		interrupts = <24 0>; /* GPIO_56 */
+		interrupts = <24 IRQ_TYPE_EDGE_FALLING>; /* GPIO_56 */
 	};
 
-	/* leds */
-	tca6507@45 {
+	/* leds + gpios */
+	tca6507: tca6507@45 {
 		compatible = "ti,tca6507";
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -352,16 +422,35 @@
 	hmc5843@1e {
 		compatible = "honeywell,hmc5883l";
 		reg = <0x1e>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&hmc5843_pins>;
+		interrupt-parent = <&gpio4>;
+		interrupts = <16 IRQ_TYPE_EDGE_FALLING>;	/* gpio112 */
 	};
 
 	/* touchscreen */
 	tsc2007@48 {
 		compatible = "ti,tsc2007";
 		reg = <0x48>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&penirq_pins>;
 		interrupt-parent = <&gpio6>;
 		interrupts = <0 IRQ_TYPE_EDGE_FALLING>; /* GPIO_160 */
-		gpios = <&gpio6 0 GPIO_ACTIVE_LOW>;
+		gpios = <&gpio6 0 GPIO_ACTIVE_LOW>;	/* GPIO_160 */
 		ti,x-plate-ohms = <600>;
+		touchscreen-size-x = <480>;
+		touchscreen-size-y = <640>;
+		touchscreen-max-pressure = <1000>;
+		touchscreen-fuzz-x = <3>;
+		touchscreen-fuzz-y = <8>;
+		touchscreen-fuzz-pressure = <10>;
+		touchscreen-inverted-y;
+	};
+
+	/* RFID EEPROM */
+	m24lr64@50 {
+		compatible = "atmel,24c64";
+		reg = <0x50>;
 	};
 };
 
@@ -399,6 +488,7 @@
 	bus-width = <4>;
 	ti,non-removable;
 	cap-power-off-card;
+	mmc-pwrseq = <&wifi_pwrseq>;
 };
 
 &mmc3 {
@@ -486,10 +576,14 @@
 
 	vdda-supply = <&vdac>;
 
+	#address-cells = <1>;
+	#size-cells = <0>;
+
 	port {
+		reg = <0>;
 		venc_out: endpoint {
 			remote-endpoint = <&opa_in>;
-			ti,channels = <2>;
+			ti,channels = <1>;
 			ti,invert-polarity;
 		};
 	};
@@ -499,7 +593,11 @@
 	ranges = <0 0 0x30000000 0x1000000>; /* CS0: 16MB for NAND */
 
 	nand@0,0 {
+		compatible = "ti,omap2-nand";
 		reg = <0 0 4>; /* CS0, offset 0, IO size 4 */
+		interrupt-parent = <&gpmc>;
+		interrupts = <0 IRQ_TYPE_NONE>, /* fifoevent */
+			     <1 IRQ_TYPE_NONE>;	/* termcount */
 		nand-bus-width = <16>;
 		ti,nand-ecc-opt = "bch8";
 

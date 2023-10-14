@@ -1,16 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Jump label s390 support
  *
  * Copyright IBM Corp. 2011
  * Author(s): Jan Glauber <jang@linux.vnet.ibm.com>
  */
-#include <linux/module.h>
 #include <linux/uaccess.h>
 #include <linux/stop_machine.h>
 #include <linux/jump_label.h>
 #include <asm/ipl.h>
-
-#ifdef HAVE_JUMP_LABEL
 
 struct insn {
 	u16 opcode;
@@ -94,7 +92,7 @@ void arch_jump_label_transform(struct jump_entry *entry,
 	args.entry = entry;
 	args.type = type;
 
-	stop_machine(__sm_arch_jump_label_transform, &args, NULL);
+	stop_machine_cpuslocked(__sm_arch_jump_label_transform, &args, NULL);
 }
 
 void arch_jump_label_transform_static(struct jump_entry *entry,
@@ -102,5 +100,3 @@ void arch_jump_label_transform_static(struct jump_entry *entry,
 {
 	__jump_label_transform(entry, type, 1);
 }
-
-#endif

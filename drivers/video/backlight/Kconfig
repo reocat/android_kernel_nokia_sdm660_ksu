@@ -150,6 +150,13 @@ config LCD_HX8357
 	  If you have a HX-8357 LCD panel, say Y to enable its LCD control
 	  driver.
 
+  config LCD_OTM3225A
+  	tristate "ORISE Technology OTM3225A support"
+  	depends on SPI
+  	help
+  	  If you have a panel based on the OTM3225A controller
+  	  chip then say y to include a driver for it.
+
 endif # LCD_CLASS_DEVICE
 
 #
@@ -306,6 +313,16 @@ config BACKLIGHT_PM8941_WLED
 	  If you have the Qualcomm PM8941, say Y to enable a driver for the
 	  WLED block.
 
+config BACKLIGHT_QCOM_SPMI_WLED
+	tristate "Qualcomm Technologies, Inc. WLED Driver"
+	select REGMAP
+	help
+	  If you have the Qualcomm Technologies, Inc. WLED used for backlight
+	  control, say Y to enable a driver for the  WLED block. This driver
+	  provides the interface to the display driver to adjust the brightness
+	  of the display backlight. This supports PMI8998, PM8150L, PM6150L
+	  currently.
+
 config BACKLIGHT_SAHARA
 	tristate "Tabletkiosk Sahara Touch-iT Backlight Driver"
 	depends on X86
@@ -459,6 +476,19 @@ config BACKLIGHT_BD6107
 	depends on I2C
 	help
 	  If you have a Rohm BD6107 say Y to enable the backlight driver.
+
+config BACKLIGHT_ARCXCNN
+	tristate "Backlight driver for the Arctic Sands ARCxCnnnn family"
+	depends on I2C
+	help
+	  If you have an ARCxCnnnn family backlight say Y to enable
+	  the backlight driver.
+
+config BACKLIGHT_RAVE_SP
+	tristate "RAVE SP Backlight driver"
+	depends on RAVE_SP_CORE
+	help
+	  Support for backlight control on RAVE SP device.
 
 endif # BACKLIGHT_CLASS_DEVICE
 

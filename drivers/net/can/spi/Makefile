@@ -3,7 +3,6 @@
 #
 
 
+obj-$(CONFIG_CAN_HI311X)	+= hi311x.o
 obj-$(CONFIG_CAN_MCP251X)	+= mcp251x.o
-obj-$(CONFIG_CAN_RH850)		+= rh850.o
-obj-${CONFIG_CAN_K61}		+= k61.o
-obj-$(CONFIG_QTI_CAN)		+= qti-can.o
+obj-$(CONFIG_CAN_MCP25XXFD) += mcp25xxfd.o

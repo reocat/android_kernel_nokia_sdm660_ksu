@@ -1,13 +1,6 @@
-/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2011-2017, 2019, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _ARCH_ARM_MACH_MSM_BUS_CORE_H
@@ -54,6 +47,7 @@ enum msm_bus_hw_sel {
 	MSM_BUS_RPM = 0,
 	MSM_BUS_NOC,
 	MSM_BUS_BIMC,
+	MSM_BUS_QNOC,
 };
 
 struct msm_bus_arb_ops {
@@ -68,7 +62,12 @@ struct msm_bus_arb_ops {
 	int (*update_bw)(struct msm_bus_client_handle *cl, u64 ab, u64 ib);
 	void (*unregister)(struct msm_bus_client_handle *cl);
 	int (*update_bw_context)(struct msm_bus_client_handle *cl, u64 act_ab,
-				u64 act_ib, u64 slp_ib, u64 slp_ab);
+				u64 act_ib, u64 dual_ib, u64 dual_ab);
+	int (*query_usecase)(struct msm_bus_tcs_usecase *tcs_usecase,
+				uint32_t cl, unsigned int index);
+	int (*query_usecase_all)(struct msm_bus_tcs_handle *tcs_handle,
+				uint32_t cl);
+
 };
 
 enum {
@@ -283,7 +282,7 @@ struct msm_bus_client {
 	struct device **src_devs;
 };
 
-uint64_t msm_bus_div64(unsigned int width, uint64_t bw);
+uint64_t msm_bus_div64(uint64_t num, unsigned int base);
 int msm_bus_fabric_device_register(struct msm_bus_fabric_device *fabric);
 void msm_bus_fabric_device_unregister(struct msm_bus_fabric_device *fabric);
 struct msm_bus_fabric_device *msm_bus_get_fabric_device(int fabid);
@@ -331,6 +330,8 @@ int msm_bus_dbg_add_client(const struct msm_bus_client_handle *pdata);
 int msm_bus_dbg_rec_transaction(const struct msm_bus_client_handle *pdata,
 						u64 ab, u64 ib);
 void msm_bus_dbg_remove_client(const struct msm_bus_client_handle *pdata);
+int msm_bus_dbg_add_bcm(struct msm_bus_node_device_type *cur_bcm);
+void msm_bus_dbg_remove_bcm(struct msm_bus_node_device_type *cur_bcm);
 
 #else
 static inline void msm_bus_dbg_client_data(struct msm_bus_scale_pdata *pdata,
@@ -358,6 +359,17 @@ static inline int
 msm_bus_dbg_add_client(const struct msm_bus_client_handle *pdata)
 {
 	return 0;
+}
+
+static inline int
+msm_bus_dbg_add_bcm(struct msm_bus_node_device_type *cur_bcm)
+{
+	return 0;
+}
+
+static inline void
+msm_bus_dbg_remove_bcm(struct msm_bus_node_device_type *cur_bcm)
+{
 }
 #endif
 
@@ -404,7 +416,6 @@ void msm_bus_board_set_nfab(struct msm_bus_fabric_registration *pdata,
 static inline void msm_bus_of_get_nfab(struct platform_device *pdev,
 		struct msm_bus_fabric_registration *pdata)
 {
-	return;
 }
 
 static inline struct msm_bus_fabric_registration

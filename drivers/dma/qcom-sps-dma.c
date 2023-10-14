@@ -1,15 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+ * Copyright (c) 2014-2015,2017-2018, 2020, The Linux Foundation. All rights reserved.
  */
 
 /*
@@ -179,7 +170,7 @@ static struct dma_chan *qbam_dma_xlate(struct of_phandle_args *dma_spec,
 			"invalid number of dma arguments, expect:%d got:%d\n",
 			QBAM_OF_SLAVE_N_ARGS, dma_spec->args_count);
 		return NULL;
-	};
+	}
 
 	channel_index = dma_spec->args[0];
 
@@ -206,11 +197,8 @@ static struct dma_chan *qbam_dma_xlate(struct of_phandle_args *dma_spec,
 
 	/* allocate a channel */
 	qbam_chan = kzalloc(sizeof(*qbam_chan), GFP_KERNEL);
-	if (!qbam_chan) {
-		qbam_err(qbam_dev, "error kmalloc(size:%llu) failed\n",
-			 (u64) sizeof(*qbam_chan));
+	if (!qbam_chan)
 		return NULL;
-	}
 
 	/* allocate BAM resources for that channel */
 	qbam_chan->bam_pipe.handle = sps_alloc_endpoint();
@@ -272,10 +260,10 @@ static enum dma_status qbam_tx_status(struct dma_chan *chan,
 /*
  * qbam_init_bam_handle - find or create bam handle.
  *
- * BAM device needs to be registerd for each BLSP once and only once. if it was
- * registred, then we find the handle to the registerd bam and return it,
- * otherwise we register it here.
- * The module which registerd BAM is responsible for deregistering it.
+ * BAM device needs to be registered for each BLSP once and only once. if it
+ * was registered, then we find the handle to the registered bam and return
+ * it, otherwise we register it here.
+ * The module which registered BAM is responsible for deregistering it.
  */
 static int qbam_init_bam_handle(struct qbam_device *qbam_dev)
 {
@@ -298,7 +286,7 @@ static int qbam_init_bam_handle(struct qbam_device *qbam_dev)
 			 (ulong) qbam_dev->mem_resource->start,
 			 (ulong) resource_size(qbam_dev->mem_resource));
 		return PTR_ERR(qbam_dev->regs);
-	};
+	}
 
 	bam_props.phys_addr		= qbam_dev->mem_resource->start;
 	bam_props.virt_addr		= qbam_dev->regs;
@@ -338,8 +326,9 @@ static void qbam_eot_callback(struct sps_event_notify *notify)
 static void qbam_error_callback(struct sps_event_notify *notify)
 {
 	struct qbam_channel *qbam_chan	= notify->user;
-	qbam_err(qbam_chan->qbam_dev, "error: qbam_error_callback(pipe:%d\n)",
-		 qbam_chan->bam_pipe.index);
+
+	qbam_err(qbam_chan->qbam_dev, "error: %s(pipe:%d\n)",
+		 __func__, qbam_chan->bam_pipe.index);
 }
 
 static int qbam_connect_chan(struct qbam_channel *qbam_chan)
@@ -461,6 +450,7 @@ static int qbam_flush_chan(struct dma_chan *chan)
 {
 	struct qbam_channel *qbam_chan = DMA_TO_QBAM_CHAN(chan);
 	int ret = qbam_disconnect_chan(qbam_chan);
+
 	if (ret) {
 		qbam_err(qbam_chan->qbam_dev,
 			 "error: disconnect flush(pipe:%d\n)",
@@ -480,6 +470,7 @@ static dma_cookie_t qbam_tx_submit(struct dma_async_tx_descriptor *dma_desc)
 {
 	struct qbam_channel *qbam_chan = DMA_TO_QBAM_CHAN(dma_desc->chan);
 	dma_cookie_t ret;
+
 	mutex_lock(&qbam_chan->lock);
 
 	ret = dma_cookie_assign(dma_desc);
@@ -537,11 +528,12 @@ static void qbam_issue_pending(struct dma_chan *chan)
 	struct qbam_device  *qbam_dev  = qbam_chan->qbam_dev;
 	struct qbam_async_tx_descriptor *qbam_desc = &qbam_chan->pending_desc;
 	struct scatterlist		*sg;
+
 	mutex_lock(&qbam_chan->lock);
 	if (!qbam_chan->pending_desc.sgl) {
 		qbam_err(qbam_dev,
-		   "error qbam_issue_pending() no pending descriptor pipe:%d\n",
-		   qbam_chan->bam_pipe.index);
+		   "error %s() no pending descriptor pipe:%d\n",
+		   __func__, qbam_chan->bam_pipe.index);
 		mutex_unlock(&qbam_chan->lock);
 		return;
 	}
@@ -611,11 +603,9 @@ static int qbam_probe(struct platform_device *pdev)
 	struct device_node *of_node = pdev->dev.of_node;
 
 	qbam_dev = devm_kzalloc(&pdev->dev, sizeof(*qbam_dev), GFP_KERNEL);
-	if (!qbam_dev) {
-		qbam_err(qbam_dev, "error kmalloc(size:%llu) failed",
-			(u64) sizeof(*qbam_dev));
+	if (!qbam_dev)
 		return -ENOMEM;
-	}
+
 	qbam_dev->dma_dev.dev = &pdev->dev;
 	platform_set_drvdata(pdev, qbam_dev);
 
@@ -662,13 +652,12 @@ static int qbam_probe(struct platform_device *pdev)
 	qbam_dev->dma_dev.device_tx_status		= qbam_tx_status;
 
 	/* Regiser to DMA framework */
-	ret = dma_async_device_register(&qbam_dev->dma_dev);
-	if (ret) {
-		qbam_err(qbam_dev, "error:%d dma_async_device_register()\n",
-			 ret);
-		goto err_unregister_bam;
-	}
+	dma_async_device_register(&qbam_dev->dma_dev);
 
+	/*
+	 * Do not return error in order to not break the existing
+	 * way of requesting channels.
+	 */
 	ret = of_dma_controller_register(of_node, qbam_dma_xlate, qbam_dev);
 	if (ret) {
 		qbam_err(qbam_dev, "error:%d of_dma_controller_register()\n",
@@ -679,7 +668,6 @@ static int qbam_probe(struct platform_device *pdev)
 
 err_unregister_dma:
 	dma_async_device_unregister(&qbam_dev->dma_dev);
-err_unregister_bam:
 	if (qbam_dev->deregister_required)
 		return qbam_deregister_bam_dev(qbam_dev);
 
@@ -712,7 +700,6 @@ static struct platform_driver qbam_driver = {
 	.remove = qbam_remove,
 	.driver = {
 		.name = "qcom-sps-dma",
-		.owner = THIS_MODULE,
 		.of_match_table = qbam_of_match,
 	},
 };

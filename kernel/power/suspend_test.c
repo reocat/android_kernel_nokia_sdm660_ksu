@@ -104,9 +104,9 @@ repeat:
 		printk(info_test, pm_states[state]);
 		status = pm_suspend(state);
 		if (status < 0)
-			state = PM_SUSPEND_FREEZE;
+			state = PM_SUSPEND_TO_IDLE;
 	}
-	if (state == PM_SUSPEND_FREEZE) {
+	if (state == PM_SUSPEND_TO_IDLE) {
 		printk(info_test, pm_states[state]);
 		status = pm_suspend(state);
 	}
@@ -158,22 +158,22 @@ static int __init setup_test_suspend(char *value)
 	value++;
 	suspend_type = strsep(&value, ",");
 	if (!suspend_type)
-		return 0;
+		return 1;
 
 	repeat = strsep(&value, ",");
 	if (repeat) {
 		if (kstrtou32(repeat, 0, &test_repeat_count_max))
-			return 0;
+			return 1;
 	}
 
-	for (i = 0; pm_labels[i]; i++)
+	for (i = PM_SUSPEND_MIN; i < PM_SUSPEND_MAX; i++)
 		if (!strcmp(pm_labels[i], suspend_type)) {
 			test_state_label = pm_labels[i];
-			return 0;
+			return 1;
 		}
 
 	printk(warn_bad_state, suspend_type);
-	return 0;
+	return 1;
 }
 __setup("test_suspend", setup_test_suspend);
 

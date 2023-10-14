@@ -18,9 +18,7 @@ struct drm_encoder *msm_dsi_get_encoder(struct msm_dsi *msm_dsi)
 	if (!msm_dsi || !msm_dsi_device_connected(msm_dsi))
 		return NULL;
 
-	return (msm_dsi->device_flags & MIPI_DSI_MODE_VIDEO) ?
-		msm_dsi->encoders[MSM_DSI_VIDEO_ENCODER_ID] :
-		msm_dsi->encoders[MSM_DSI_CMD_ENCODER_ID];
+	return msm_dsi->encoder;
 }
 
 static int dsi_get_phy(struct msm_dsi *msm_dsi)
@@ -29,7 +27,7 @@ static int dsi_get_phy(struct msm_dsi *msm_dsi)
 	struct platform_device *phy_pdev;
 	struct device_node *phy_node;
 
-	phy_node = of_parse_phandle(pdev->dev.of_node, "qcom,dsi-phy", 0);
+	phy_node = of_parse_phandle(pdev->dev.of_node, "phys", 0);
 	if (!phy_node) {
 		dev_err(&pdev->dev, "cannot find phy device\n");
 		return -ENXIO;
@@ -163,12 +161,17 @@ static const struct of_device_id dt_match[] = {
 	{}
 };
 
+static const struct dev_pm_ops dsi_pm_ops = {
+	SET_RUNTIME_PM_OPS(msm_dsi_runtime_suspend, msm_dsi_runtime_resume, NULL)
+};
+
 static struct platform_driver dsi_driver = {
 	.probe = dsi_dev_probe,
 	.remove = dsi_dev_remove,
 	.driver = {
 		.name = "msm_dsi",
 		.of_match_table = dt_match,
+		.pm = &dsi_pm_ops,
 	},
 };
 
@@ -187,18 +190,21 @@ void __exit msm_dsi_unregister(void)
 }
 
 int msm_dsi_modeset_init(struct msm_dsi *msm_dsi, struct drm_device *dev,
-		struct drm_encoder *encoders[MSM_DSI_ENCODER_NUM])
+			 struct drm_encoder *encoder)
 {
-	struct msm_drm_private *priv = dev->dev_private;
+	struct msm_drm_private *priv;
 	struct drm_bridge *ext_bridge;
-	int ret, i;
+	int ret;
 
-	if (!msm_dsi)
+	if (WARN_ON(!encoder) || WARN_ON(!msm_dsi) || WARN_ON(!dev))
 		return -EINVAL;
 
-	if (WARN_ON(!encoders[MSM_DSI_VIDEO_ENCODER_ID] ||
-		!encoders[MSM_DSI_CMD_ENCODER_ID]))
-		return -EINVAL;
+	priv = dev->dev_private;
+
+	if (priv->num_bridges == ARRAY_SIZE(priv->bridges)) {
+		DRM_DEV_ERROR(dev->dev, "too many bridges\n");
+		return -ENOSPC;
+	}
 
 	msm_dsi->dev = dev;
 
@@ -208,17 +214,19 @@ int msm_dsi_modeset_init(struct msm_dsi *msm_dsi, struct drm_device *dev,
 		goto fail;
 	}
 
+	if (!msm_dsi_manager_validate_current_config(msm_dsi->id)) {
+		ret = -EINVAL;
+		goto fail;
+	}
+
+	msm_dsi->encoder = encoder;
+
 	msm_dsi->bridge = msm_dsi_manager_bridge_init(msm_dsi->id);
 	if (IS_ERR(msm_dsi->bridge)) {
 		ret = PTR_ERR(msm_dsi->bridge);
 		dev_err(dev->dev, "failed to create dsi bridge: %d\n", ret);
 		msm_dsi->bridge = NULL;
 		goto fail;
-	}
-
-	for (i = 0; i < MSM_DSI_ENCODER_NUM; i++) {
-		encoders[i]->bridge = msm_dsi->bridge;
-		msm_dsi->encoders[i] = encoders[i];
 	}
 
 	/*

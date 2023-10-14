@@ -1,14 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __QSEECOMI_H_
@@ -19,7 +11,6 @@
 #define QSEECOM_KEY_ID_SIZE   32
 
 #define QSEOS_RESULT_FAIL_SEND_CMD_NO_THREAD  -19   /*0xFFFFFFED*/
-#define QSEOS_RESULT_FAIL_APP_ALREADY_LOADED  -38   /*0xFFFFFFDA*/
 #define QSEOS_RESULT_FAIL_UNSUPPORTED_CE_PIPE -63
 #define QSEOS_RESULT_FAIL_KS_OP               -64
 #define QSEOS_RESULT_FAIL_KEY_ID_EXISTS       -65
@@ -31,6 +22,8 @@
 #define QSEOS_RESULT_FAIL_INCORRECT_PSWD      -71
 #define QSEOS_RESULT_FAIL_MAX_ATTEMPT         -72
 #define QSEOS_RESULT_FAIL_PENDING_OPERATION   -73
+
+#define SMCINVOKE_RESULT_INBOUND_REQ_NEEDED	3
 
 enum qseecom_command_scm_resp_type {
 	QSEOS_APP_ID = 0xEE01,
@@ -86,6 +79,7 @@ enum qseecom_qceos_cmd_status {
 	QSEOS_RESULT_SUCCESS = 0,
 	QSEOS_RESULT_INCOMPLETE,
 	QSEOS_RESULT_BLOCKED_ON_LISTENER,
+	QSEOS_RESULT_CBACK_REQUEST,
 	QSEOS_RESULT_FAILURE  = 0xFFFFFFFF
 };
 
@@ -450,9 +444,9 @@ struct qseecom_continue_blocked_request_ireq {
 #define IS_OWNER_TRUSTED_OS(owner_id) \
 			(((owner_id >= 50) && (owner_id <= 63)) ? 1:0)
 
-#define TZ_SYSCALL_PARAM_TYPE_VAL              0x0     /** type of value */
-#define TZ_SYSCALL_PARAM_TYPE_BUF_RO           0x1     /** type of buffer read-only */
-#define TZ_SYSCALL_PARAM_TYPE_BUF_RW           0x2     /** type of buffer read-write */
+#define TZ_SYSCALL_PARAM_TYPE_VAL              0x0     /* type of value */
+#define TZ_SYSCALL_PARAM_TYPE_BUF_RO           0x1     /* type of buffer RO */
+#define TZ_SYSCALL_PARAM_TYPE_BUF_RW           0x2     /* type of buffer RW */
 
 #define TZ_OS_APP_START_ID \
 	TZ_SYSCALL_CREATE_SMC_ID(TZ_OWNER_QSEE_OS, TZ_SVC_APP_MGR, 0x01)

@@ -1,13 +1,6 @@
-/* Copyright (c) 2015, 2016 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/ipa.h>
@@ -68,7 +61,7 @@ enum ipa_hw_2_cpu_mhi_responses {
  * Values that represent MHI related HW event to be sent to CPU.
  * @IPA_HW_2_CPU_EVENT_MHI_CHANNEL_ERROR: Event specify the device detected an
  *	error in an element from the transfer ring associated with the channel
- * @IPA_HW_2_CPU_EVENT_MHI_CHANNEL_WAKE_UP_REQUEST: Event specify a bam
+ * @IPA_HW_2_CPU_EVENT_MHI_CHANNEL_WAKE_UP_REQUEST: Event specify a transport
  *	interrupt was asserted when MHI engine is suspended
  */
 enum ipa_hw_2_cpu_mhi_events {
@@ -187,7 +180,7 @@ struct IpaHwMhiInitCmdData_t {
  *	value is within the range 0 to IPA_HW_MAX_CHANNEL_HANDLE
  * @contexArrayIndex: Unique index for channels, between 0 and 255. The index is
  *	used as an index in channel context array structures.
- * @bamPipeId: The BAM pipe number for pipe dedicated for this channel
+ * @bamPipeId: The IPA pipe number for pipe dedicated for this channel
  * @channelDirection: The direction of the channel as defined in the channel
  *	type field (CHTYPE) in the channel context data structure.
  * @reserved: reserved.
@@ -264,9 +257,9 @@ union IpaHwMhiStopEventUpdateData_t {
  * @state: The new channel state. In case state is not as requested this is
  *	error indication for the last command
  * @channelHandle: The channel identifier
- * @additonalParams: For stop: the number of pending bam descriptors currently
- *	queued
-*/
+ * @additonalParams: For stop: the number of pending transport descriptors
+ * currently queued
+ */
 union IpaHwMhiChangeChannelStateResponseData_t {
 	struct IpaHwMhiChangeChannelStateResponseParams_t {
 		u32 state:8;
@@ -530,31 +523,34 @@ static void ipa3_uc_mhi_event_hdlr(struct IpaHwSharedMemCommonMapping_t
 
 static void ipa3_uc_mhi_event_log_info_hdlr(
 	struct IpaHwEventLogInfoData_t *uc_event_top_mmio)
-
 {
-	if ((uc_event_top_mmio->featureMask & (1 << IPA_HW_FEATURE_MHI)) == 0) {
+	struct Ipa3HwEventInfoData_t *evt_info_ptr;
+	u32 size;
+
+	if ((uc_event_top_mmio->protocolMask & (1 << IPA_HW_FEATURE_MHI))
+		== 0) {
 		IPAERR("MHI feature missing 0x%x\n",
-			uc_event_top_mmio->featureMask);
+			uc_event_top_mmio->protocolMask);
 		return;
 	}
 
-	if (uc_event_top_mmio->statsInfo.featureInfo[IPA_HW_FEATURE_MHI].
-		params.size != sizeof(struct IpaHwStatsMhiInfoData_t)) {
+	evt_info_ptr = &uc_event_top_mmio->statsInfo;
+	size = evt_info_ptr->featureInfo[IPA_HW_FEATURE_MHI].params.size;
+	if (size != sizeof(struct IpaHwStatsMhiInfoData_t)) {
 		IPAERR("mhi stats sz invalid exp=%zu is=%u\n",
 			sizeof(struct IpaHwStatsMhiInfoData_t),
-			uc_event_top_mmio->statsInfo.
-			featureInfo[IPA_HW_FEATURE_MHI].params.size);
+			size);
 		return;
 	}
 
-	ipa3_uc_mhi_ctx->mhi_uc_stats_ofst = uc_event_top_mmio->
-		statsInfo.baseAddrOffset + uc_event_top_mmio->statsInfo.
-		featureInfo[IPA_HW_FEATURE_MHI].params.offset;
+	ipa3_uc_mhi_ctx->mhi_uc_stats_ofst =
+		evt_info_ptr->baseAddrOffset +
+		evt_info_ptr->featureInfo[IPA_HW_FEATURE_MHI].params.offset;
 	IPAERR("MHI stats ofst=0x%x\n", ipa3_uc_mhi_ctx->mhi_uc_stats_ofst);
 	if (ipa3_uc_mhi_ctx->mhi_uc_stats_ofst +
 		sizeof(struct IpaHwStatsMhiInfoData_t) >=
 		ipa3_ctx->ctrl->ipa_reg_base_ofst +
-		ipahal_get_reg_n_ofst(IPA_SRAM_DIRECT_ACCESS_n, 0) +
+		ipahal_get_reg_n_ofst(IPA_SW_AREA_RAM_DIRECT_ACCESS_n, 0) +
 		ipa3_ctx->smem_sz) {
 		IPAERR("uc_mhi_stats 0x%x outside SRAM\n",
 			ipa3_uc_mhi_ctx->mhi_uc_stats_ofst);
@@ -640,14 +636,13 @@ int ipa3_uc_mhi_init_engine(struct ipa_mhi_msi_info *msi, u32 mmio_addr,
 	}
 
 	mem.size = sizeof(*init_cmd_data);
-	mem.base = dma_alloc_coherent(ipa3_ctx->pdev, mem.size, &mem.phys_base,
+	mem.base = dma_zalloc_coherent(ipa3_ctx->pdev, mem.size, &mem.phys_base,
 		GFP_KERNEL);
 	if (!mem.base) {
 		IPAERR("fail to alloc DMA buff of size %d\n", mem.size);
 		res = -ENOMEM;
 		goto disable_clks;
 	}
-	memset(mem.base, 0, mem.size);
 	init_cmd_data = (struct IpaHwMhiInitCmdData_t *)mem.base;
 	init_cmd_data->msiAddress = msi->addr_low;
 	init_cmd_data->mmioBaseAddress = mmio_addr;

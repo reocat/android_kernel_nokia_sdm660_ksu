@@ -1,13 +1,6 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2015-2016, 2018 The Linux Foundation. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -19,8 +12,7 @@
 #include <soc/qcom/scm.h>
 #include <linux/platform_device.h>
 
-/* pmu event min and max value */
-#define PMU_EVENT_MIN			0
+/* pmu event max value */
 #define PMU_EVENT_MAX			0x1F
 
 #define PMU_MUX_OFFSET			4
@@ -31,6 +23,7 @@
 #define _VAL(z)			(z##_MASK_BITS << z##_OFFSET)
 #define _VALUE(_val, z)		(_val<<(z##_OFFSET))
 #define _WRITE(x, y, z)		(((~(_VAL(z))) & y) | _VALUE(x, z))
+#define _GET_BITS(_val, z)	((_val>>(z##_OFFSET)) & z##_MASK_BITS)
 
 #define MODULE_NAME	"msm_hang_detect"
 #define MAX_SYSFS_LEN 12
@@ -38,9 +31,7 @@
 struct hang_detect {
 	phys_addr_t threshold[NR_CPUS];
 	phys_addr_t config[NR_CPUS];
-	uint32_t enabled;
 	uint32_t pmu_event_sel;
-	uint32_t threshold_val;
 	struct kobject kobj;
 };
 
@@ -108,8 +99,11 @@ static ssize_t show_threshold(struct kobject *kobj, struct attribute *attr,
 				char *buf)
 {
 	struct hang_detect *device =  to_core_hang_dev(kobj);
+	u32 threshold_val;
 
-	return snprintf(buf, MAX_SYSFS_LEN, "0x%x\n", device->threshold_val);
+	threshold_val = scm_io_read(device->threshold[0]);
+
+	return scnprintf(buf, MAX_SYSFS_LEN, "0x%x\n", threshold_val);
 }
 
 static size_t store_threshold(struct kobject *kobj, struct attribute *attr,
@@ -123,7 +117,7 @@ static size_t store_threshold(struct kobject *kobj, struct attribute *attr,
 	if (ret < 0)
 		return ret;
 
-	if (threshold_val <= 0)
+	if (threshold_val == 0)
 		return -EINVAL;
 
 	for_each_possible_cpu(cpu) {
@@ -137,7 +131,6 @@ static size_t store_threshold(struct kobject *kobj, struct attribute *attr,
 		}
 	}
 
-	hang_dev->threshold_val = threshold_val;
 	return count;
 }
 CORE_HANG_ATTR(threshold, 0644, show_threshold, store_threshold);
@@ -147,7 +140,7 @@ static ssize_t show_pmu_event_sel(struct kobject *kobj, struct attribute *attr,
 {
 	struct hang_detect *hang_device = to_core_hang_dev(kobj);
 
-	return snprintf(buf, MAX_SYSFS_LEN, "0x%x\n",
+	return scnprintf(buf, MAX_SYSFS_LEN, "0x%x\n",
 			hang_device->pmu_event_sel);
 }
 
@@ -162,7 +155,7 @@ static size_t store_pmu_event_sel(struct kobject *kobj, struct attribute *attr,
 	if (ret < 0)
 		return ret;
 
-	if (pmu_event_sel < PMU_EVENT_MIN || pmu_event_sel > PMU_EVENT_MAX)
+	if (pmu_event_sel > PMU_EVENT_MAX)
 		return -EINVAL;
 
 	for_each_possible_cpu(cpu) {
@@ -186,23 +179,25 @@ CORE_HANG_ATTR(pmu_event_sel, 0644, show_pmu_event_sel, store_pmu_event_sel);
 static ssize_t show_enable(struct kobject *kobj, struct attribute *attr,
 				char *buf)
 {
-	struct hang_detect *hang_device = to_core_hang_dev(kobj);
+	struct hang_detect *hang_dev = to_core_hang_dev(kobj);
+	u32 enabled;
 
-	return snprintf(buf, MAX_SYSFS_LEN, "%u\n", hang_device->enabled);
+	enabled = scm_io_read(hang_dev->config[0]);
+	enabled = _GET_BITS(enabled, ENABLE);
+
+	return scnprintf(buf, MAX_SYSFS_LEN, "%u\n", enabled);
 }
 
 static size_t store_enable(struct kobject *kobj, struct attribute *attr,
 				const char *buf, size_t count)
 {
 	struct hang_detect *hang_dev = to_core_hang_dev(kobj);
-	uint32_t enabled, reg_value;
+	uint32_t reg_value;
 	int cpu, ret;
+	bool enabled;
 
-	ret = kstrtouint(buf, 0, &enabled);
+	ret = kstrtobool(buf, &enabled);
 	if (ret < 0)
-		return -EINVAL;
-
-	if (!(enabled == 0 || enabled == 1))
 		return -EINVAL;
 
 	for_each_possible_cpu(cpu) {
@@ -218,7 +213,6 @@ static size_t store_enable(struct kobject *kobj, struct attribute *attr,
 		}
 	}
 
-	hang_dev->enabled = enabled;
 	return count;
 }
 CORE_HANG_ATTR(enable, 0644, show_enable, store_enable);
@@ -236,7 +230,7 @@ static struct attribute_group hang_attr_group = {
 
 static const struct of_device_id msm_hang_detect_table[] = {
 	{ .compatible = "qcom,core-hang-detect" },
-	{}
+	{},
 };
 
 static int msm_hang_detect_probe(struct platform_device *pdev)
@@ -244,10 +238,11 @@ static int msm_hang_detect_probe(struct platform_device *pdev)
 	struct device_node *cpu_node;
 	struct device_node *node = pdev->dev.of_node;
 	struct hang_detect *hang_det = NULL;
-	int cpu, ret, cpu_count = 0;
+	int cpu, ret, cpu_count = 0, cluster_cpu_count = 0;
 	const char *name;
 	u32 treg[NR_CPUS] = {0}, creg[NR_CPUS] = {0};
 	u32 num_reg = 0;
+	u32 fw_cluster_id;
 
 	if (!pdev->dev.of_node || !enable)
 		return -ENODEV;
@@ -255,36 +250,55 @@ static int msm_hang_detect_probe(struct platform_device *pdev)
 	hang_det = devm_kzalloc(&pdev->dev,
 			sizeof(struct hang_detect), GFP_KERNEL);
 
-	if (!hang_det) {
-		pr_err("Can't allocate hang_detect memory\n");
+	if (!hang_det)
 		return -ENOMEM;
-	}
 
 	name = of_get_property(node, "label", NULL);
 	if (!name) {
-		pr_err("Can't get label property\n");
+		pr_err("%s: Can't get label property\n", __func__);
 		return -EINVAL;
 	}
 
 	num_reg = of_property_count_u32_elems(node,
 			"qcom,threshold-arr");
 	if (num_reg < 0) {
-		pr_err("Can't get threshold-arr property\n");
+		pr_err("%s: Can't get qcom,threshold-arr property\n", __func__);
 		return -EINVAL;
 	}
 
 	ret = of_property_read_u32_array(node, "qcom,threshold-arr",
 				treg, num_reg);
 	if (ret) {
-		pr_err("Can't get threshold-arr property\n");
+		pr_err("%s: Can't get qcom,threshold-arr property\n", __func__);
 		return -EINVAL;
 	}
 
 	ret = of_property_read_u32_array(node, "qcom,config-arr",
 				creg, num_reg);
 	if (ret) {
-		pr_err("Can't get config-arr property\n");
+		pr_err("%s: Can't get qcom,config-arr property\n", __func__);
 		return -EINVAL;
+	}
+
+	ret = of_property_read_u32(node, "cluster-id", &fw_cluster_id);
+	if (ret) {
+		pr_err("%s: Missing cluster-id.\n", __func__);
+	} else {
+
+		for_each_possible_cpu(cpu) {
+			if (topology_physical_package_id(cpu)
+					== fw_cluster_id) {
+				cluster_cpu_count++;
+				break;
+			}
+		}
+
+		if (cluster_cpu_count == 0) {
+			pr_err("%s: Unable to find any CPU for cluster:%d\n",
+					__func__, fw_cluster_id);
+			return -EINVAL;
+		}
+
 	}
 
 	for_each_possible_cpu(cpu) {
@@ -299,7 +313,7 @@ static int msm_hang_detect_probe(struct platform_device *pdev)
 	}
 
 	if (cpu_count == 0) {
-		pr_err("%s:core-hang-arr prop is missing %d\n" , __func__, ret);
+		pr_err("%s: Unable to find any CPU\n", __func__);
 		return -EINVAL;
 	}
 
@@ -307,13 +321,13 @@ static int msm_hang_detect_probe(struct platform_device *pdev)
 			&cpu_subsys.dev_root->kobj, "%s_%s",
 			"hang_detect", name);
 	if (ret) {
-		pr_err("%s:Error in creation kobject_add\n", __func__);
+		pr_err("%s: Error in creation kobject_add\n", __func__);
 		goto out_put_kobj;
 	}
 
 	ret = sysfs_create_group(&hang_det->kobj, &hang_attr_group);
 	if (ret) {
-		pr_err("%s:Error in creation sysfs_create_group\n", __func__);
+		pr_err("%s: Error in creation sysfs_create_group\n", __func__);
 		goto out_del_kobj;
 	}
 

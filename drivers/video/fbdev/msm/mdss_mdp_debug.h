@@ -1,14 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2014-2016, 2018, 2020, The Linux Foundation. All rights reserved.
  *
  */
 
@@ -31,8 +23,8 @@
 
 static inline const char *mdss_mdp_pipetype2str(u32 ptype)
 {
-	static const char *strings[] = {
-#define PIPE_TYPE(t) [MDSS_MDP_PIPE_TYPE_ ## t] = __stringify(t)
+	static const char * const strings[] = {
+#define PIPE_TYPE(t)[MDSS_MDP_PIPE_TYPE_ ## t] = __stringify(t)
 		PIPE_TYPE(VIG),
 		PIPE_TYPE(RGB),
 		PIPE_TYPE(DMA),
@@ -41,15 +33,15 @@ static inline const char *mdss_mdp_pipetype2str(u32 ptype)
 	};
 
 	if (ptype >= ARRAY_SIZE(strings) || !strings[ptype])
-		return "UNKOWN";
+		return "UNKNOWN";
 
 	return strings[ptype];
 }
 
 static inline const char *mdss_mdp_format2str(u32 format)
 {
-	static const char *strings[] = {
-#define FORMAT_NAME(f) [MDP_ ## f] = __stringify(f)
+	static const char * const strings[] = {
+#define FORMAT_NAME(f)[MDP_ ## f] = __stringify(f)
 		FORMAT_NAME(RGB_565),
 		FORMAT_NAME(BGR_565),
 		FORMAT_NAME(RGB_888),
@@ -76,7 +68,7 @@ static inline const char *mdss_mdp_format2str(u32 format)
 	};
 
 	if (format >= ARRAY_SIZE(strings) || !strings[format])
-		return "UNKOWN";
+		return "UNKNOWN";
 
 	return strings[format];
 }

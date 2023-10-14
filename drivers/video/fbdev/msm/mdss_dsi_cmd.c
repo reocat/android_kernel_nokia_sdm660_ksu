@@ -1,15 +1,5 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2012-2016, 2018, 2020, The Linux Foundation. All rights reserved. */
 
 #include <linux/module.h>
 #include <linux/interrupt.h>
@@ -124,10 +114,6 @@ static int mdss_dsi_generic_lwrite(struct dsi_buf *dp, struct dsi_cmd_desc *cm)
 	*hp |= DSI_HDR_VC(dchdr->vc);
 	*hp |= DSI_HDR_LONG_PKT;
 	*hp |= DSI_HDR_DTYPE(DTYPE_GEN_LWRITE);
-#if defined(CONFIG_PXLW_IRIS3)
-	if (dchdr->ack)
-		*hp |= DSI_HDR_BTA;
-#endif	
 	if (dchdr->last)
 		*hp |= DSI_HDR_LAST;
 
@@ -147,7 +133,7 @@ static int mdss_dsi_generic_swrite(struct dsi_buf *dp, struct dsi_cmd_desc *cm)
 	int len;
 
 	dchdr = &cm->dchdr;
-	if (dchdr->dlen && cm->payload == 0) {
+	if (dchdr->dlen && !cm->payload) {
 		pr_err("%s: NO payload error\n", __func__);
 		return 0;
 	}
@@ -156,10 +142,6 @@ static int mdss_dsi_generic_swrite(struct dsi_buf *dp, struct dsi_cmd_desc *cm)
 	hp = dp->hdr;
 	*hp = 0;
 	*hp |= DSI_HDR_VC(dchdr->vc);
-#if defined(CONFIG_PXLW_IRIS3)
-	if (dchdr->ack)
-		*hp |= DSI_HDR_BTA;
-#endif
 	if (dchdr->last)
 		*hp |= DSI_HDR_LAST;
 
@@ -194,7 +176,7 @@ static int mdss_dsi_generic_read(struct dsi_buf *dp, struct dsi_cmd_desc *cm)
 	int len;
 
 	dchdr = &cm->dchdr;
-	if (dchdr->dlen && cm->payload == 0) {
+	if (dchdr->dlen && !cm->payload) {
 		pr_err("%s: NO payload error\n", __func__);
 		return 0;
 	}
@@ -265,11 +247,6 @@ static int mdss_dsi_dcs_lwrite(struct dsi_buf *dp, struct dsi_cmd_desc *cm)
 	*hp |= DSI_HDR_VC(dchdr->vc);
 	*hp |= DSI_HDR_LONG_PKT;
 	*hp |= DSI_HDR_DTYPE(DTYPE_DCS_LWRITE);
-#if defined(CONFIG_PXLW_IRIS3)
-	if (dchdr->ack)
-		*hp |= DSI_HDR_BTA;
-#endif
-	
 	if (dchdr->last)
 		*hp |= DSI_HDR_LAST;
 
@@ -289,7 +266,7 @@ static int mdss_dsi_dcs_swrite(struct dsi_buf *dp, struct dsi_cmd_desc *cm)
 	int len;
 
 	dchdr = &cm->dchdr;
-	if (cm->payload == 0) {
+	if (!cm->payload) {
 		pr_err("%s: NO payload error\n", __func__);
 		return -EINVAL;
 	}
@@ -322,7 +299,7 @@ static int mdss_dsi_dcs_swrite1(struct dsi_buf *dp, struct dsi_cmd_desc *cm)
 	u32 *hp;
 
 	dchdr = &cm->dchdr;
-	if (dchdr->dlen < 2 || cm->payload == 0) {
+	if (dchdr->dlen < 2 || (!cm->payload)) {
 		pr_err("%s: NO payload error\n", __func__);
 		return -EINVAL;
 	}
@@ -353,7 +330,7 @@ static int mdss_dsi_dcs_read(struct dsi_buf *dp, struct dsi_cmd_desc *cm)
 	u32 *hp;
 
 	dchdr = &cm->dchdr;
-	if (cm->payload == 0) {
+	if (!cm->payload) {
 		pr_err("%s: NO payload error\n", __func__);
 		return -EINVAL;
 	}
@@ -496,7 +473,7 @@ static int mdss_dsi_set_max_pktsize(struct dsi_buf *dp, struct dsi_cmd_desc *cm)
 	u32 *hp;
 
 	dchdr = &cm->dchdr;
-	if (cm->payload == 0) {
+	if (!cm->payload) {
 		pr_err("%s: NO payload error\n", __func__);
 		return 0;
 	}
@@ -506,10 +483,6 @@ static int mdss_dsi_set_max_pktsize(struct dsi_buf *dp, struct dsi_cmd_desc *cm)
 	*hp = 0;
 	*hp |= DSI_HDR_VC(dchdr->vc);
 	*hp |= DSI_HDR_DTYPE(DTYPE_MAX_PKTSIZE);
-#if defined(CONFIG_PXLW_IRIS3)
-	if (dchdr->ack)		/* ask ACK trigger msg from peripeheral */
-		*hp |= DSI_HDR_BTA;
-#endif
 	if (dchdr->last)
 		*hp |= DSI_HDR_LAST;
 
@@ -527,7 +500,7 @@ static int mdss_dsi_compression_mode(struct dsi_buf *dp,
 	u32 *hp;
 
 	dchdr = &cm->dchdr;
-	if (cm->payload == 0) {
+	if (!cm->payload) {
 		pr_err("%s: NO payload error\n", __func__);
 		return 0;
 	}
@@ -560,11 +533,6 @@ static int mdss_dsi_null_pkt(struct dsi_buf *dp, struct dsi_cmd_desc *cm)
 	*hp |= DSI_HDR_LONG_PKT;
 	*hp |= DSI_HDR_VC(dchdr->vc);
 	*hp |= DSI_HDR_DTYPE(DTYPE_NULL_PKT);
-#if defined(CONFIG_PXLW_IRIS3)
-	if (dchdr->ack)
-		*hp |= DSI_HDR_BTA;
-#endif
-	
 	if (dchdr->last)
 		*hp |= DSI_HDR_LAST;
 
@@ -757,7 +725,8 @@ struct dcs_cmd_req *mdss_dsi_cmdlist_get(struct mdss_dsi_ctrl_pdata *ctrl,
 	if (clist->get != clist->put) {
 		req = &clist->list[clist->get];
 		/*dont let commit thread steal ESD thread's
-		command*/
+		 * command
+		 */
 		if (from_mdp && (req->flags & CMD_REQ_COMMIT)) {
 			mutex_unlock(&ctrl->cmdlist_mutex);
 			return NULL;
@@ -777,7 +746,7 @@ int mdss_dsi_cmdlist_put(struct mdss_dsi_ctrl_pdata *ctrl,
 {
 	struct dcs_cmd_req *req;
 	struct dcs_cmd_list *clist;
-	int ret = -EINVAL;	//SW4-JasonSH-Display-EnhanceErrorHandling-00*_20170518
+	int ret = 0;
 
 	mutex_lock(&ctrl->cmd_mutex);
 	mutex_lock(&ctrl->cmdlist_mutex);

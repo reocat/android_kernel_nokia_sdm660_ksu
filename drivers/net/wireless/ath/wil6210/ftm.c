@@ -1,18 +1,5 @@
-/*
- * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
+// SPDX-License-Identifier: ISC
+/* Copyright (c) 2016-2019, The Linux Foundation. All rights reserved. */
 
 #include <linux/etherdevice.h>
 #include <net/netlink.h>
@@ -44,38 +31,41 @@
 #define WIL_TOF_FTM_MAX_LCI_LENGTH		(240)
 #define WIL_TOF_FTM_MAX_LCR_LENGTH		(240)
 
-static const struct
-nla_policy wil_nl80211_loc_policy[QCA_WLAN_VENDOR_ATTR_LOC_MAX + 1] = {
-	[QCA_WLAN_VENDOR_ATTR_FTM_SESSION_COOKIE] = { .type = NLA_U64 },
-	[QCA_WLAN_VENDOR_ATTR_LOC_CAPA] = { .type = NLA_NESTED },
-	[QCA_WLAN_VENDOR_ATTR_FTM_MEAS_PEERS] = { .type = NLA_NESTED },
-	[QCA_WLAN_VENDOR_ATTR_FTM_MEAS_PEER_RESULTS] = { .type = NLA_NESTED },
-	[QCA_WLAN_VENDOR_ATTR_FTM_RESPONDER_ENABLE] = { .type = NLA_FLAG },
-	[QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS] = { .type = NLA_U32 },
-	[QCA_WLAN_VENDOR_ATTR_FTM_INITIAL_TOKEN] = { .type = NLA_U8 },
-	[QCA_WLAN_VENDOR_ATTR_AOA_TYPE] = { .type = NLA_U32 },
-	[QCA_WLAN_VENDOR_ATTR_LOC_ANTENNA_ARRAY_MASK] = { .type = NLA_U32 },
-	[QCA_WLAN_VENDOR_ATTR_FREQ] = { .type = NLA_U32 },
+enum qca_attr_loc_reuse {
+	QCA_ATTR_MAC_ADDR = 6,
+	QCA_ATTR_PAD = 13,
 };
 
 static const struct
-nla_policy wil_nl80211_ftm_peer_policy[
-	QCA_WLAN_VENDOR_ATTR_FTM_PEER_MAX + 1] = {
-	[QCA_WLAN_VENDOR_ATTR_FTM_PEER_MAC_ADDR] = { .len = ETH_ALEN },
-	[QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAGS] = { .type = NLA_U32 },
-	[QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_PARAMS] = { .type = NLA_NESTED },
-	[QCA_WLAN_VENDOR_ATTR_FTM_PEER_SECURE_TOKEN_ID] = { .type = NLA_U8 },
-	[QCA_WLAN_VENDOR_ATTR_FTM_PEER_AOA_BURST_PERIOD] = { .type = NLA_U16 },
-	[QCA_WLAN_VENDOR_ATTR_FTM_PEER_FREQ] = { .type = NLA_U32 },
+nla_policy wil_nl80211_loc_policy[QCA_ATTR_LOC_MAX + 1] = {
+	[QCA_ATTR_FTM_SESSION_COOKIE] = { .type = NLA_U64 },
+	[QCA_ATTR_LOC_CAPA] = { .type = NLA_NESTED },
+	[QCA_ATTR_FTM_MEAS_PEERS] = { .type = NLA_NESTED },
+	[QCA_ATTR_FTM_MEAS_PEER_RESULTS] = { .type = NLA_NESTED },
+	[QCA_ATTR_FTM_RESPONDER_ENABLE] = { .type = NLA_FLAG },
+	[QCA_ATTR_LOC_SESSION_STATUS] = { .type = NLA_U32 },
+	[QCA_ATTR_FTM_INITIAL_TOKEN] = { .type = NLA_U8 },
+	[QCA_ATTR_AOA_TYPE] = { .type = NLA_U32 },
+	[QCA_ATTR_LOC_ANTENNA_ARRAY_MASK] = { .type = NLA_U32 },
+	[QCA_ATTR_FREQ] = { .type = NLA_U32 },
 };
 
 static const struct
-nla_policy wil_nl80211_ftm_meas_param_policy[
-	QCA_WLAN_VENDOR_ATTR_FTM_PARAM_MAX + 1] = {
-	[QCA_WLAN_VENDOR_ATTR_FTM_PARAM_MEAS_PER_BURST] = { .type = NLA_U8 },
-	[QCA_WLAN_VENDOR_ATTR_FTM_PARAM_NUM_BURSTS_EXP] = { .type = NLA_U8 },
-	[QCA_WLAN_VENDOR_ATTR_FTM_PARAM_BURST_DURATION] = { .type = NLA_U8 },
-	[QCA_WLAN_VENDOR_ATTR_FTM_PARAM_BURST_PERIOD] = { .type = NLA_U16 },
+nla_policy wil_nl80211_ftm_peer_policy[QCA_ATTR_FTM_PEER_MAX + 1] = {
+	[QCA_ATTR_FTM_PEER_MAC_ADDR] = { .len = ETH_ALEN },
+	[QCA_ATTR_FTM_PEER_MEAS_FLAGS] = { .type = NLA_U32 },
+	[QCA_ATTR_FTM_PEER_MEAS_PARAMS] = { .type = NLA_NESTED },
+	[QCA_ATTR_FTM_PEER_SEC_TOK_ID] = { .type = NLA_U8 },
+	[QCA_ATTR_FTM_PEER_AOA_BURST_PERIOD] = { .type = NLA_U16 },
+	[QCA_ATTR_FTM_PEER_FREQ] = { .type = NLA_U32 },
+};
+
+static const struct
+nla_policy wil_nl80211_ftm_meas_param_policy[QCA_ATTR_FTM_PARAM_MAX + 1] = {
+	[QCA_ATTR_FTM_PARAM_MEAS_PER_BURST] = { .type = NLA_U8 },
+	[QCA_ATTR_FTM_PARAM_NUM_BURSTS_EXP] = { .type = NLA_U8 },
+	[QCA_ATTR_FTM_PARAM_BURST_DURATION] = { .type = NLA_U8 },
+	[QCA_ATTR_FTM_PARAM_BURST_PERIOD] = { .type = NLA_U16 },
 };
 
 static u8 wil_ftm_get_channel(struct wil6210_priv *wil,
@@ -113,7 +103,7 @@ static int wil_ftm_parse_meas_params(struct wil6210_priv *wil,
 				     struct nlattr *attr,
 				     struct wil_ftm_meas_params *params)
 {
-	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_FTM_PARAM_MAX + 1];
+	struct nlattr *tb[QCA_ATTR_FTM_PARAM_MAX + 1];
 	int rc;
 
 	if (!attr) {
@@ -122,24 +112,24 @@ static int wil_ftm_parse_meas_params(struct wil6210_priv *wil,
 		params->burst_period = 5; /* 500 milliseconds */
 		return 0;
 	}
-	rc = nla_parse_nested(tb, QCA_WLAN_VENDOR_ATTR_FTM_PARAM_MAX,
-			      attr, wil_nl80211_ftm_meas_param_policy);
+	rc = nla_parse_nested(tb, QCA_ATTR_FTM_PARAM_MAX,
+			      attr, wil_nl80211_ftm_meas_param_policy, NULL);
 	if (rc) {
 		wil_err(wil, "invalid measurement params\n");
 		return rc;
 	}
-	if (tb[QCA_WLAN_VENDOR_ATTR_FTM_PARAM_MEAS_PER_BURST])
-		params->meas_per_burst = nla_get_u8(
-			tb[QCA_WLAN_VENDOR_ATTR_FTM_PARAM_MEAS_PER_BURST]);
-	if (tb[QCA_WLAN_VENDOR_ATTR_FTM_PARAM_NUM_BURSTS_EXP])
-		params->num_of_bursts_exp = nla_get_u8(
-			tb[QCA_WLAN_VENDOR_ATTR_FTM_PARAM_NUM_BURSTS_EXP]);
-	if (tb[QCA_WLAN_VENDOR_ATTR_FTM_PARAM_BURST_DURATION])
-		params->burst_duration = nla_get_u8(
-			tb[QCA_WLAN_VENDOR_ATTR_FTM_PARAM_BURST_DURATION]);
-	if (tb[QCA_WLAN_VENDOR_ATTR_FTM_PARAM_BURST_PERIOD])
-		params->burst_period = nla_get_u16(
-			tb[QCA_WLAN_VENDOR_ATTR_FTM_PARAM_BURST_PERIOD]);
+	if (tb[QCA_ATTR_FTM_PARAM_MEAS_PER_BURST])
+		params->meas_per_burst =
+			nla_get_u8(tb[QCA_ATTR_FTM_PARAM_MEAS_PER_BURST]);
+	if (tb[QCA_ATTR_FTM_PARAM_NUM_BURSTS_EXP])
+		params->num_of_bursts_exp =
+			nla_get_u8(tb[QCA_ATTR_FTM_PARAM_NUM_BURSTS_EXP]);
+	if (tb[QCA_ATTR_FTM_PARAM_BURST_DURATION])
+		params->burst_duration =
+			nla_get_u8(tb[QCA_ATTR_FTM_PARAM_BURST_DURATION]);
+	if (tb[QCA_ATTR_FTM_PARAM_BURST_PERIOD])
+		params->burst_period =
+			nla_get_u16(tb[QCA_ATTR_FTM_PARAM_BURST_PERIOD]);
 	return 0;
 }
 
@@ -162,17 +152,16 @@ static int wil_ftm_append_meas_params(struct wil6210_priv *wil,
 {
 	struct nlattr *nl_p;
 
-	nl_p = nla_nest_start(
-		msg, QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_MEAS_PARAMS);
+	nl_p = nla_nest_start(msg, QCA_ATTR_FTM_PEER_RES_MEAS_PARAMS);
 	if (!nl_p)
 		goto out_put_failure;
-	if (nla_put_u8(msg, QCA_WLAN_VENDOR_ATTR_FTM_PARAM_MEAS_PER_BURST,
+	if (nla_put_u8(msg, QCA_ATTR_FTM_PARAM_MEAS_PER_BURST,
 		       params->meas_per_burst) ||
-	    nla_put_u8(msg, QCA_WLAN_VENDOR_ATTR_FTM_PARAM_NUM_BURSTS_EXP,
+	    nla_put_u8(msg, QCA_ATTR_FTM_PARAM_NUM_BURSTS_EXP,
 		       params->num_of_bursts_exp) ||
-	    nla_put_u8(msg, QCA_WLAN_VENDOR_ATTR_FTM_PARAM_BURST_DURATION,
+	    nla_put_u8(msg, QCA_ATTR_FTM_PARAM_BURST_DURATION,
 		       params->burst_duration) ||
-	    nla_put_u16(msg, QCA_WLAN_VENDOR_ATTR_FTM_PARAM_BURST_PERIOD,
+	    nla_put_u16(msg, QCA_ATTR_FTM_PARAM_BURST_PERIOD,
 			params->burst_period))
 		goto out_put_failure;
 	nla_nest_end(msg, nl_p);
@@ -188,36 +177,40 @@ static int wil_ftm_append_peer_meas_res(struct wil6210_priv *wil,
 	struct nlattr *nl_mres, *nl_f;
 	int i;
 
-	if (nla_put(msg, QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_MAC_ADDR,
+	if (nla_put(msg, QCA_ATTR_FTM_PEER_RES_MAC_ADDR,
 		    ETH_ALEN, res->mac_addr) ||
-	    nla_put_u32(msg, QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_FLAGS,
+	    nla_put_u32(msg, QCA_ATTR_FTM_PEER_RES_FLAGS,
 			res->flags) ||
-	    nla_put_u8(msg, QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS,
+	    nla_put_u8(msg, QCA_ATTR_FTM_PEER_RES_STATUS,
 		       res->status))
 		goto out_put_failure;
-	if (res->status == QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS_FAILED &&
+	if (res->status == QCA_ATTR_FTM_PEER_RES_STATUS_FAILED &&
 	    nla_put_u8(msg,
-		       QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_VALUE_SECONDS,
+		       QCA_ATTR_FTM_PEER_RES_VALUE_SECONDS,
 		       res->value_seconds))
 		goto out_put_failure;
 	if (res->has_params &&
 	    wil_ftm_append_meas_params(wil, msg, &res->params))
 		goto out_put_failure;
-	nl_mres = nla_nest_start(msg, QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_MEAS);
+	nl_mres = nla_nest_start(msg, QCA_ATTR_FTM_PEER_RES_MEAS);
 	if (!nl_mres)
 		goto out_put_failure;
 	for (i = 0; i < res->n_meas; i++) {
 		nl_f = nla_nest_start(msg, i);
 		if (!nl_f)
 			goto out_put_failure;
-		if (nla_put_u64(msg, QCA_WLAN_VENDOR_ATTR_FTM_MEAS_T1,
-				res->meas[i].t1) ||
-		    nla_put_u64(msg, QCA_WLAN_VENDOR_ATTR_FTM_MEAS_T2,
-				res->meas[i].t2) ||
-		    nla_put_u64(msg, QCA_WLAN_VENDOR_ATTR_FTM_MEAS_T3,
-				res->meas[i].t3) ||
-		    nla_put_u64(msg, QCA_WLAN_VENDOR_ATTR_FTM_MEAS_T4,
-				res->meas[i].t4))
+		if (nla_put_u64_64bit(msg, QCA_ATTR_FTM_MEAS_T1,
+				      res->meas[i].t1,
+				      QCA_ATTR_FTM_MEAS_PAD) ||
+		    nla_put_u64_64bit(msg, QCA_ATTR_FTM_MEAS_T2,
+				      res->meas[i].t2,
+				      QCA_ATTR_FTM_MEAS_PAD) ||
+		    nla_put_u64_64bit(msg, QCA_ATTR_FTM_MEAS_T3,
+				      res->meas[i].t3,
+				      QCA_ATTR_FTM_MEAS_PAD) ||
+		    nla_put_u64_64bit(msg, QCA_ATTR_FTM_MEAS_T4,
+				      res->meas[i].t4,
+				      QCA_ATTR_FTM_MEAS_PAD))
 			goto out_put_failure;
 		nla_nest_end(msg, nl_f);
 	}
@@ -228,9 +221,10 @@ out_put_failure:
 	return -ENOBUFS;
 }
 
-static void wil_ftm_send_meas_result(struct wil6210_priv *wil,
+static void wil_ftm_send_meas_result(struct wil6210_vif *vif,
 				     struct wil_ftm_peer_meas_res *res)
 {
+	struct wil6210_priv *wil = vif_to_wil(vif);
 	struct sk_buff *vendor_event = NULL;
 	struct nlattr *nl_res;
 	int rc = 0;
@@ -238,27 +232,26 @@ static void wil_ftm_send_meas_result(struct wil6210_priv *wil,
 	wil_dbg_misc(wil, "sending %d results for peer %pM\n",
 		     res->n_meas, res->mac_addr);
 
-	vendor_event = cfg80211_vendor_event_alloc(
-				wil_to_wiphy(wil),
-				wil->wdev,
-				WIL_FTM_MEAS_RESULT_MAX_LENGTH,
-				QCA_NL80211_VENDOR_EVENT_FTM_MEAS_RESULT_INDEX,
-				GFP_KERNEL);
+	vendor_event =
+		cfg80211_vendor_event_alloc(wil_to_wiphy(wil),
+					    vif_to_wdev(vif),
+					    WIL_FTM_MEAS_RESULT_MAX_LENGTH,
+					    QCA_EVENT_FTM_MEAS_RESULT_INDEX,
+					    GFP_KERNEL);
 	if (!vendor_event) {
 		wil_err(wil, "fail to allocate measurement result\n");
 		rc = -ENOMEM;
 		goto out;
 	}
 
-	if (nla_put_u64(
-		vendor_event, QCA_WLAN_VENDOR_ATTR_FTM_SESSION_COOKIE,
-		wil->ftm.session_cookie)) {
+	if (nla_put_u64_64bit(vendor_event, QCA_ATTR_FTM_SESSION_COOKIE,
+			      vif->ftm.session_cookie, QCA_ATTR_PAD)) {
 		rc = -ENOBUFS;
 		goto out;
 	}
 
 	nl_res = nla_nest_start(vendor_event,
-				QCA_WLAN_VENDOR_ATTR_FTM_MEAS_PEER_RESULTS);
+				QCA_ATTR_FTM_MEAS_PEER_RESULTS);
 	if (!nl_res) {
 		rc = -ENOBUFS;
 		goto out;
@@ -278,44 +271,46 @@ out:
 		wil_err(wil, "send peer result failed, err %d\n", rc);
 }
 
-static void wil_ftm_send_peer_res(struct wil6210_priv *wil)
+static void wil_ftm_send_peer_res(struct wil6210_vif *vif)
 {
-	if (!wil->ftm.has_ftm_res || !wil->ftm.ftm_res)
+	if (!vif->ftm.has_ftm_res || !vif->ftm.ftm_res)
 		return;
 
-	wil_ftm_send_meas_result(wil, wil->ftm.ftm_res);
-	wil->ftm.has_ftm_res = 0;
-	wil->ftm.ftm_res->n_meas = 0;
+	wil_ftm_send_meas_result(vif, vif->ftm.ftm_res);
+	vif->ftm.has_ftm_res = 0;
+	vif->ftm.ftm_res->n_meas = 0;
 }
 
 static void wil_aoa_measurement_timeout(struct work_struct *work)
 {
 	struct wil_ftm_priv *ftm = container_of(work, struct wil_ftm_priv,
 						aoa_timeout_work);
-	struct wil6210_priv *wil = container_of(ftm, struct wil6210_priv, ftm);
+	struct wil6210_vif *vif = container_of(ftm, struct wil6210_vif, ftm);
+	struct wil6210_priv *wil = vif_to_wil(vif);
 	struct wil_aoa_meas_result res;
 
 	wil_dbg_misc(wil, "AOA measurement timeout\n");
 
 	memset(&res, 0, sizeof(res));
-	ether_addr_copy(res.mac_addr, wil->ftm.aoa_peer_mac_addr);
-	res.type = wil->ftm.aoa_type;
-	res.status = QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_ABORTED;
-	wil_aoa_cfg80211_meas_result(wil, &res);
+	ether_addr_copy(res.mac_addr, vif->ftm.aoa_peer_mac_addr);
+	res.type = vif->ftm.aoa_type;
+	res.status = QCA_ATTR_LOC_SESSION_ST_ABORT;
+	wil_aoa_cfg80211_meas_result(vif, &res);
 }
 
 static int
-wil_ftm_cfg80211_start_session(struct wil6210_priv *wil,
+wil_ftm_cfg80211_start_session(struct wil6210_vif *vif,
 			       struct wil_ftm_session_request *request)
 {
+	struct wil6210_priv *wil = vif_to_wil(vif);
 	int rc = 0;
 	bool has_lci = false, has_lcr = false;
 	u8 max_meas = 0, channel, *ptr;
 	u32 i, cmd_len;
 	struct wmi_tof_session_start_cmd *cmd;
 
-	mutex_lock(&wil->ftm.lock);
-	if (wil->ftm.session_started || wil->ftm.aoa_started) {
+	mutex_lock(&vif->ftm.lock);
+	if (vif->ftm.session_started || vif->ftm.aoa_started) {
 		wil_err(wil, "FTM or AOA session already running\n");
 		rc = -EAGAIN;
 		goto out;
@@ -323,33 +318,33 @@ wil_ftm_cfg80211_start_session(struct wil6210_priv *wil,
 
 	for (i = 0; i < request->n_peers; i++) {
 		if (request->peers[i].flags &
-		    QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAG_LCI)
+		    QCA_ATTR_FTM_PEER_MEAS_FLAG_LCI)
 			has_lci = true;
 		if (request->peers[i].flags &
-		    QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAG_LCR)
+		    QCA_ATTR_FTM_PEER_MEAS_FLAG_LCR)
 			has_lcr = true;
 		max_meas = max(max_meas,
 			       request->peers[i].params.meas_per_burst);
 	}
 
-	wil->ftm.ftm_res = kzalloc(sizeof(*wil->ftm.ftm_res) +
+	vif->ftm.ftm_res = kzalloc(sizeof(*vif->ftm.ftm_res) +
 		      max_meas * sizeof(struct wil_ftm_peer_meas) +
 		      (has_lci ? WIL_TOF_FTM_MAX_LCI_LENGTH : 0) +
 		      (has_lcr ? WIL_TOF_FTM_MAX_LCR_LENGTH : 0), GFP_KERNEL);
-	if (!wil->ftm.ftm_res) {
+	if (!vif->ftm.ftm_res) {
 		rc = -ENOMEM;
 		goto out;
 	}
-	ptr = (u8 *)wil->ftm.ftm_res;
+	ptr = (u8 *)vif->ftm.ftm_res;
 	ptr += sizeof(struct wil_ftm_peer_meas_res) +
 	       max_meas * sizeof(struct wil_ftm_peer_meas);
 	if (has_lci) {
-		wil->ftm.ftm_res->lci = ptr;
+		vif->ftm.ftm_res->lci = ptr;
 		ptr += WIL_TOF_FTM_MAX_LCI_LENGTH;
 	}
 	if (has_lcr)
-		wil->ftm.ftm_res->lcr = ptr;
-	wil->ftm.max_ftm_meas = max_meas;
+		vif->ftm.ftm_res->lcr = ptr;
+	vif->ftm.max_ftm_meas = max_meas;
 
 	cmd_len = sizeof(struct wmi_tof_session_start_cmd) +
 		  request->n_peers * sizeof(struct wmi_ftm_dest_info);
@@ -374,7 +369,7 @@ wil_ftm_cfg80211_start_session(struct wil6210_priv *wil,
 		}
 		cmd->ftm_dest_info[i].channel = channel - 1;
 		if (request->peers[i].flags &
-		    QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAG_SECURE) {
+		    QCA_ATTR_FTM_PEER_MEAS_FLAG_SECURE) {
 			cmd->ftm_dest_info[i].flags |=
 				WMI_TOF_SESSION_START_FLAG_SECURED;
 			cmd->ftm_dest_info[i].initial_token =
@@ -384,15 +379,15 @@ wil_ftm_cfg80211_start_session(struct wil6210_priv *wil,
 				WIL_TOF_FTM_DEFAULT_INITIAL_TOKEN;
 		}
 		if (request->peers[i].flags &
-		    QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAG_ASAP)
+		    QCA_ATTR_FTM_PEER_MEAS_FLAG_ASAP)
 			cmd->ftm_dest_info[i].flags |=
 				WMI_TOF_SESSION_START_FLAG_ASAP;
 		if (request->peers[i].flags &
-		    QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAG_LCI)
+		    QCA_ATTR_FTM_PEER_MEAS_FLAG_LCI)
 			cmd->ftm_dest_info[i].flags |=
 				WMI_TOF_SESSION_START_FLAG_LCI_REQ;
 		if (request->peers[i].flags &
-		    QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAG_LCR)
+		    QCA_ATTR_FTM_PEER_MEAS_FLAG_LCR)
 			cmd->ftm_dest_info[i].flags |=
 				WMI_TOF_SESSION_START_FLAG_LCR_REQ;
 		cmd->ftm_dest_info[i].num_of_ftm_per_burst =
@@ -407,32 +402,34 @@ wil_ftm_cfg80211_start_session(struct wil6210_priv *wil,
 			request->peers[i].aoa_burst_period;
 	}
 
-	rc = wmi_send(wil, WMI_TOF_SESSION_START_CMDID, cmd, cmd_len);
+	rc = wmi_send(wil, WMI_TOF_SESSION_START_CMDID, vif->mid,
+		      cmd, cmd_len);
 
 	if (!rc) {
-		wil->ftm.session_cookie = request->session_cookie;
-		wil->ftm.session_started = 1;
+		vif->ftm.session_cookie = request->session_cookie;
+		vif->ftm.session_started = 1;
 	}
 out_cmd:
 	kfree(cmd);
 out_ftm_res:
 	if (rc) {
-		kfree(wil->ftm.ftm_res);
-		wil->ftm.ftm_res = NULL;
+		kfree(vif->ftm.ftm_res);
+		vif->ftm.ftm_res = NULL;
 	}
 out:
-	mutex_unlock(&wil->ftm.lock);
+	mutex_unlock(&vif->ftm.lock);
 	return rc;
 }
 
 static void
-wil_ftm_cfg80211_session_ended(struct wil6210_priv *wil, u32 status)
+wil_ftm_cfg80211_session_ended(struct wil6210_vif *vif, u32 status)
 {
+	struct wil6210_priv *wil = vif_to_wil(vif);
 	struct sk_buff *vendor_event = NULL;
 
-	mutex_lock(&wil->ftm.lock);
+	mutex_lock(&vif->ftm.lock);
 
-	if (!wil->ftm.session_started) {
+	if (!vif->ftm.session_started) {
 		wil_dbg_misc(wil, "FTM session not started, ignoring event\n");
 		goto out;
 	}
@@ -441,26 +438,27 @@ wil_ftm_cfg80211_session_ended(struct wil6210_priv *wil, u32 status)
 	wil_dbg_misc(wil, "finishing FTM session\n");
 
 	/* send left-over results if any */
-	wil_ftm_send_peer_res(wil);
+	wil_ftm_send_peer_res(vif);
 
-	wil->ftm.session_started = 0;
-	kfree(wil->ftm.ftm_res);
-	wil->ftm.ftm_res = NULL;
+	vif->ftm.session_started = 0;
+	kfree(vif->ftm.ftm_res);
+	vif->ftm.ftm_res = NULL;
 
-	vendor_event = cfg80211_vendor_event_alloc(
-		wil_to_wiphy(wil),
-		wil->wdev,
-		WIL_FTM_NL_EXTRA_ALLOC,
-		QCA_NL80211_VENDOR_EVENT_FTM_SESSION_DONE_INDEX,
-		GFP_KERNEL);
+	vendor_event =
+		cfg80211_vendor_event_alloc(wil_to_wiphy(wil),
+					    vif_to_wdev(vif),
+					    WIL_FTM_NL_EXTRA_ALLOC,
+					    QCA_EVENT_FTM_SESSION_DONE_INDEX,
+					    GFP_KERNEL);
 	if (!vendor_event)
 		goto out;
 
-	if (nla_put_u64(vendor_event,
-			QCA_WLAN_VENDOR_ATTR_FTM_SESSION_COOKIE,
-			wil->ftm.session_cookie) ||
+	if (nla_put_u64_64bit(vendor_event,
+			      QCA_ATTR_FTM_SESSION_COOKIE,
+			      vif->ftm.session_cookie,
+			      QCA_ATTR_PAD) ||
 	    nla_put_u32(vendor_event,
-			QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS, status)) {
+			QCA_ATTR_LOC_SESSION_STATUS, status)) {
 		wil_err(wil, "failed to fill session done event\n");
 		goto out;
 	}
@@ -468,33 +466,35 @@ wil_ftm_cfg80211_session_ended(struct wil6210_priv *wil, u32 status)
 	vendor_event = NULL;
 out:
 	kfree_skb(vendor_event);
-	mutex_unlock(&wil->ftm.lock);
+	mutex_unlock(&vif->ftm.lock);
 }
 
-static void wil_aoa_timer_fn(ulong x)
+static void wil_aoa_timer_fn(struct timer_list *t)
 {
-	struct wil6210_priv *wil = (void *)x;
+	struct wil6210_vif *vif = from_timer(vif, t, ftm.aoa_timer);
+	struct wil6210_priv *wil = vif_to_wil(vif);
 
 	wil_dbg_misc(wil, "AOA timer\n");
-	schedule_work(&wil->ftm.aoa_timeout_work);
+	schedule_work(&vif->ftm.aoa_timeout_work);
 }
 
 static int
-wil_aoa_cfg80211_start_measurement(struct wil6210_priv *wil,
+wil_aoa_cfg80211_start_measurement(struct wil6210_vif *vif,
 				   struct wil_aoa_meas_request *request)
 {
+	struct wil6210_priv *wil = vif_to_wil(vif);
 	int rc = 0;
 	struct wmi_aoa_meas_cmd cmd;
 	u8 channel;
 
-	mutex_lock(&wil->ftm.lock);
+	mutex_lock(&vif->ftm.lock);
 
-	if (wil->ftm.aoa_started || wil->ftm.session_started) {
+	if (vif->ftm.aoa_started || vif->ftm.session_started) {
 		wil_err(wil, "AOA or FTM measurement already running\n");
 		rc = -EAGAIN;
 		goto out;
 	}
-	if (request->type >= QCA_WLAN_VENDOR_ATTR_AOA_TYPE_MAX) {
+	if (request->type >= QCA_ATTR_AOA_TYPE_MAX) {
 		wil_err(wil, "invalid AOA type: %d\n", request->type);
 		rc = -EINVAL;
 		goto out;
@@ -511,59 +511,60 @@ wil_aoa_cfg80211_start_measurement(struct wil6210_priv *wil,
 	cmd.channel = channel - 1;
 	cmd.aoa_meas_type = request->type;
 
-	rc = wmi_send(wil, WMI_AOA_MEAS_CMDID, &cmd, sizeof(cmd));
+	rc = wmi_send(wil, WMI_AOA_MEAS_CMDID, vif->mid, &cmd, sizeof(cmd));
 	if (rc)
 		goto out;
 
-	ether_addr_copy(wil->ftm.aoa_peer_mac_addr, request->mac_addr);
-	mod_timer(&wil->ftm.aoa_timer,
+	ether_addr_copy(vif->ftm.aoa_peer_mac_addr, request->mac_addr);
+	mod_timer(&vif->ftm.aoa_timer,
 		  jiffies + msecs_to_jiffies(WIL_AOA_MEASUREMENT_TIMEOUT));
-	wil->ftm.aoa_started = 1;
+	vif->ftm.aoa_started = 1;
 out:
-	mutex_unlock(&wil->ftm.lock);
+	mutex_unlock(&vif->ftm.lock);
 	return rc;
 }
 
-void wil_aoa_cfg80211_meas_result(struct wil6210_priv *wil,
+void wil_aoa_cfg80211_meas_result(struct wil6210_vif *vif,
 				  struct wil_aoa_meas_result *result)
 {
+	struct wil6210_priv *wil = vif_to_wil(vif);
 	struct sk_buff *vendor_event = NULL;
 
-	mutex_lock(&wil->ftm.lock);
+	mutex_lock(&vif->ftm.lock);
 
-	if (!wil->ftm.aoa_started && !wil->ftm.session_started) {
+	if (!vif->ftm.aoa_started && !vif->ftm.session_started) {
 		wil_info(wil, "AOA/FTM not started, not sending result\n");
 		goto out;
 	}
 
 	wil_dbg_misc(wil, "sending AOA measurement result\n");
 
-	vendor_event = cfg80211_vendor_event_alloc(
-				wil_to_wiphy(wil),
-				wil->wdev,
-				result->length + WIL_FTM_NL_EXTRA_ALLOC,
-				QCA_NL80211_VENDOR_EVENT_AOA_MEAS_RESULT_INDEX,
-				GFP_KERNEL);
+	vendor_event =
+		cfg80211_vendor_event_alloc(wil_to_wiphy(wil),
+					    vif_to_wdev(vif), result->length +
+					    WIL_FTM_NL_EXTRA_ALLOC,
+					    QCA_EVENT_AOA_MEAS_RESULT_INDEX,
+					    GFP_KERNEL);
 	if (!vendor_event) {
 		wil_err(wil, "fail to allocate measurement result\n");
 		goto out;
 	}
 
-	if (nla_put(vendor_event, QCA_WLAN_VENDOR_ATTR_MAC_ADDR,
+	if (nla_put(vendor_event, QCA_ATTR_MAC_ADDR,
 		    ETH_ALEN, result->mac_addr) ||
-	    nla_put_u32(vendor_event, QCA_WLAN_VENDOR_ATTR_AOA_TYPE,
+	    nla_put_u32(vendor_event, QCA_ATTR_AOA_TYPE,
 			result->type) ||
-	    nla_put_u32(vendor_event, QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS,
+	    nla_put_u32(vendor_event, QCA_ATTR_LOC_SESSION_STATUS,
 			result->status) ||
 	    nla_put_u32(vendor_event,
-			QCA_WLAN_VENDOR_ATTR_LOC_ANTENNA_ARRAY_MASK,
+			QCA_ATTR_LOC_ANTENNA_ARRAY_MASK,
 			result->antenna_array_mask)) {
 		wil_err(wil, "failed to fill vendor event\n");
 		goto out;
 	}
 
 	if (result->length > 0 &&
-	    nla_put(vendor_event, QCA_WLAN_VENDOR_ATTR_AOA_MEAS_RESULT,
+	    nla_put(vendor_event, QCA_ATTR_AOA_MEAS_RESULT,
 		    result->length, result->data)) {
 		wil_err(wil, "failed to fill vendor event with AOA data\n");
 		goto out;
@@ -571,117 +572,119 @@ void wil_aoa_cfg80211_meas_result(struct wil6210_priv *wil,
 
 	cfg80211_vendor_event(vendor_event, GFP_KERNEL);
 
-	del_timer_sync(&wil->ftm.aoa_timer);
-	wil->ftm.aoa_started = 0;
+	del_timer_sync(&vif->ftm.aoa_timer);
+	vif->ftm.aoa_started = 0;
 out:
-	mutex_unlock(&wil->ftm.lock);
+	mutex_unlock(&vif->ftm.lock);
 }
 
-void wil_ftm_evt_session_ended(struct wil6210_priv *wil,
+void wil_ftm_evt_session_ended(struct wil6210_vif *vif,
 			       struct wmi_tof_session_end_event *evt)
 {
 	u32 status;
 
 	switch (evt->status) {
 	case WMI_TOF_SESSION_END_NO_ERROR:
-		status = QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_OK;
+		status = QCA_ATTR_LOC_SESSION_ST_OK;
 		break;
 	case WMI_TOF_SESSION_END_PARAMS_ERROR:
-		status = QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_INVALID;
+		status = QCA_ATTR_LOC_SESSION_ST_INVALID;
 		break;
 	case WMI_TOF_SESSION_END_FAIL:
-		status = QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_FAILED;
+		status = QCA_ATTR_LOC_SESSION_ST_FAIL;
 		break;
 	case WMI_TOF_SESSION_END_ABORTED:
-		status = QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_ABORTED;
+		status = QCA_ATTR_LOC_SESSION_ST_ABORT;
 		break;
 	default:
-		status = QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_FAILED;
+		status = QCA_ATTR_LOC_SESSION_ST_FAIL;
 		break;
 	}
 
-	wil_ftm_cfg80211_session_ended(wil, status);
+	wil_ftm_cfg80211_session_ended(vif, status);
 }
 
-void wil_ftm_evt_per_dest_res(struct wil6210_priv *wil,
+void wil_ftm_evt_per_dest_res(struct wil6210_vif *vif,
 			      struct wmi_tof_ftm_per_dest_res_event *evt)
 {
+	struct wil6210_priv *wil = vif_to_wil(vif);
 	u32 i, index;
 	__le64 tmp = 0;
 	u8 n_meas;
 
-	mutex_lock(&wil->ftm.lock);
+	mutex_lock(&vif->ftm.lock);
 
-	if (!wil->ftm.session_started || !wil->ftm.ftm_res) {
+	if (!vif->ftm.session_started || !vif->ftm.ftm_res) {
 		wil_dbg_misc(wil, "Session not running, ignoring res event\n");
 		goto out;
 	}
-	if (wil->ftm.has_ftm_res &&
-	    !ether_addr_equal(evt->dst_mac, wil->ftm.ftm_res->mac_addr)) {
+	if (vif->ftm.has_ftm_res &&
+	    !ether_addr_equal(evt->dst_mac, vif->ftm.ftm_res->mac_addr)) {
 		wil_dbg_misc(wil,
 			     "Results for previous peer not properly terminated\n");
-		wil_ftm_send_peer_res(wil);
+		wil_ftm_send_peer_res(vif);
 	}
 
-	if (!wil->ftm.has_ftm_res) {
-		ether_addr_copy(wil->ftm.ftm_res->mac_addr, evt->dst_mac);
-		wil->ftm.has_ftm_res = 1;
+	if (!vif->ftm.has_ftm_res) {
+		ether_addr_copy(vif->ftm.ftm_res->mac_addr, evt->dst_mac);
+		vif->ftm.has_ftm_res = 1;
 	}
 
 	n_meas = evt->actual_ftm_per_burst;
 	switch (evt->status) {
 	case WMI_PER_DEST_RES_NO_ERROR:
-		wil->ftm.ftm_res->status =
-			QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS_OK;
+		vif->ftm.ftm_res->status =
+			QCA_ATTR_FTM_PEER_RES_STATUS_OK;
 		break;
 	case WMI_PER_DEST_RES_TX_RX_FAIL:
 		/* FW reports corrupted results here, discard. */
 		n_meas = 0;
-		wil->ftm.ftm_res->status =
-			QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS_OK;
+		vif->ftm.ftm_res->status =
+			QCA_ATTR_FTM_PEER_RES_STATUS_OK;
 		break;
 	case WMI_PER_DEST_RES_PARAM_DONT_MATCH:
-		wil->ftm.ftm_res->status =
-			QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS_INVALID;
+		vif->ftm.ftm_res->status =
+			QCA_ATTR_FTM_PEER_RES_STATUS_INVALID;
 		break;
 	default:
 		wil_err(wil, "unexpected status %d\n", evt->status);
-		wil->ftm.ftm_res->status =
-			QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS_INVALID;
+		vif->ftm.ftm_res->status =
+			QCA_ATTR_FTM_PEER_RES_STATUS_INVALID;
 		break;
 	}
 
 	for (i = 0; i < n_meas; i++) {
-		index = wil->ftm.ftm_res->n_meas;
-		if (index >= wil->ftm.max_ftm_meas) {
+		index = vif->ftm.ftm_res->n_meas;
+		if (index >= vif->ftm.max_ftm_meas) {
 			wil_dbg_misc(wil, "Too many measurements, some lost\n");
 			break;
 		}
 		memcpy(&tmp, evt->responder_ftm_res[i].t1,
 		       sizeof(evt->responder_ftm_res[i].t1));
-		wil->ftm.ftm_res->meas[index].t1 = le64_to_cpu(tmp);
+		vif->ftm.ftm_res->meas[index].t1 = le64_to_cpu(tmp);
 		memcpy(&tmp, evt->responder_ftm_res[i].t2,
 		       sizeof(evt->responder_ftm_res[i].t2));
-		wil->ftm.ftm_res->meas[index].t2 = le64_to_cpu(tmp);
+		vif->ftm.ftm_res->meas[index].t2 = le64_to_cpu(tmp);
 		memcpy(&tmp, evt->responder_ftm_res[i].t3,
 		       sizeof(evt->responder_ftm_res[i].t3));
-		wil->ftm.ftm_res->meas[index].t3 = le64_to_cpu(tmp);
+		vif->ftm.ftm_res->meas[index].t3 = le64_to_cpu(tmp);
 		memcpy(&tmp, evt->responder_ftm_res[i].t4,
 		       sizeof(evt->responder_ftm_res[i].t4));
-		wil->ftm.ftm_res->meas[index].t4 = le64_to_cpu(tmp);
-		wil->ftm.ftm_res->n_meas++;
+		vif->ftm.ftm_res->meas[index].t4 = le64_to_cpu(tmp);
+		vif->ftm.ftm_res->n_meas++;
 	}
 
 	if (evt->flags & WMI_PER_DEST_RES_BURST_REPORT_END)
-		wil_ftm_send_peer_res(wil);
+		wil_ftm_send_peer_res(vif);
 out:
-	mutex_unlock(&wil->ftm.lock);
+	mutex_unlock(&vif->ftm.lock);
 }
 
-void wil_aoa_evt_meas(struct wil6210_priv *wil,
+void wil_aoa_evt_meas(struct wil6210_vif *vif,
 		      struct wmi_aoa_meas_event *evt,
 		      int len)
 {
+	struct wil6210_priv *wil = vif_to_wil(vif);
 	int data_len = len - offsetof(struct wmi_aoa_meas_event, meas_data);
 	struct wil_aoa_meas_result *res;
 
@@ -706,7 +709,7 @@ void wil_aoa_evt_meas(struct wil6210_priv *wil,
 		     res->status, res->type,
 		     res->antenna_array_mask, res->length);
 
-	wil_aoa_cfg80211_meas_result(wil, res);
+	wil_aoa_cfg80211_meas_result(vif, res);
 	kfree(res);
 }
 
@@ -726,22 +729,22 @@ int wil_ftm_get_capabilities(struct wiphy *wiphy, struct wireless_dev *wdev,
 	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, 128);
 	if (!skb)
 		return -ENOMEM;
-	attr = nla_nest_start(skb, QCA_WLAN_VENDOR_ATTR_LOC_CAPA);
+	attr = nla_nest_start(skb, QCA_ATTR_LOC_CAPA);
 	if (!attr ||
-	    nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAGS,
-			QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAG_FTM_RESPONDER |
-			QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAG_FTM_INITIATOR |
-			QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAG_ASAP |
-			QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAG_AOA) ||
-	    nla_put_u16(skb, QCA_WLAN_VENDOR_ATTR_FTM_CAPA_MAX_NUM_SESSIONS,
+	    nla_put_u32(skb, QCA_ATTR_LOC_CAPA_FLAGS,
+			QCA_ATTR_LOC_CAPA_FLAG_FTM_RESPONDER |
+			QCA_ATTR_LOC_CAPA_FLAG_FTM_INITIATOR |
+			QCA_ATTR_LOC_CAPA_FLAG_ASAP |
+			QCA_ATTR_LOC_CAPA_FLAG_AOA) ||
+	    nla_put_u16(skb, QCA_ATTR_FTM_CAPA_MAX_NUM_SESSIONS,
 			1) ||
-	    nla_put_u16(skb, QCA_WLAN_VENDOR_ATTR_FTM_CAPA_MAX_NUM_PEERS, 1) ||
-	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_FTM_CAPA_MAX_NUM_BURSTS_EXP,
+	    nla_put_u16(skb, QCA_ATTR_FTM_CAPA_MAX_NUM_PEERS, 1) ||
+	    nla_put_u8(skb, QCA_ATTR_FTM_CAPA_MAX_NUM_BURSTS_EXP,
 		       0) ||
-	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_FTM_CAPA_MAX_MEAS_PER_BURST,
+	    nla_put_u8(skb, QCA_ATTR_FTM_CAPA_MAX_MEAS_PER_BURST,
 		       4) ||
-	    nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_AOA_CAPA_SUPPORTED_TYPES,
-			BIT(QCA_WLAN_VENDOR_ATTR_AOA_TYPE_TOP_CIR_PHASE))) {
+	    nla_put_u32(skb, QCA_ATTR_AOA_CAPA_SUPPORTED_TYPES,
+			BIT(QCA_ATTR_AOA_TYPE_TOP_CIR_PHASE))) {
 		wil_err(wil, "fail to fill get_capabilities reply\n");
 		kfree_skb(skb);
 		return -ENOMEM;
@@ -755,9 +758,10 @@ int wil_ftm_start_session(struct wiphy *wiphy, struct wireless_dev *wdev,
 			  const void *data, int data_len)
 {
 	struct wil6210_priv *wil = wiphy_to_wil(wiphy);
+	struct wil6210_vif *vif = wdev_to_vif(wil, wdev);
 	struct wil_ftm_session_request *request;
-	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_LOC_MAX + 1];
-	struct nlattr *tb2[QCA_WLAN_VENDOR_ATTR_FTM_PEER_MAX + 1];
+	struct nlattr *tb[QCA_ATTR_LOC_MAX + 1];
+	struct nlattr *tb2[QCA_ATTR_FTM_PEER_MAX + 1];
 	struct nlattr *peer;
 	int rc, n_peers = 0, index = 0, tmp;
 	u32 aoa_type = 0;
@@ -765,32 +769,32 @@ int wil_ftm_start_session(struct wiphy *wiphy, struct wireless_dev *wdev,
 	if (!test_bit(WMI_FW_CAPABILITY_FTM, wil->fw_capabilities))
 		return -ENOTSUPP;
 
-	rc = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_LOC_MAX, data, data_len,
-		       wil_nl80211_loc_policy);
+	rc = nla_parse(tb, QCA_ATTR_LOC_MAX, data, data_len,
+		       wil_nl80211_loc_policy, NULL);
 	if (rc) {
 		wil_err(wil, "Invalid ATTR\n");
 		return rc;
 	}
 
-	if (!tb[QCA_WLAN_VENDOR_ATTR_FTM_MEAS_PEERS]) {
+	if (!tb[QCA_ATTR_FTM_MEAS_PEERS]) {
 		wil_err(wil, "no peers specified\n");
 		return -EINVAL;
 	}
 
-	if (!tb[QCA_WLAN_VENDOR_ATTR_FTM_SESSION_COOKIE]) {
+	if (!tb[QCA_ATTR_FTM_SESSION_COOKIE]) {
 		wil_err(wil, "session cookie not specified\n");
 		return -EINVAL;
 	}
 
-	if (tb[QCA_WLAN_VENDOR_ATTR_AOA_TYPE]) {
-		aoa_type = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_AOA_TYPE]);
-		if (aoa_type >= QCA_WLAN_VENDOR_ATTR_AOA_TYPE_MAX) {
+	if (tb[QCA_ATTR_AOA_TYPE]) {
+		aoa_type = nla_get_u32(tb[QCA_ATTR_AOA_TYPE]);
+		if (aoa_type >= QCA_ATTR_AOA_TYPE_MAX) {
 			wil_err(wil, "invalid AOA type: %d\n", aoa_type);
 			return -EINVAL;
 		}
 	}
 
-	nla_for_each_nested(peer, tb[QCA_WLAN_VENDOR_ATTR_FTM_MEAS_PEERS],
+	nla_for_each_nested(peer, tb[QCA_ATTR_FTM_MEAS_PEERS],
 			    tmp)
 		n_peers++;
 
@@ -812,39 +816,39 @@ int wil_ftm_start_session(struct wiphy *wiphy, struct wireless_dev *wdev,
 		return -ENOMEM;
 
 	request->session_cookie =
-		nla_get_u64(tb[QCA_WLAN_VENDOR_ATTR_FTM_SESSION_COOKIE]);
+		nla_get_u64(tb[QCA_ATTR_FTM_SESSION_COOKIE]);
 	request->aoa_type = aoa_type;
 	request->n_peers = n_peers;
-	nla_for_each_nested(peer, tb[QCA_WLAN_VENDOR_ATTR_FTM_MEAS_PEERS],
+	nla_for_each_nested(peer, tb[QCA_ATTR_FTM_MEAS_PEERS],
 			    tmp) {
-		rc = nla_parse_nested(tb2, QCA_WLAN_VENDOR_ATTR_FTM_PEER_MAX,
-				      peer, wil_nl80211_ftm_peer_policy);
+		rc = nla_parse_nested(tb2, QCA_ATTR_FTM_PEER_MAX,
+				      peer, wil_nl80211_ftm_peer_policy, NULL);
 		if (rc) {
 			wil_err(wil, "Invalid peer ATTR\n");
 			goto out;
 		}
-		if (!tb2[QCA_WLAN_VENDOR_ATTR_FTM_PEER_MAC_ADDR] ||
-		    nla_len(tb2[QCA_WLAN_VENDOR_ATTR_FTM_PEER_MAC_ADDR])
+		if (!tb2[QCA_ATTR_FTM_PEER_MAC_ADDR] ||
+		    nla_len(tb2[QCA_ATTR_FTM_PEER_MAC_ADDR])
 			    != ETH_ALEN) {
 			wil_err(wil, "Peer MAC address missing or invalid\n");
 			rc = -EINVAL;
 			goto out;
 		}
 		memcpy(request->peers[index].mac_addr,
-		       nla_data(tb2[QCA_WLAN_VENDOR_ATTR_FTM_PEER_MAC_ADDR]),
+		       nla_data(tb2[QCA_ATTR_FTM_PEER_MAC_ADDR]),
 		       ETH_ALEN);
-		if (tb2[QCA_WLAN_VENDOR_ATTR_FTM_PEER_FREQ])
-			request->peers[index].freq = nla_get_u32(
-				tb2[QCA_WLAN_VENDOR_ATTR_FTM_PEER_FREQ]);
-		if (tb2[QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAGS])
-			request->peers[index].flags = nla_get_u32(
-				tb2[QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAGS]);
-		if (tb2[QCA_WLAN_VENDOR_ATTR_FTM_PEER_SECURE_TOKEN_ID])
-			request->peers[index].secure_token_id = nla_get_u8(
-			   tb2[QCA_WLAN_VENDOR_ATTR_FTM_PEER_SECURE_TOKEN_ID]);
-		if (tb2[QCA_WLAN_VENDOR_ATTR_FTM_PEER_AOA_BURST_PERIOD]) {
+		if (tb2[QCA_ATTR_FTM_PEER_FREQ])
+			request->peers[index].freq =
+				nla_get_u32(tb2[QCA_ATTR_FTM_PEER_FREQ]);
+		if (tb2[QCA_ATTR_FTM_PEER_MEAS_FLAGS])
+			request->peers[index].flags =
+				nla_get_u32(tb2[QCA_ATTR_FTM_PEER_MEAS_FLAGS]);
+		if (tb2[QCA_ATTR_FTM_PEER_SEC_TOK_ID])
+			request->peers[index].secure_token_id =
+				nla_get_u8(tb2[QCA_ATTR_FTM_PEER_SEC_TOK_ID]);
+		if (tb2[QCA_ATTR_FTM_PEER_AOA_BURST_PERIOD]) {
 			request->peers[index].aoa_burst_period = nla_get_u16(
-			  tb2[QCA_WLAN_VENDOR_ATTR_FTM_PEER_AOA_BURST_PERIOD]);
+			    tb2[QCA_ATTR_FTM_PEER_AOA_BURST_PERIOD]);
 			if (request->peers[index].aoa_burst_period >
 			    WIL_AOA_MAX_BURST_PERIOD) {
 				wil_err(wil, "Invalid AOA burst period at index: %d\n",
@@ -855,8 +859,7 @@ int wil_ftm_start_session(struct wiphy *wiphy, struct wireless_dev *wdev,
 		}
 
 		rc = wil_ftm_parse_meas_params(
-			wil,
-			tb2[QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_PARAMS],
+			wil, tb2[QCA_ATTR_FTM_PEER_MEAS_PARAMS],
 			&request->peers[index].params);
 		if (!rc)
 			rc = wil_ftm_validate_meas_params(
@@ -866,7 +869,7 @@ int wil_ftm_start_session(struct wiphy *wiphy, struct wireless_dev *wdev,
 		index++;
 	}
 
-	rc = wil_ftm_cfg80211_start_session(wil, request);
+	rc = wil_ftm_cfg80211_start_session(vif, request);
 out:
 	kfree(request);
 	return rc;
@@ -894,8 +897,9 @@ int wil_aoa_start_measurement(struct wiphy *wiphy, struct wireless_dev *wdev,
 			      const void *data, int data_len)
 {
 	struct wil6210_priv *wil = wiphy_to_wil(wiphy);
+	struct wil6210_vif *vif = wdev_to_vif(wil, wdev);
 	struct wil_aoa_meas_request request;
-	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_LOC_MAX + 1];
+	struct nlattr *tb[QCA_ATTR_LOC_MAX + 1];
 	int rc;
 
 	if (!test_bit(WMI_FW_CAPABILITY_FTM, wil->fw_capabilities))
@@ -903,27 +907,27 @@ int wil_aoa_start_measurement(struct wiphy *wiphy, struct wireless_dev *wdev,
 
 	wil_dbg_misc(wil, "AOA start measurement\n");
 
-	rc = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_LOC_MAX, data, data_len,
-		       wil_nl80211_loc_policy);
+	rc = nla_parse(tb, QCA_ATTR_LOC_MAX, data, data_len,
+		       wil_nl80211_loc_policy, NULL);
 	if (rc) {
 		wil_err(wil, "Invalid ATTR\n");
 		return rc;
 	}
 
-	if (!tb[QCA_WLAN_VENDOR_ATTR_MAC_ADDR] ||
-	    !tb[QCA_WLAN_VENDOR_ATTR_AOA_TYPE]) {
+	if (!tb[QCA_ATTR_MAC_ADDR] ||
+	    !tb[QCA_ATTR_AOA_TYPE]) {
 		wil_err(wil, "Must specify MAC address and type\n");
 		return -EINVAL;
 	}
 
 	memset(&request, 0, sizeof(request));
 	ether_addr_copy(request.mac_addr,
-			nla_data(tb[QCA_WLAN_VENDOR_ATTR_MAC_ADDR]));
-	request.type = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_AOA_TYPE]);
-	if (tb[QCA_WLAN_VENDOR_ATTR_FREQ])
-		request.freq = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_FREQ]);
+			nla_data(tb[QCA_ATTR_MAC_ADDR]));
+	request.type = nla_get_u32(tb[QCA_ATTR_AOA_TYPE]);
+	if (tb[QCA_ATTR_FREQ])
+		request.freq = nla_get_u32(tb[QCA_ATTR_FREQ]);
 
-	rc = wil_aoa_cfg80211_start_measurement(wil, &request);
+	rc = wil_aoa_cfg80211_start_measurement(vif, &request);
 	return rc;
 }
 
@@ -936,22 +940,30 @@ int wil_aoa_abort_measurement(struct wiphy *wiphy, struct wireless_dev *wdev,
 	return -ENOTSUPP;
 }
 
-void wil_ftm_init(struct wil6210_priv *wil)
+void wil_ftm_init(struct wil6210_vif *vif)
 {
-	mutex_init(&wil->ftm.lock);
-	setup_timer(&wil->ftm.aoa_timer, wil_aoa_timer_fn, (ulong)wil);
-	INIT_WORK(&wil->ftm.aoa_timeout_work, wil_aoa_measurement_timeout);
+	mutex_init(&vif->ftm.lock);
+	timer_setup(&vif->ftm.aoa_timer, wil_aoa_timer_fn, 0);
+	INIT_WORK(&vif->ftm.aoa_timeout_work, wil_aoa_measurement_timeout);
 }
 
-void wil_ftm_deinit(struct wil6210_priv *wil)
+void wil_ftm_deinit(struct wil6210_vif *vif)
 {
-	del_timer_sync(&wil->ftm.aoa_timer);
-	cancel_work_sync(&wil->ftm.aoa_timeout_work);
-	kfree(wil->ftm.ftm_res);
+	del_timer_sync(&vif->ftm.aoa_timer);
+	cancel_work_sync(&vif->ftm.aoa_timeout_work);
+	kfree(vif->ftm.ftm_res);
 }
 
 void wil_ftm_stop_operations(struct wil6210_priv *wil)
 {
-	wil_ftm_cfg80211_session_ended(
-		wil, QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_ABORTED);
+	int i;
+
+	for (i = 0; i < wil->max_vifs; i++) {
+		struct wil6210_vif *vif = wil->vifs[i];
+
+		if (!vif)
+			continue;
+		wil_ftm_cfg80211_session_ended(vif,
+					       QCA_ATTR_LOC_SESSION_ST_ABORT);
+	}
 }

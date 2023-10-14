@@ -1,16 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2014 Marvell
  * Author: Gregory CLEMENT <gregory.clement@free-electrons.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * version 2 as published by the Free Software Foundation.
  */
 
 #include <linux/io.h>
 #include <linux/mbus.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
+
+#include <linux/usb.h>
+#include <linux/usb/hcd.h>
 
 #include "xhci-mvebu.h"
 
@@ -31,7 +31,7 @@ static void xhci_mvebu_mbus_config(void __iomem *base,
 
 	/* Program each DRAM CS in a seperate window */
 	for (win = 0; win < dram->num_cs; win++) {
-		const struct mbus_dram_window *cs = dram->cs + win;
+		const struct mbus_dram_window *cs = &dram->cs[win];
 
 		writel(((cs->size - 1) & 0xffff0000) | (cs->mbus_attr << 8) |
 		       (dram->mbus_dram_target_id << 4) | 1,
@@ -41,8 +41,10 @@ static void xhci_mvebu_mbus_config(void __iomem *base,
 	}
 }
 
-int xhci_mvebu_mbus_init_quirk(struct platform_device *pdev)
+int xhci_mvebu_mbus_init_quirk(struct usb_hcd *hcd)
 {
+	struct device *dev = hcd->self.controller;
+	struct platform_device *pdev = to_platform_device(dev);
 	struct resource	*res;
 	void __iomem *base;
 	const struct mbus_dram_target_info *dram;

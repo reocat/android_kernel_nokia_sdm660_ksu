@@ -1,5 +1,5 @@
-/* Copyright (c) 2011-2014, 2017, 2019 The Linux Foundataion.
- * All rights reserved.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2011-2014, 2017-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -33,8 +33,8 @@ void msm_camera_io_w(u32 data, void __iomem *addr)
 }
 
 /* This API is to write a block of data
-* to same address
-*/
+ * to same address
+ */
 int32_t msm_camera_io_w_block(const u32 *addr, void __iomem *base,
 	u32 len)
 {
@@ -52,8 +52,9 @@ int32_t msm_camera_io_w_block(const u32 *addr, void __iomem *base,
 }
 
 /* This API is to write a block of registers
-*  which is like a 2 dimensional array table with
-*  register offset and data */
+ *  which is like a 2 dimensional array table with
+ *  register offset and data
+ */
 int32_t msm_camera_io_w_reg_block(const u32 *addr, void __iomem *base,
 	u32 len)
 {
@@ -119,11 +120,11 @@ u32 msm_camera_io_r_mb(void __iomem *addr)
 	return data;
 }
 
-void msm_camera_io_memcpy_toio(void __iomem *dest_addr,
-	void __iomem *src_addr, u32 len)
+static void msm_camera_io_memcpy_toio(void __iomem *dest_addr,
+	void *src_addr, u32 len)
 {
 	int i;
-	u32 *d = (u32 *) dest_addr;
+	u32 __iomem *d = (u32 __iomem *) dest_addr;
 	u32 *s = (u32 *) src_addr;
 
 	for (i = 0; i < len; i++)
@@ -190,7 +191,7 @@ void msm_camera_io_dump(void __iomem *addr, int size, int enable)
 	line_str[0] = '\0';
 	for (i = 0; i < size/4; i++) {
 		if (i % 4 == 0) {
-			used = snprintf(line_str + offset,
+			used = scnprintf(line_str + offset,
 				sizeof(line_str) - offset, "0x%04tX: ", p);
 			if (offset + used >= sizeof(line_str)) {
 				pr_err("%s\n", line_str);
@@ -202,7 +203,7 @@ void msm_camera_io_dump(void __iomem *addr, int size, int enable)
 		}
 		data = readl_relaxed(addr + p);
 		p = p + 4;
-		used = snprintf(line_str + offset,
+		used = scnprintf(line_str + offset,
 			sizeof(line_str) - offset, "%08x ", data);
 		if (offset + used >= sizeof(line_str)) {
 			pr_err("%s\n", line_str);
@@ -242,20 +243,21 @@ void msm_camera_io_dump_wstring_base(void __iomem *addr,
 }
 
 void msm_camera_io_memcpy(void __iomem *dest_addr,
-	void __iomem *src_addr, u32 len)
+	void *src_addr, u32 len)
 {
 	CDBG("%s: %pK %pK %d\n", __func__, dest_addr, src_addr, len);
 	msm_camera_io_memcpy_toio(dest_addr, src_addr, len / 4);
 }
 
 void msm_camera_io_memcpy_mb(void __iomem *dest_addr,
-	void __iomem *src_addr, u32 len)
+	void *src_addr, u32 len)
 {
 	int i;
-	u32 *d = (u32 *) dest_addr;
+	u32 __iomem *d = (u32 __iomem *) dest_addr;
 	u32 *s = (u32 *) src_addr;
 	/* This is generic function called who needs to register
-	writes with memory barrier */
+	 * writes with memory barrier
+	 */
 	wmb();
 	for (i = 0; i < (len / 4); i++) {
 		msm_camera_io_w(*s++, d++);
@@ -408,13 +410,13 @@ int msm_camera_config_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 		return -EINVAL;
 	}
 
-	if (cam_vreg == NULL) {
-		pr_err("%s:%d cam_vreg sequence invalid\n", __func__, __LINE__);
-		return -EINVAL;
-	}
-
 	if (!num_vreg_seq)
 		num_vreg_seq = num_vreg;
+
+	if ((cam_vreg == NULL) && num_vreg_seq) {
+		pr_err("%s:%d cam_vreg NULL\n", __func__, __LINE__);
+		return -EINVAL;
+	}
 
 	if (config) {
 		for (i = 0; i < num_vreg_seq; i++) {
@@ -476,8 +478,8 @@ int msm_camera_config_vreg(struct device *dev, struct camera_vreg_t *cam_vreg,
 							reg_ptr[j], 0);
 					}
 					regulator_set_voltage(
-						reg_ptr[j], 0, curr_vreg->
-						max_voltage);
+						reg_ptr[j], 0,
+						curr_vreg->max_voltage);
 				}
 				regulator_put(reg_ptr[j]);
 				reg_ptr[j] = NULL;
@@ -660,14 +662,14 @@ int msm_camera_config_single_vreg(struct device *dev,
 	}
 	if (cam_vreg->type == VREG_TYPE_CUSTOM) {
 		if (cam_vreg->custom_vreg_name == NULL) {
-			pr_err("%s : can't find sub reg name",
+			pr_err("%s : can't find sub reg name\n",
 				__func__);
 			goto vreg_get_fail;
 		}
 		vreg_name = cam_vreg->custom_vreg_name;
 	} else {
 		if (cam_vreg->reg_name == NULL) {
-			pr_err("%s : can't find reg name", __func__);
+			pr_err("%s : can't find reg name\n", __func__);
 			goto vreg_get_fail;
 		}
 		vreg_name = cam_vreg->reg_name;
@@ -765,10 +767,10 @@ int msm_camera_request_gpio_table(struct gpio *gpio_tbl, uint8_t size,
 				gpio_tbl[i].flags, gpio_tbl[i].label);
 			if (err) {
 				/*
-				* After GPIO request fails, contine to
-				* apply new gpios, outout a error message
-				* for driver bringup debug
-				*/
+				 * After GPIO request fails, contine to
+				 * apply new gpios, outout a error message
+				 * for driver bringup debug
+				 */
 				pr_err("%s:%d gpio %d:%s request fails\n",
 					__func__, __LINE__,
 					gpio_tbl[i].gpio, gpio_tbl[i].label);
@@ -863,4 +865,3 @@ int msm_camera_hw_write_dt_reg_settings(void __iomem *base,
 		pr_err("%s: Failed dt reg setting write\n", __func__);
 	return rc;
 }
-

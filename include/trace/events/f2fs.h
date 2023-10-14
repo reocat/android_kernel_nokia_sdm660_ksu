@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM f2fs
 
@@ -16,8 +17,12 @@ TRACE_DEFINE_ENUM(META_FLUSH);
 TRACE_DEFINE_ENUM(INMEM);
 TRACE_DEFINE_ENUM(INMEM_DROP);
 TRACE_DEFINE_ENUM(INMEM_INVALIDATE);
+TRACE_DEFINE_ENUM(INMEM_REVOKE);
 TRACE_DEFINE_ENUM(IPU);
 TRACE_DEFINE_ENUM(OPU);
+TRACE_DEFINE_ENUM(HOT);
+TRACE_DEFINE_ENUM(WARM);
+TRACE_DEFINE_ENUM(COLD);
 TRACE_DEFINE_ENUM(CURSEG_HOT_DATA);
 TRACE_DEFINE_ENUM(CURSEG_WARM_DATA);
 TRACE_DEFINE_ENUM(CURSEG_COLD_DATA);
@@ -32,10 +37,9 @@ TRACE_DEFINE_ENUM(BG_GC);
 TRACE_DEFINE_ENUM(LFS);
 TRACE_DEFINE_ENUM(SSR);
 TRACE_DEFINE_ENUM(__REQ_RAHEAD);
-TRACE_DEFINE_ENUM(__REQ_WRITE);
 TRACE_DEFINE_ENUM(__REQ_SYNC);
-TRACE_DEFINE_ENUM(__REQ_NOIDLE);
-TRACE_DEFINE_ENUM(__REQ_FLUSH);
+TRACE_DEFINE_ENUM(__REQ_IDLE);
+TRACE_DEFINE_ENUM(__REQ_PREFLUSH);
 TRACE_DEFINE_ENUM(__REQ_FUA);
 TRACE_DEFINE_ENUM(__REQ_PRIO);
 TRACE_DEFINE_ENUM(__REQ_META);
@@ -45,6 +49,8 @@ TRACE_DEFINE_ENUM(CP_SYNC);
 TRACE_DEFINE_ENUM(CP_RECOVERY);
 TRACE_DEFINE_ENUM(CP_DISCARD);
 TRACE_DEFINE_ENUM(CP_TRIMMED);
+TRACE_DEFINE_ENUM(CP_PAUSE);
+TRACE_DEFINE_ENUM(CP_RESIZE);
 
 #define show_block_type(type)						\
 	__print_symbolic(type,						\
@@ -59,29 +65,39 @@ TRACE_DEFINE_ENUM(CP_TRIMMED);
 		{ IPU,		"IN-PLACE" },				\
 		{ OPU,		"OUT-OF-PLACE" })
 
-#define F2FS_BIO_MASK(t)	(t & (READA | WRITE_FLUSH_FUA))
-#define F2FS_BIO_EXTRA_MASK(t)	(t & (REQ_META | REQ_PRIO))
+#define show_block_temp(temp)						\
+	__print_symbolic(temp,						\
+		{ HOT,		"HOT" },				\
+		{ WARM,		"WARM" },				\
+		{ COLD,		"COLD" })
 
-#define show_bio_type(op, op_flags)					\
-		show_bio_base((op|op_flags)), show_bio_extra((op|op_flags))
+#define F2FS_OP_FLAGS (REQ_RAHEAD | REQ_SYNC | REQ_META | REQ_PRIO |	\
+			REQ_PREFLUSH | REQ_FUA)
+#define F2FS_BIO_FLAG_MASK(t)	(t & F2FS_OP_FLAGS)
 
-#define show_bio_base(type)						\
-	__print_symbolic(F2FS_BIO_MASK(type),				\
-		{ READ, 		"READ" },			\
-		{ READA, 		"READAHEAD" },			\
-		{ READ_SYNC, 		"READ_SYNC" },			\
-		{ WRITE, 		"WRITE" },			\
-		{ WRITE_SYNC, 		"WRITE_SYNC" },			\
-		{ WRITE_FLUSH,		"WRITE_FLUSH" },		\
-		{ WRITE_FUA, 		"WRITE_FUA" },			\
-		{ WRITE_FLUSH_FUA,	"WRITE_FLUSH_FUA" })
+#define show_bio_type(op,op_flags)	show_bio_op(op),		\
+						show_bio_op_flags(op_flags)
 
-#define show_bio_extra(type)						\
-	__print_symbolic(F2FS_BIO_EXTRA_MASK(type),			\
-		{ REQ_META, 		"(M)" },			\
-		{ REQ_PRIO, 		"(P)" },			\
-		{ REQ_META | REQ_PRIO,	"(MP)" },			\
-		{ 0, " \b" })
+#define show_bio_op(op)							\
+	__print_symbolic(op,						\
+		{ REQ_OP_READ,			"READ" },		\
+		{ REQ_OP_WRITE,			"WRITE" },		\
+		{ REQ_OP_FLUSH,			"FLUSH" },		\
+		{ REQ_OP_DISCARD,		"DISCARD" },		\
+		{ REQ_OP_ZONE_REPORT,		"ZONE_REPORT" },	\
+		{ REQ_OP_SECURE_ERASE,		"SECURE_ERASE" },	\
+		{ REQ_OP_ZONE_RESET,		"ZONE_RESET" },		\
+		{ REQ_OP_WRITE_SAME,		"WRITE_SAME" },		\
+		{ REQ_OP_WRITE_ZEROES,		"WRITE_ZEROES" })
+
+#define show_bio_op_flags(flags)					\
+	__print_flags(F2FS_BIO_FLAG_MASK(flags), "|",			\
+		{ REQ_RAHEAD,		"R" },				\
+		{ REQ_SYNC,		"S" },				\
+		{ REQ_META,		"M" },				\
+		{ REQ_PRIO,		"P" },				\
+		{ REQ_PREFLUSH,		"PF" },				\
+		{ REQ_FUA,		"FUA" })
 
 #define show_block_temp(temp)						\
 	__print_symbolic(temp,						\
@@ -120,18 +136,21 @@ TRACE_DEFINE_ENUM(CP_TRIMMED);
 		{ GC_CB,	"Cost-Benefit" })
 
 #define show_cpreason(type)						\
-	__print_symbolic(type,						\
+	__print_flags(type, "|",					\
 		{ CP_UMOUNT,	"Umount" },				\
 		{ CP_FASTBOOT,	"Fastboot" },				\
 		{ CP_SYNC,	"Sync" },				\
 		{ CP_RECOVERY,	"Recovery" },				\
 		{ CP_DISCARD,	"Discard" },				\
-		{ CP_UMOUNT | CP_TRIMMED,	"Umount,Trimmed" })
+		{ CP_PAUSE,	"Pause" },				\
+		{ CP_TRIMMED,	"Trimmed" },				\
+		{ CP_RESIZE,	"Resize" })
 
 #define show_fsync_cpreason(type)					\
 	__print_symbolic(type,						\
 		{ CP_NO_NEEDED,		"no needed" },			\
 		{ CP_NON_REGULAR,	"non regular" },		\
+		{ CP_COMPRESSED,	"compressed" },			\
 		{ CP_HARDLINK,		"hardlink" },			\
 		{ CP_SB_NEED_CP,	"sb needs cp" },		\
 		{ CP_WRONG_PINO,	"wrong pino" },			\
@@ -148,6 +167,12 @@ TRACE_DEFINE_ENUM(CP_TRIMMED);
 		{ F2FS_GOING_DOWN_NOSYNC,	"no sync" },		\
 		{ F2FS_GOING_DOWN_METAFLUSH,	"meta flush" },		\
 		{ F2FS_GOING_DOWN_NEED_FSCK,	"need fsck" })
+
+#define show_compress_algorithm(type)					\
+	__print_symbolic(type,						\
+		{ COMPRESS_LZO,		"LZO" },			\
+		{ COMPRESS_LZ4,		"LZ4" },			\
+		{ COMPRESS_ZSTD,	"ZSTD" })
 
 struct f2fs_sb_info;
 struct f2fs_io_info;
@@ -317,7 +342,7 @@ TRACE_EVENT(f2fs_unlink_enter,
 		__field(ino_t,	ino)
 		__field(loff_t,	size)
 		__field(blkcnt_t, blocks)
-		__field(const char *,	name)
+		__string(name, dentry->d_name.name)
 	),
 
 	TP_fast_assign(
@@ -325,7 +350,7 @@ TRACE_EVENT(f2fs_unlink_enter,
 		__entry->ino	= dir->i_ino;
 		__entry->size	= dir->i_size;
 		__entry->blocks	= dir->i_blocks;
-		__entry->name	= dentry->d_name.name;
+		__assign_str(name, dentry->d_name.name);
 	),
 
 	TP_printk("dev = (%d,%d), dir ino = %lu, i_size = %lld, "
@@ -333,7 +358,7 @@ TRACE_EVENT(f2fs_unlink_enter,
 		show_dev_ino(__entry),
 		__entry->size,
 		(unsigned long long)__entry->blocks,
-		__entry->name)
+		__get_str(name))
 );
 
 DEFINE_EVENT(f2fs__inode_exit, f2fs_unlink_exit,
@@ -493,14 +518,14 @@ DEFINE_EVENT(f2fs__truncate_node, f2fs_truncate_node,
 
 TRACE_EVENT(f2fs_truncate_partial_nodes,
 
-	TP_PROTO(struct inode *inode, nid_t nid[], int depth, int err),
+	TP_PROTO(struct inode *inode, nid_t *nid, int depth, int err),
 
 	TP_ARGS(inode, nid, depth, err),
 
 	TP_STRUCT__entry(
 		__field(dev_t,	dev)
 		__field(ino_t,	ino)
-		__field(nid_t,	nid[3])
+		__array(nid_t,	nid, 3)
 		__field(int,	depth)
 		__field(int,	err)
 	),
@@ -748,6 +773,7 @@ TRACE_EVENT(f2fs_get_victim,
 		__field(int,	alloc_mode)
 		__field(int,	gc_mode)
 		__field(unsigned int,	victim)
+		__field(unsigned int,	cost)
 		__field(unsigned int,	ofs_unit)
 		__field(unsigned int,	pre_victim)
 		__field(unsigned int,	prefree)
@@ -761,20 +787,23 @@ TRACE_EVENT(f2fs_get_victim,
 		__entry->alloc_mode	= p->alloc_mode;
 		__entry->gc_mode	= p->gc_mode;
 		__entry->victim		= p->min_segno;
+		__entry->cost		= p->min_cost;
 		__entry->ofs_unit	= p->ofs_unit;
 		__entry->pre_victim	= pre_victim;
 		__entry->prefree	= prefree;
 		__entry->free		= free;
 	),
 
-	TP_printk("dev = (%d,%d), type = %s, policy = (%s, %s, %s), victim = %u "
-		"ofs_unit = %u, pre_victim_secno = %d, prefree = %u, free = %u",
+	TP_printk("dev = (%d,%d), type = %s, policy = (%s, %s, %s), "
+		"victim = %u, cost = %u, ofs_unit = %u, "
+		"pre_victim_secno = %d, prefree = %u, free = %u",
 		show_dev(__entry->dev),
 		show_data_type(__entry->type),
 		show_gc_type(__entry->gc_type),
 		show_alloc_mode(__entry->alloc_mode),
 		show_victim_policy(__entry->gc_mode),
 		__entry->victim,
+		__entry->cost,
 		__entry->ofs_unit,
 		(int)__entry->pre_victim,
 		__entry->prefree,
@@ -790,20 +819,20 @@ TRACE_EVENT(f2fs_lookup_start,
 	TP_STRUCT__entry(
 		__field(dev_t,	dev)
 		__field(ino_t,	ino)
-		__field(const char *,	name)
+		__string(name,	dentry->d_name.name)
 		__field(unsigned int, flags)
 	),
 
 	TP_fast_assign(
 		__entry->dev	= dir->i_sb->s_dev;
 		__entry->ino	= dir->i_ino;
-		__entry->name	= dentry->d_name.name;
+		__assign_str(name, dentry->d_name.name);
 		__entry->flags	= flags;
 	),
 
 	TP_printk("dev = (%d,%d), pino = %lu, name:%s, flags:%u",
 		show_dev_ino(__entry),
-		__entry->name,
+		__get_str(name),
 		__entry->flags)
 );
 
@@ -817,7 +846,7 @@ TRACE_EVENT(f2fs_lookup_end,
 	TP_STRUCT__entry(
 		__field(dev_t,	dev)
 		__field(ino_t,	ino)
-		__field(const char *,	name)
+		__string(name,	dentry->d_name.name)
 		__field(nid_t,	cino)
 		__field(int,	err)
 	),
@@ -825,14 +854,14 @@ TRACE_EVENT(f2fs_lookup_end,
 	TP_fast_assign(
 		__entry->dev	= dir->i_sb->s_dev;
 		__entry->ino	= dir->i_ino;
-		__entry->name	= dentry->d_name.name;
+		__assign_str(name, dentry->d_name.name);
 		__entry->cino	= ino;
 		__entry->err	= err;
 	),
 
 	TP_printk("dev = (%d,%d), pino = %lu, name:%s, ino:%u, err:%d",
 		show_dev_ino(__entry),
-		__entry->name,
+		__get_str(name),
 		__entry->cino,
 		__entry->err)
 );
@@ -1074,15 +1103,15 @@ DECLARE_EVENT_CLASS(f2fs__bio,
 
 	TP_fast_assign(
 		__entry->dev		= sb->s_dev;
-		__entry->target		= bio->bi_bdev->bd_dev;
+		__entry->target		= bio_dev(bio);
 		__entry->op		= bio_op(bio);
-		__entry->op_flags	= bio->bi_rw;
+		__entry->op_flags	= bio->bi_opf;
 		__entry->type		= type;
 		__entry->sector		= bio->bi_iter.bi_sector;
 		__entry->size		= bio->bi_iter.bi_size;
 	),
 
-	TP_printk("dev = (%d,%d)/(%d,%d), rw = %s%s, %s, sector = %lld, size = %u",
+	TP_printk("dev = (%d,%d)/(%d,%d), rw = %s(%s), %s, sector = %lld, size = %u",
 		show_dev(__entry->target),
 		show_dev(__entry->dev),
 		show_bio_type(__entry->op, __entry->op_flags),
@@ -1705,6 +1734,176 @@ TRACE_EVENT(f2fs_shutdown,
 		show_dev(__entry->dev),
 		show_shutdown_mode(__entry->mode),
 		__entry->ret)
+);
+
+DECLARE_EVENT_CLASS(f2fs_zip_start,
+
+	TP_PROTO(struct inode *inode, pgoff_t cluster_idx,
+			unsigned int cluster_size, unsigned char algtype),
+
+	TP_ARGS(inode, cluster_idx, cluster_size, algtype),
+
+	TP_STRUCT__entry(
+		__field(dev_t,	dev)
+		__field(ino_t,	ino)
+		__field(pgoff_t, idx)
+		__field(unsigned int, size)
+		__field(unsigned int, algtype)
+	),
+
+	TP_fast_assign(
+		__entry->dev = inode->i_sb->s_dev;
+		__entry->ino = inode->i_ino;
+		__entry->idx = cluster_idx;
+		__entry->size = cluster_size;
+		__entry->algtype = algtype;
+	),
+
+	TP_printk("dev = (%d,%d), ino = %lu, cluster_idx:%lu, "
+		"cluster_size = %u, algorithm = %s",
+		show_dev_ino(__entry),
+		__entry->idx,
+		__entry->size,
+		show_compress_algorithm(__entry->algtype))
+);
+
+DECLARE_EVENT_CLASS(f2fs_zip_end,
+
+	TP_PROTO(struct inode *inode, pgoff_t cluster_idx,
+			unsigned int compressed_size, int ret),
+
+	TP_ARGS(inode, cluster_idx, compressed_size, ret),
+
+	TP_STRUCT__entry(
+		__field(dev_t,	dev)
+		__field(ino_t,	ino)
+		__field(pgoff_t, idx)
+		__field(unsigned int, size)
+		__field(unsigned int, ret)
+	),
+
+	TP_fast_assign(
+		__entry->dev = inode->i_sb->s_dev;
+		__entry->ino = inode->i_ino;
+		__entry->idx = cluster_idx;
+		__entry->size = compressed_size;
+		__entry->ret = ret;
+	),
+
+	TP_printk("dev = (%d,%d), ino = %lu, cluster_idx:%lu, "
+		"compressed_size = %u, ret = %d",
+		show_dev_ino(__entry),
+		__entry->idx,
+		__entry->size,
+		__entry->ret)
+);
+
+DEFINE_EVENT(f2fs_zip_start, f2fs_compress_pages_start,
+
+	TP_PROTO(struct inode *inode, pgoff_t cluster_idx,
+		unsigned int cluster_size, unsigned char algtype),
+
+	TP_ARGS(inode, cluster_idx, cluster_size, algtype)
+);
+
+DEFINE_EVENT(f2fs_zip_start, f2fs_decompress_pages_start,
+
+	TP_PROTO(struct inode *inode, pgoff_t cluster_idx,
+		unsigned int cluster_size, unsigned char algtype),
+
+	TP_ARGS(inode, cluster_idx, cluster_size, algtype)
+);
+
+DEFINE_EVENT(f2fs_zip_end, f2fs_compress_pages_end,
+
+	TP_PROTO(struct inode *inode, pgoff_t cluster_idx,
+			unsigned int compressed_size, int ret),
+
+	TP_ARGS(inode, cluster_idx, compressed_size, ret)
+);
+
+DEFINE_EVENT(f2fs_zip_end, f2fs_decompress_pages_end,
+
+	TP_PROTO(struct inode *inode, pgoff_t cluster_idx,
+			unsigned int compressed_size, int ret),
+
+	TP_ARGS(inode, cluster_idx, compressed_size, ret)
+);
+
+TRACE_EVENT(f2fs_iostat,
+
+	TP_PROTO(struct f2fs_sb_info *sbi, unsigned long long *iostat),
+
+	TP_ARGS(sbi, iostat),
+
+	TP_STRUCT__entry(
+		__field(dev_t,	dev)
+		__field(unsigned long long,	app_dio)
+		__field(unsigned long long,	app_bio)
+		__field(unsigned long long,	app_wio)
+		__field(unsigned long long,	app_mio)
+		__field(unsigned long long,	fs_dio)
+		__field(unsigned long long,	fs_nio)
+		__field(unsigned long long,	fs_mio)
+		__field(unsigned long long,	fs_gc_dio)
+		__field(unsigned long long,	fs_gc_nio)
+		__field(unsigned long long,	fs_cp_dio)
+		__field(unsigned long long,	fs_cp_nio)
+		__field(unsigned long long,	fs_cp_mio)
+		__field(unsigned long long,	app_drio)
+		__field(unsigned long long,	app_brio)
+		__field(unsigned long long,	app_rio)
+		__field(unsigned long long,	app_mrio)
+		__field(unsigned long long,	fs_drio)
+		__field(unsigned long long,	fs_gdrio)
+		__field(unsigned long long,	fs_cdrio)
+		__field(unsigned long long,	fs_nrio)
+		__field(unsigned long long,	fs_mrio)
+		__field(unsigned long long,	fs_discard)
+	),
+
+	TP_fast_assign(
+		__entry->dev		= sbi->sb->s_dev;
+		__entry->app_dio	= iostat[APP_DIRECT_IO];
+		__entry->app_bio	= iostat[APP_BUFFERED_IO];
+		__entry->app_wio	= iostat[APP_WRITE_IO];
+		__entry->app_mio	= iostat[APP_MAPPED_IO];
+		__entry->fs_dio		= iostat[FS_DATA_IO];
+		__entry->fs_nio		= iostat[FS_NODE_IO];
+		__entry->fs_mio		= iostat[FS_META_IO];
+		__entry->fs_gc_dio	= iostat[FS_GC_DATA_IO];
+		__entry->fs_gc_nio	= iostat[FS_GC_NODE_IO];
+		__entry->fs_cp_dio	= iostat[FS_CP_DATA_IO];
+		__entry->fs_cp_nio	= iostat[FS_CP_NODE_IO];
+		__entry->fs_cp_mio	= iostat[FS_CP_META_IO];
+		__entry->app_drio	= iostat[APP_DIRECT_READ_IO];
+		__entry->app_brio	= iostat[APP_BUFFERED_READ_IO];
+		__entry->app_rio	= iostat[APP_READ_IO];
+		__entry->app_mrio	= iostat[APP_MAPPED_READ_IO];
+		__entry->fs_drio	= iostat[FS_DATA_READ_IO];
+		__entry->fs_gdrio	= iostat[FS_GDATA_READ_IO];
+		__entry->fs_cdrio	= iostat[FS_CDATA_READ_IO];
+		__entry->fs_nrio	= iostat[FS_NODE_READ_IO];
+		__entry->fs_mrio	= iostat[FS_META_READ_IO];
+		__entry->fs_discard	= iostat[FS_DISCARD];
+	),
+
+	TP_printk("dev = (%d,%d), "
+		"app [write=%llu (direct=%llu, buffered=%llu), mapped=%llu], "
+		"fs [data=%llu, node=%llu, meta=%llu, discard=%llu], "
+		"gc [data=%llu, node=%llu], "
+		"cp [data=%llu, node=%llu, meta=%llu], "
+		"app [read=%llu (direct=%llu, buffered=%llu), mapped=%llu], "
+		"fs [data=%llu, (gc_data=%llu, compr_data=%llu), "
+		"node=%llu, meta=%llu]",
+		show_dev(__entry->dev), __entry->app_wio, __entry->app_dio,
+		__entry->app_bio, __entry->app_mio, __entry->fs_dio,
+		__entry->fs_nio, __entry->fs_mio, __entry->fs_discard,
+		__entry->fs_gc_dio, __entry->fs_gc_nio, __entry->fs_cp_dio,
+		__entry->fs_cp_nio, __entry->fs_cp_mio,
+		__entry->app_rio, __entry->app_drio, __entry->app_brio,
+		__entry->app_mrio, __entry->fs_drio, __entry->fs_gdrio,
+		__entry->fs_cdrio, __entry->fs_nrio, __entry->fs_mrio)
 );
 
 #endif /* _TRACE_F2FS_H */

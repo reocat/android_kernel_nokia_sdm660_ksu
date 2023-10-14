@@ -28,7 +28,8 @@
 #include <asm/string.h>
 #include <asm/io.h>
 #include <linux/atomic.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
+#include <linux/nospec.h>
 
 #include "uPD98401.h"
 #include "uPD98402.h"
@@ -599,12 +600,13 @@ static void close_rx(struct atm_vcc *vcc)
 static int start_rx(struct atm_dev *dev)
 {
 	struct zatm_dev *zatm_dev;
-	int size,i;
+	int i;
 
-DPRINTK("start_rx\n");
+	DPRINTK("start_rx\n");
 	zatm_dev = ZATM_DEV(dev);
-	size = sizeof(struct atm_vcc *)*zatm_dev->chans;
-	zatm_dev->rx_map =  kzalloc(size,GFP_KERNEL);
+	zatm_dev->rx_map = kcalloc(zatm_dev->chans,
+				   sizeof(*zatm_dev->rx_map),
+				   GFP_KERNEL);
 	if (!zatm_dev->rx_map) return -ENOMEM;
 	/* set VPI/VCI split (use all VCIs and give what's left to VPIs) */
 	zpokel(zatm_dev,(1 << dev->ci_range.vci_bits)-1,uPD98401_VRR);
@@ -938,7 +940,7 @@ static int open_tx_first(struct atm_vcc *vcc)
 	    vcc->qos.txtp.max_pcr >= ATM_OC3_PCR);
 	if (unlimited && zatm_dev->ubr != -1) zatm_vcc->shaper = zatm_dev->ubr;
 	else {
-		int uninitialized_var(pcr);
+		int pcr;
 
 		if (unlimited) vcc->qos.txtp.max_sdu = ATM_MAX_AAL5_PDU;
 		if ((zatm_vcc->shaper = alloc_shaper(vcc->dev,&pcr,
@@ -999,8 +1001,9 @@ static int start_tx(struct atm_dev *dev)
 
 	DPRINTK("start_tx\n");
 	zatm_dev = ZATM_DEV(dev);
-	zatm_dev->tx_map = kmalloc(sizeof(struct atm_vcc *)*
-	    zatm_dev->chans,GFP_KERNEL);
+	zatm_dev->tx_map = kmalloc_array(zatm_dev->chans,
+					 sizeof(*zatm_dev->tx_map),
+					 GFP_KERNEL);
 	if (!zatm_dev->tx_map) return -ENOMEM;
 	zatm_dev->tx_bw = ATM_OC3_PCR;
 	zatm_dev->free_shapers = (1 << NR_SHAPERS)-1;
@@ -1383,14 +1386,12 @@ static void zatm_close(struct atm_vcc *vcc)
 
 static int zatm_open(struct atm_vcc *vcc)
 {
-	struct zatm_dev *zatm_dev;
 	struct zatm_vcc *zatm_vcc;
 	short vpi = vcc->vpi;
 	int vci = vcc->vci;
 	int error;
 
 	DPRINTK(">zatm_open\n");
-	zatm_dev = ZATM_DEV(vcc->dev);
 	if (!test_bit(ATM_VF_PARTIAL,&vcc->flags))
 		vcc->dev_data = NULL;
 	if (vci != ATM_VPI_UNSPEC && vpi != ATM_VCI_UNSPEC)
@@ -1399,7 +1400,7 @@ static int zatm_open(struct atm_vcc *vcc)
 	DPRINTK(DEV_LABEL "(itf %d): open %d.%d\n",vcc->dev->number,vcc->vpi,
 	    vcc->vci);
 	if (!test_bit(ATM_VF_PARTIAL,&vcc->flags)) {
-		zatm_vcc = kmalloc(sizeof(struct zatm_vcc),GFP_KERNEL);
+		zatm_vcc = kmalloc(sizeof(*zatm_vcc), GFP_KERNEL);
 		if (!zatm_vcc) {
 			clear_bit(ATM_VF_ADDR,&vcc->flags);
 			return -ENOMEM;
@@ -1616,7 +1617,7 @@ static int zatm_init_one(struct pci_dev *pci_dev,
 
 	ret = dma_set_mask_and_coherent(&pci_dev->dev, DMA_BIT_MASK(32));
 	if (ret < 0)
-		goto out_disable;
+		goto out_release;
 
 	zatm_dev->pci_dev = pci_dev;
 	dev->dev_data = zatm_dev;
@@ -1645,7 +1646,7 @@ out_free:
 
 MODULE_LICENSE("GPL");
 
-static struct pci_device_id zatm_pci_tbl[] = {
+static const struct pci_device_id zatm_pci_tbl[] = {
 	{ PCI_VDEVICE(ZEITNET, PCI_DEVICE_ID_ZEITNET_1221), ZATM_COPPER },
 	{ PCI_VDEVICE(ZEITNET, PCI_DEVICE_ID_ZEITNET_1225), 0 },
 	{ 0, }

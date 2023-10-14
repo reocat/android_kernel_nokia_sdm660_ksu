@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2014-2018, 2020, The Linux Foundation. All rights reserved.
  *
  */
 
@@ -348,7 +340,6 @@ static void pp_opmode_config(int location, struct pp_sts_type *pp_sts,
 		pr_err("Invalid block type %d\n", location);
 		break;
 	}
-	return;
 }
 
 static int pp_hist_lut_get_config(char __iomem *base_addr, void *cfg_data,
@@ -385,7 +376,7 @@ static int pp_hist_lut_get_config(char __iomem *base_addr, void *cfg_data,
 		return -EFAULT;
 	}
 	if (lut_data->len != ENHIST_LUT_ENTRIES) {
-		pr_err("invalid hist_lut len %d", lut_data->len);
+		pr_err("invalid hist_lut len %d\n", lut_data->len);
 		return -EINVAL;
 	}
 	sz = ENHIST_LUT_ENTRIES * sizeof(u32);
@@ -408,15 +399,13 @@ static int pp_hist_lut_get_config(char __iomem *base_addr, void *cfg_data,
 	}
 
 	if (ret) {
-		pr_err("Failed to read hist_lut table ret %d", ret);
+		pr_err("Failed to read hist_lut table ret %d\n", ret);
 		return ret;
 	}
 
 	data = kzalloc(sz, GFP_KERNEL);
-	if (!data) {
-		pr_err("allocation failed for hist_lut size %d\n", sz);
+	if (!data)
 		return -ENOMEM;
-	}
 
 	for (i = 0; i < ENHIST_LUT_ENTRIES; i += 2) {
 		temp = readl_relaxed(hist_addr);
@@ -495,7 +484,7 @@ static int pp_hist_lut_set_config(char __iomem *base_addr,
 		break;
 	}
 	if (ret) {
-		pr_err("hist_lut table not updated ret %d", ret);
+		pr_err("hist_lut table not updated ret %d\n", ret);
 		return ret;
 	}
 	for (i = 0; i < ENHIST_LUT_ENTRIES; i += 2) {
@@ -576,7 +565,7 @@ static int pp_dither_set_config(char __iomem *base_addr,
 		(dither_data->b_cb_depth >= DITHER_DEPTH_MAP_INDEX) ||
 		(dither_data->r_cr_depth >= DITHER_DEPTH_MAP_INDEX) ||
 		(dither_data->len > DITHER_MATRIX_INDEX)) {
-		pr_err("invalid data for dither, g_y_depth %d y_cb_depth %d r_cr_depth %d\n len %d",
+		pr_err("invalid data for dither, g_y_depth %d y_cb_depth %d r_cr_depth %d\n len %d\n",
 			dither_data->g_y_depth, dither_data->b_cb_depth,
 			dither_data->r_cr_depth, dither_data->len);
 		return -EINVAL;
@@ -753,11 +742,10 @@ static int pp_gamut_get_config(char __iomem *base_addr, void *cfg_data,
 		}
 	}
 	/* allocate for c0 and c1c2 tables */
-	gamut_tbl = kzalloc((sz * 2) , GFP_KERNEL);
-	if (!gamut_tbl) {
-		pr_err("failed to alloc table of sz %d\n", sz);
+	gamut_tbl = kzalloc((sz * 2), GFP_KERNEL);
+	if (!gamut_tbl)
 		return -ENOMEM;
-	}
+
 	gamut_c0 = gamut_tbl;
 	gamut_c1c2 = gamut_c0 + tbl_sz;
 	writel_relaxed(GAMUT_CLK_GATING_INACTIVE, base_addr + GAMUT_CLK_CTRL);
@@ -790,7 +778,7 @@ static int pp_gamut_get_config(char __iomem *base_addr, void *cfg_data,
 		   * sizeof(u32);
 	if (sz < sz_scale) {
 		kfree(gamut_tbl);
-		gamut_tbl = kzalloc(sz_scale , GFP_KERNEL);
+		gamut_tbl = kzalloc(sz_scale, GFP_KERNEL);
 		if (!gamut_tbl) {
 			pr_err("failed to alloc scale tbl size %d\n",
 			       sz_scale);
@@ -851,7 +839,7 @@ static int pp_gamut_set_config(char __iomem *base_addr,
 		return -EINVAL;
 	}
 	if (!(gamut_cfg_data->flags & ~(MDP_PP_OPS_READ))) {
-		pr_debug("only read ops is set %d", gamut_cfg_data->flags);
+		pr_debug("only read ops is set %d\n", gamut_cfg_data->flags);
 		return 0;
 	}
 
@@ -869,7 +857,7 @@ static int pp_gamut_set_config(char __iomem *base_addr,
 
 	if (gamut_data->mode != mdp_gamut_fine_mode &&
 	    gamut_data->mode != mdp_gamut_coarse_mode) {
-		pr_err("invalid gamut mode %d", gamut_data->mode);
+		pr_err("invalid gamut mode %d\n", gamut_data->mode);
 		return -EINVAL;
 	}
 	index_start = (gamut_data->mode == mdp_gamut_fine_mode) ?
@@ -909,8 +897,8 @@ static int pp_gamut_set_config(char __iomem *base_addr,
 		writel_relaxed(val, (base_addr + GAMUT_TABLE_INDEX));
 
 		writel_relaxed(gamut_data->c1_c2_data[i][0],
-			       base_addr + GAMUT_TABLE_LOWER_GB);
-		for (j = 0; j < gamut_data->tbl_size[i] - 1 ; j++) {
+				base_addr + GAMUT_TABLE_LOWER_GB);
+		for (j = 0; j < gamut_data->tbl_size[i] - 1; j++) {
 			gamut_val = gamut_data->c1_c2_data[i][j + 1];
 			gamut_val = (gamut_val << 32) |
 					gamut_data->c0_data[i][j];
@@ -918,7 +906,7 @@ static int pp_gamut_set_config(char __iomem *base_addr,
 					base_addr + GAMUT_TABLE_UPPER_R);
 		}
 		writel_relaxed(gamut_data->c0_data[i][j],
-					base_addr + GAMUT_TABLE_UPPER_R);
+				base_addr + GAMUT_TABLE_UPPER_R);
 		if ((i >= MDP_GAMUT_SCALE_OFF_TABLE_NUM) ||
 				(!gamut_data->map_en))
 			continue;
@@ -974,7 +962,7 @@ static int pp_pcc_set_config(char __iomem *base_addr,
 		return -EINVAL;
 	}
 	if (!(pcc_cfg_data->ops & ~(MDP_PP_OPS_READ))) {
-		pr_info("only read ops is set %d", pcc_cfg_data->ops);
+		pr_info("only read ops is set %d\n", pcc_cfg_data->ops);
 		return 0;
 	}
 	pcc_data = pcc_cfg_data->cfg_payload;
@@ -1172,6 +1160,7 @@ static void pp_pa_set_mem_col(char __iomem *base_addr,
 	u32 fol_p0_off = 0, fol_p2_off = 0;
 	char __iomem *mem_col_p0_addr = NULL;
 	char __iomem *mem_col_p2_addr = NULL;
+
 	if (block_type == DSPP) {
 		skin_p0_off = PA_DSPP_MEM_COL_SKIN_P0_OFF;
 		skin_p2_off = PA_DSPP_MEM_COL_SKIN_P2_OFF;
@@ -1311,11 +1300,11 @@ static int pp_pa_set_config(char __iomem *base_addr,
 		return -EINVAL;
 	}
 	if (!(pa_cfg_data->flags & ~(MDP_PP_OPS_READ))) {
-		pr_info("only read ops is set %d", pa_cfg_data->flags);
+		pr_info("only read ops is set %d\n", pa_cfg_data->flags);
 		return 0;
 	}
 	if (pa_cfg_data->flags & MDP_PP_OPS_DISABLE) {
-		pr_debug("Disable PA");
+		pr_debug("Disable PA\n");
 		goto pa_set_sts;
 	}
 
@@ -1420,6 +1409,7 @@ static void pp_pa_get_mem_col(char __iomem *base_addr,
 	u32 fol_p0_off = 0, fol_p2_off = 0;
 	char __iomem *mem_col_p0_addr = NULL;
 	char __iomem *mem_col_p2_addr = NULL;
+
 	if (block_type == DSPP) {
 		skin_p0_off = PA_DSPP_MEM_COL_SKIN_P0_OFF;
 		skin_p2_off = PA_DSPP_MEM_COL_SKIN_P2_OFF;
@@ -1720,7 +1710,7 @@ static int pp_igc_set_config(char __iomem *base_addr,
 		return ret;
 	}
 	if (lut_cfg_data->block > IGC_MASK_MAX) {
-		pr_err("invalid mask value for IGC %d", lut_cfg_data->block);
+		pr_err("invalid mask value for IGC %d\n", lut_cfg_data->block);
 		return -EINVAL;
 	}
 	if (!(lut_cfg_data->ops & MDP_PP_OPS_WRITE)) {
@@ -1836,7 +1826,6 @@ static int pp_igc_get_config(char __iomem *base_addr, void *cfg_data,
 	/* Allocate for c0c1 and c2 tables */
 	c0c1_data = kzalloc(sz * 2, GFP_KERNEL);
 	if (!c0c1_data) {
-		pr_err("allocation failed for c0c1 size %d\n", sz * 2);
 		ret = -ENOMEM;
 		goto exit;
 	}
@@ -1856,11 +1845,11 @@ static int pp_igc_get_config(char __iomem *base_addr, void *cfg_data,
 		c2_data[i] = readl_relaxed(c2) & IGC_DATA_MASK;
 	}
 	if (copy_to_user(lut_data->c0_c1_data, c0c1_data, sz)) {
-		pr_err("failed to copy the c0c1 data");
+		pr_err("failed to copy the c0c1 data\n");
 		ret = -EFAULT;
 	}
 	if (!ret && copy_to_user(lut_data->c2_data, c2_data, sz)) {
-		pr_err("failed to copy the c2 data");
+		pr_err("failed to copy the c2 data\n");
 		ret = -EFAULT;
 	}
 	kfree(c0c1_data);
@@ -1895,7 +1884,7 @@ static int pp_pgc_set_config(char __iomem *base_addr,
 		return -EINVAL;
 	}
 	if (!(pgc_data->flags & ~(MDP_PP_OPS_READ))) {
-		pr_debug("only read ops is set %d", pgc_data->flags);
+		pr_debug("only read ops is set %d\n", pgc_data->flags);
 		return 0;
 	}
 	if (pgc_data->flags & MDP_PP_OPS_DISABLE) {
@@ -1966,6 +1955,7 @@ static int pp_pgc_get_config(char __iomem *base_addr, void *cfg_data,
 	struct mdp_pgc_lut_data *pgc_data = NULL;
 	struct mdp_pgc_lut_data_v1_7  pgc_lut_data_v17;
 	struct mdp_pgc_lut_data_v1_7  *pgc_data_v17 = &pgc_lut_data_v17;
+
 	if (!base_addr || !cfg_data) {
 		pr_err("invalid params base_addr %pK cfg_data %pK block_type %d\n",
 		      base_addr, cfg_data, block_type);
@@ -1983,7 +1973,7 @@ static int pp_pgc_get_config(char __iomem *base_addr, void *cfg_data,
 		return -EFAULT;
 	}
 	if (!(pgc_data->flags & MDP_PP_OPS_READ)) {
-		pr_info("read ops is not set %d", pgc_data->flags);
+		pr_info("read ops is not set %d\n", pgc_data->flags);
 		return -EINVAL;
 	}
 	sz = PGC_LUT_ENTRIES * sizeof(u32);
@@ -1995,10 +1985,9 @@ static int pp_pgc_get_config(char __iomem *base_addr, void *cfg_data,
 		return -EFAULT;
 	}
 	c0_data = kzalloc(sz * 3, GFP_KERNEL);
-	if (!c0_data) {
-		pr_err("memory allocation failure sz %d", sz * 3);
+	if (!c0_data)
 		return -ENOMEM;
-	}
+
 	c1_data = c0_data + PGC_LUT_ENTRIES;
 	c2_data = c1_data + PGC_LUT_ENTRIES;
 	c0 = base_addr + PGC_C0_LUT_INDEX;

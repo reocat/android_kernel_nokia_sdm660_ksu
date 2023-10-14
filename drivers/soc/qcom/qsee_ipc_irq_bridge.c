@@ -1,13 +1,7 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/cdev.h>
@@ -50,9 +44,6 @@ static void qiib_cleanup(void);
  * @devicep:		Pointer to the qiib class device structure.
  * @poll_wait_queue:	poll thread wait queue.
  * @irq_num:		IRQ number usd for this device.
- * @rx_irq_reset_reg:	Reference to the register to reset the rx irq
- *			line, if applicable.
- * @irq_mask:		Mask written to @rx_irq_reset_reg to clear the irq.
  * @irq_pending_count:	The number of IRQs pending.
  * @irq_pending_count_lock: Lock to protect @irq_pending_cont.
  * @ssr_name:		Name of the subsystem recognized by the SSR framework.
@@ -71,8 +62,6 @@ struct qiib_dev {
 	wait_queue_head_t poll_wait_queue;
 
 	uint32_t irq_line;
-	void __iomem *rx_irq_reset_reg;
-	uint32_t irq_mask;
 	uint32_t irq_pending_count;
 	spinlock_t irq_pending_count_lock;
 
@@ -137,7 +126,6 @@ static int qiib_driver_data_init(void)
  */
 static void qiib_driver_data_deinit(void)
 {
-	qiib_cleanup();
 	if (!qiib_info->log_ctx)
 		ipc_log_context_destroy(qiib_info->log_ctx);
 	kfree(qiib_info);
@@ -294,7 +282,7 @@ static int qiib_add_device(struct qiib_dev *devp, int i)
 	devp->cdev.owner = THIS_MODULE;
 
 	ret = cdev_add(&devp->cdev, qiib_info->dev_num + i, 1);
-	if (IS_ERR_VALUE(ret)) {
+	if (IS_ERR_VALUE((unsigned long)ret)) {
 		QIIB_ERR("%s: cdev_add() failed for dev [%s] ret:%i\n",
 			__func__, devp->dev_name, ret);
 		return ret;
@@ -331,9 +319,6 @@ static irqreturn_t qiib_irq_handler(int irq, void *priv)
 	spin_unlock_irqrestore(&devp->irq_pending_count_lock, flags);
 	wake_up_interruptible(&devp->poll_wait_queue);
 
-	if (devp->rx_irq_reset_reg)
-		writel_relaxed(devp->irq_mask, devp->rx_irq_reset_reg);
-
 	QIIB_DBG("%s name[%s] pend_count[%d]\n", __func__,
 				devp->dev_name, devp->irq_pending_count);
 
@@ -349,21 +334,39 @@ static irqreturn_t qiib_irq_handler(int irq, void *priv)
  */
 static int qiib_parse_node(struct device_node *node, struct qiib_dev *devp)
 {
-	char *key;
 	const char *subsys_name;
 	const char *dev_name;
-	uint32_t irqtype;
-	uint32_t irq_clear[2];
-	struct irq_data *irqtype_data;
-	int ret = -ENODEV;
+	char *key;
+	int ret;
 
 	key = "qcom,dev-name";
-	dev_name = of_get_property(node, key, NULL);
-	if (!dev_name) {
+	ret = of_property_read_string(node, key, &dev_name);
+	if (ret) {
 		QIIB_ERR("%s: missing key: %s\n", __func__, key);
-		goto missing_key;
+		return ret;
 	}
 	QIIB_DBG("%s: %s = %s\n", __func__, key, dev_name);
+
+	key = "label";
+	ret = of_property_read_string(node, key, &subsys_name);
+	if (ret) {
+		QIIB_ERR("%s: missing key: %s\n", __func__, key);
+		return ret;
+	}
+	QIIB_DBG("%s: %s = %s\n", __func__, key, subsys_name);
+
+	devp->dev_name = dev_name;
+	devp->ssr_name = subsys_name;
+
+	return ret;
+}
+
+static int qiib_init_notifs(struct device_node *node, struct qiib_dev *devp)
+{
+	struct irq_data *irqtype_data;
+	uint32_t irqtype;
+	char *key;
+	int ret = -ENODEV;
 
 	key = "interrupts";
 	devp->irq_line = irq_of_parse_and_map(node, 0);
@@ -381,77 +384,27 @@ static int qiib_parse_node(struct device_node *node, struct qiib_dev *devp)
 	irqtype = irqd_get_trigger_type(irqtype_data);
 	QIIB_DBG("%s: irqtype = %d\n", __func__, irqtype);
 
-	key = "label";
-	subsys_name = of_get_property(node, key, NULL);
-	if (!subsys_name) {
-		QIIB_ERR("%s: missing key: %s\n", __func__, key);
-		goto missing_key;
-	}
-	QIIB_DBG("%s: %s = %s\n", __func__, key, subsys_name);
-
-	if (irqtype & IRQF_TRIGGER_HIGH) {
-		key = "qcom,rx-irq-clr-mask";
-		ret = of_property_read_u32(node, key, &devp->irq_mask);
-		if (ret) {
-			QIIB_ERR("%s: missing key: %s\n", __func__, key);
-			ret = -ENODEV;
-			goto missing_key;
-		}
-		QIIB_DBG("%s: %s = %d\n", __func__, key, devp->irq_mask);
-
-		key = "qcom,rx-irq-clr";
-		ret = of_property_read_u32_array(node, key, irq_clear,
-							ARRAY_SIZE(irq_clear));
-		if (ret) {
-			QIIB_ERR("%s: missing key: %s\n", __func__, key);
-			ret = -ENODEV;
-			goto missing_key;
-		}
-
-		devp->rx_irq_reset_reg = ioremap_nocache(irq_clear[0],
-								irq_clear[1]);
-		if (!devp->rx_irq_reset_reg) {
-			QIIB_ERR("%s: unable to map rx reset reg\n", __func__);
-			ret = -ENOMEM;
-			goto missing_key;
-		}
-	}
-
-	devp->dev_name = dev_name;
-	devp->ssr_name = subsys_name;
 	devp->nb.notifier_call = qiib_restart_notifier_cb;
-
 	devp->notifier_handle = subsys_notif_register_notifier(devp->ssr_name,
 								&devp->nb);
 	if (IS_ERR_OR_NULL(devp->notifier_handle)) {
 		QIIB_ERR("%s: Could not register SSR notifier cb\n", __func__);
 		ret = -EINVAL;
-		goto ssr_reg_fail;
+		goto missing_key;
 	}
 
-	ret = request_irq(devp->irq_line, qiib_irq_handler,
-			irqtype | IRQF_NO_SUSPEND,
+	ret = request_irq(devp->irq_line, qiib_irq_handler, irqtype,
 			devp->dev_name, devp);
 	if (ret < 0) {
 		QIIB_ERR("%s: request_irq() failed on %d\n", __func__,
 				devp->irq_line);
 		goto req_irq_fail;
-	} else {
-		ret = enable_irq_wake(devp->irq_line);
-		if (ret < 0)
-			QIIB_ERR("%s: enable_irq_wake() failed on %d\n",
-					__func__, devp->irq_line);
 	}
 
 	return ret;
 
 req_irq_fail:
 	subsys_notif_unregister_notifier(devp->notifier_handle,	&devp->nb);
-ssr_reg_fail:
-	if (devp->rx_irq_reset_reg) {
-		iounmap(devp->rx_irq_reset_reg);
-		devp->rx_irq_reset_reg = NULL;
-	}
 missing_key:
 	return ret;
 }
@@ -480,8 +433,10 @@ static void qiib_cleanup(void)
 	}
 	mutex_unlock(&qiib_info->list_lock);
 
-	if (!IS_ERR_OR_NULL(qiib_info->classp))
+	if (!IS_ERR_OR_NULL(qiib_info->classp)) {
 		class_destroy(qiib_info->classp);
+		qiib_info->classp = NULL;
+	}
 
 	unregister_chrdev_region(MAJOR(qiib_info->dev_num), qiib_info->nports);
 }
@@ -500,7 +455,7 @@ static int qiib_alloc_chrdev_region(void)
 			       0,
 			       qiib_info->nports,
 			       DEVICE_NAME);
-	if (IS_ERR_VALUE(ret)) {
+	if (IS_ERR_VALUE((unsigned long)ret)) {
 		QIIB_ERR("%s: alloc_chrdev_region() failed ret:%i\n",
 			__func__, ret);
 		return ret;
@@ -549,7 +504,6 @@ static int qsee_ipc_irq_bridge_probe(struct platform_device *pdev)
 		ret = qiib_parse_node(node, devp);
 		if (ret) {
 			QIIB_ERR("%s:qiib_parse_node failed %d\n", __func__, i);
-			kfree(devp);
 			goto error;
 		}
 
@@ -557,9 +511,16 @@ static int qsee_ipc_irq_bridge_probe(struct platform_device *pdev)
 		if (ret < 0) {
 			QIIB_ERR("%s: add [%s] device failed ret=%d\n",
 					__func__, devp->dev_name, ret);
-			kfree(devp);
 			goto error;
 		}
+
+		ret = qiib_init_notifs(node, devp);
+		if (ret < 0) {
+			QIIB_ERR("%s: qiib_init_notifs failed ret=%d\n",
+					__func__, ret);
+			goto error;
+		}
+
 		i++;
 	}
 
@@ -587,7 +548,6 @@ static struct platform_driver qsee_ipc_irq_bridge_driver = {
 	.remove = qsee_ipc_irq_bridge_remove,
 	.driver = {
 		.name = MODULE_NAME,
-		.owner = THIS_MODULE,
 		.of_match_table = qsee_ipc_irq_bridge_match_table,
 	 },
 };

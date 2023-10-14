@@ -2,7 +2,7 @@
  *
  * FocalTech TouchScreen driver.
  *
- * Copyright (c) 2010-2016, FocalTech Systems, Ltd., all rights reserved.
+ * Copyright (c) 2012-2019, FocalTech Systems, Ltd., all rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -19,7 +19,7 @@
 *
 * File Name: focaltech_esdcheck.c
 *
-*    Author: luoguojin
+*    Author: Focaltech Driver Team
 *
 *   Created: 2016-08-03
 *
@@ -30,6 +30,8 @@
 * Revision History:
 *        v1.0:
 *            First release. By luougojin 2016-08-03
+*        v1.1: By luougojin 2017-02-15
+*            1. Add LCD_ESD_PATCH to control idc_esdcheck_lcderror
 *****************************************************************************/
 
 /*****************************************************************************
@@ -41,32 +43,32 @@
 /*****************************************************************************
 * Private constant and macro definitions using #define
 *****************************************************************************/
-#define ESDCHECK_WAIT_TIME              1000    //ms
+#define ESDCHECK_WAIT_TIME              1000    /* ms */
+#define LCD_ESD_PATCH                   0
+#define ESDCHECK_INTRCNT_MAX            2
 
 /*****************************************************************************
 * Private enumerations, structures and unions using typedef
 *****************************************************************************/
-struct fts_esdcheck_st
-{
-    u8      active              : 1;    /* 1- esd check active, need check esd 0- no esd check */
-    u8      suspend             : 1;
-    u8      proc_debug          : 1;    /* apk or adb is accessing I2C */
-    u8      intr                : 1;    /* 1- Interrupt trigger */
-    u8      unused              : 4;
-    u8      flow_work_hold_cnt;         /* Flow Work Cnt(reg0x91) keep a same value for x times. >=5 times is ESD, need reset */
-    u8      flow_work_cnt_last;         /* Save Flow Work Cnt(reg0x91) value */
-    u32     hardware_reset_cnt;
-    u32     i2c_nack_cnt;
-    u32     i2c_dataerror_cnt;
+struct fts_esdcheck_st {
+	u8  mode                : 1;    /* 1- need check esd 0- no esd check */
+	u8  suspend             : 1;
+	u8  proc_debug          : 1;    /* apk or adb use */
+	u8  intr                : 1;    /* 1- Interrupt trigger */
+	u8  unused              : 4;
+	u8  intr_cnt;
+	u8  flow_work_hold_cnt;         /* Flow Work Cnt(reg0x91) keep a same value for x times. >=5 times is ESD, need reset */
+	u8  flow_work_cnt_last;         /* Save Flow Work Cnt(reg0x91) value */
+	u32 hardware_reset_cnt;
+	u32 nack_cnt;
+	u32 dataerror_cnt;
 };
 
 /*****************************************************************************
 * Static variables
 *****************************************************************************/
-static struct delayed_work fts_esdcheck_work;
-static struct workqueue_struct *fts_esdcheck_workqueue = NULL;
 static struct fts_esdcheck_st fts_esdcheck_data;
-static bool get_flow_cnt( void ); //xlg
+
 /*****************************************************************************
 * Global variable or extern global variabls/functions
 *****************************************************************************/
@@ -78,181 +80,90 @@ static bool get_flow_cnt( void ); //xlg
 /*****************************************************************************
 * functions body
 *****************************************************************************/
-/*****************************************************************************
-*  Name: lcd_esdcheck
-*  Brief:
-*  Input:
-*  Output:
-*  Return:
-*****************************************************************************/
+#if LCD_ESD_PATCH
 int lcd_need_reset;
 static int tp_need_recovery; /* LCD reset cause Tp reset */
-int idc_esdcheck_lcderror(void)
+int idc_esdcheck_lcderror(struct fts_ts_data *ts_data)
 {
-    u8 val;
-    int ret;
+	int ret = 0;
+	u8 val = 0;
 
-    FTS_DEBUG("[ESD]Check LCD ESD");
-    if ( (tp_need_recovery == 1) && (lcd_need_reset == 0) )
-    {
-        tp_need_recovery = 0;
-        /* LCD reset, need recover TP state */
-        fts_tp_state_recovery(fts_i2c_client);
-    }
+	FTS_DEBUG("check LCD ESD");
+	if ( (tp_need_recovery == 1) && (lcd_need_reset == 0) ) {
+		tp_need_recovery = 0;
+		/* LCD reset, need recover TP state */
+		fts_release_all_finger();
+		fts_tp_state_recovery(ts_data);
+	}
 
-    ret = fts_i2c_read_reg(fts_i2c_client, FTS_REG_ESD_SATURATE, &val);
-    if ( ret < 0)
-    {
-        FTS_ERROR("[ESD]: Read ESD_SATURATE(0xED) failed ret=%d!", ret);
-        return -EIO;
-    }
-
-    if ((val == 0xAA) || (get_flow_cnt()))
-    {
-        /*
-        * 1. Set flag lcd_need_reset = 1;
-        * 2. LCD driver need reset(recovery) LCD and set lcd_need_reset to 0
-        * 3. recover TP state
-        */
-        fts_esdcheck_data.flow_work_hold_cnt = 0;
-        FTS_INFO("LCD ESD, Execute LCD reset!");
-        lcd_need_reset = 1;
-        tp_need_recovery = 1;
-    }
-
-    return 0;
-}
-//xlg
-#define FTS_INT_CNT_REG		0x8F
-unsigned drv_int_cnt = 0;
-unsigned drv_int_cnt_last = 0;
-u8 fw_int_cnt = 0;
-
-void fts_irq_disable(void);
-void fts_irq_enable(void);
-
-
-#define ABS(x) ((x < 0) ? -x : x)
-
-static void check_int_cnt(void)
-{
-	u8 fw_int_cnt_cur;
-	int ret;
-
-	ret = fts_i2c_read_reg(fts_i2c_client, FTS_INT_CNT_REG, &fw_int_cnt_cur);
+	ret = fts_read_reg(FTS_REG_ESD_SATURATE, &val);
 	if ( ret < 0) {
-		return;
+		FTS_ERROR("read reg0xED fail,ret:%d", ret);
+		return -EIO;
 	}
 
-	if (ABS(fw_int_cnt_cur-fw_int_cnt) >= 5) {
-		for (ret = 0; ret < 3; ret++) {
-			if (drv_int_cnt == drv_int_cnt_last) {
-				msleep(100);
-				continue;
-			}
-			break;
-		}
-		if (ret == 3) {
-			u32 irq_gpio = fts_wq_data->pdata->irq_gpio;
-
-			FTS_ERROR("INT count error detected!");
-			//FTS_ERROR("INT current status: %d", gpio_get_value(irq_gpio));
-			FTS_ERROR("fw int: [%d/%d], drv int: [%d/%d]",
-				fw_int_cnt_cur & 0xFF, fw_int_cnt & 0xFF,
-				drv_int_cnt, drv_int_cnt_last);
-
-			fts_irq_disable();
-			fw_int_cnt_cur = 0;
-			drv_int_cnt = 0;
-			FTS_ERROR("reset tp first");
-			fts_reset_proc(200);
-
-			FTS_ERROR("INT pin invalid, reset INT as input");
-			gpio_free(irq_gpio);
-			ret = gpio_request(irq_gpio, "fts_irq_gpio");
-			if (ret) {
-				/* if goes here, remove gpio_free/gpio_request*/
-				FTS_ERROR("failed to request fts_irq_gpio");
-			}
-			gpio_direction_input(irq_gpio);
-			fts_irq_enable();
-			return;
-		}
+	if (val == 0xAA) {
+		/*
+		* 1. Set flag lcd_need_reset = 1;
+		* 2. LCD driver need reset(recovery) LCD and set lcd_need_reset to 0
+		* 3. recover TP state
+		*/
+		FTS_INFO("LCD ESD, need execute LCD reset");
+		lcd_need_reset = 1;
+		tp_need_recovery = 1;
 	}
-	fw_int_cnt = fw_int_cnt_cur;
-	drv_int_cnt_last = drv_int_cnt;
-	return;
+
+	return 0;
+}
+#endif
+
+static int fts_esdcheck_tp_reset(struct fts_ts_data *ts_data)
+{
+	FTS_FUNC_ENTER();
+
+	fts_esdcheck_data.flow_work_hold_cnt = 0;
+	fts_esdcheck_data.hardware_reset_cnt++;
+
+	fts_reset_proc(200);
+	fts_release_all_finger();
+	fts_tp_state_recovery(ts_data);
+
+	FTS_FUNC_EXIT();
+	return 0;
 }
 
-/*****************************************************************************
-*  Name: fts_esdcheck_tp_reset
-*  Brief: esd check algorithm
-*  Input:
-*  Output:
-*  Return:
-*****************************************************************************/
-static int fts_esdcheck_tp_reset( void )
+static bool get_chip_id(struct fts_ts_data *ts_data)
 {
-    FTS_FUNC_ENTER();
+	int ret = 0;
+	int i = 0;
+	u8 reg_value = 0;
+	u8 reg_addr = 0;
+	u8 chip_id = ts_data->ic_info.ids.chip_idh;
 
-    fts_irq_disable(); //xlg
-    //fts_esdcheck_data.flow_work_hold_cnt = 0;
-    fts_esdcheck_data.hardware_reset_cnt++;
+	for (i = 0; i < 3; i++) {
+		reg_addr = FTS_REG_CHIP_ID;
+		ret = fts_read(&reg_addr, 1, &reg_value, 1);
+		if (ret < 0) {
+			FTS_ERROR("read chip id fail,ret:%d", ret);
+			fts_esdcheck_data.nack_cnt++;
+		} else {
+			if (reg_value == chip_id) {
+				break;
+			} else {
+				FTS_DEBUG("read chip_id:%x,retry:%d", reg_value, i);
+				fts_esdcheck_data.dataerror_cnt++;
+			}
+		}
+		msleep(10);
+	}
 
-    fts_reset_proc(200);
-	fts_tp_state_recovery(fts_i2c_client);
-    fts_irq_enable();
+	/* if can't get correct data in 3 times, then need hardware reset */
+	if (i >= 3) {
+		FTS_ERROR("read chip id 3 times fail, need execute TP reset");
+		return true;
+	}
 
-    FTS_FUNC_EXIT();
-    return 0;
-}
-
-/*****************************************************************************
-*  Name: get_chip_id
-*  Brief: Read Chip Id 3 times
-*  Input:
-*  Output:
-*  Return:  1 - Read Chip Id 3 times failed
-*           0 - Read Chip Id pass
-*****************************************************************************/
-static bool get_chip_id( void )
-{
-    int     err = 0;
-    int     i = 0;
-    u8      reg_value = 0;
-    u8      reg_addr = 0;
-
-    for (i = 0; i < 3; i++)
-    {
-        reg_addr = FTS_REG_CHIP_ID;
-        err = fts_i2c_read(fts_i2c_client, &reg_addr, 1, &reg_value, 1);
-
-        if ( err < 0 )
-        {
-            FTS_ERROR("[ESD]: Read Reg 0xA3 failed ret = %d!!", err);
-            fts_esdcheck_data.i2c_nack_cnt++;
-        }
-        else
-        {
-            if ( (reg_value == chip_types.chip_idh) || (reg_value == 0xEF) ) /* Upgrade sometimes can't detect */
-            {
-                break;
-            }
-            else
-            {
-                fts_esdcheck_data.i2c_dataerror_cnt++;
-            }
-        }
-    }
-
-    /* if can't get correct data in 3 times, then need hardware reset */
-    if (i >= 3)
-    {
-        FTS_ERROR("[ESD]: Read Chip id 3 times failed, need execute TP reset!!");
-        return 1;
-    }
-
-    return 0;
+	return false;
 }
 
 /*****************************************************************************
@@ -260,192 +171,133 @@ static bool get_chip_id( void )
 *  Brief: Read flow cnt(0x91)
 *  Input:
 *  Output:
-*  Return:  1 - Reg 0x91(flow cnt) abnormal: hold a value for 5 times
-*           0 - Reg 0x91(flow cnt) normal
+*  Return:  1(true) - Reg 0x91(flow cnt) abnormal: hold a value for 5 times
+*           0(false) - Reg 0x91(flow cnt) normal
 *****************************************************************************/
-static bool get_flow_cnt( void )
+static bool get_flow_cnt(struct fts_ts_data *ts_data)
 {
-    int     err = 0;
-    u8      reg_value = 0;
-    u8      reg_addr = 0;
-//add by xlg start  20170923
-     /* 1. esdcheck is interrupt, then return */
-    if (fts_esdcheck_data.intr == 1)
-    {
-        FTS_INFO("[ESD]: In interrupt state, not check esd, return immediately!!");
-        return 0;
-    }
+	int ret = 0;
+	u8  reg_value = 0;
+	u8  reg_addr = 0;
 
-    /* 2. check power state, if suspend, no need check esd */
-    if (fts_esdcheck_data.suspend == 1)
-    {
-        FTS_INFO("[ESD]: In suspend, not check esd, return immediately!!");
-        /* because in suspend state, adb can be used, when upgrade FW, will active ESD check(active = 1)
-        *  But in suspend, then will don't queue_delayed_work, when resume, don't check ESD again
-        */
-        fts_esdcheck_data.active = 0;
-        return 0;
-    }
+	reg_addr = FTS_REG_FLOW_WORK_CNT;
+	ret = fts_read(&reg_addr, 1, &reg_value, 1);
+	if (ret < 0) {
+		FTS_ERROR("read reg0x91 fail,ret:%d", ret);
+		fts_esdcheck_data.nack_cnt++;
+	} else {
+		if ( reg_value == fts_esdcheck_data.flow_work_cnt_last ) {
+			FTS_DEBUG("reg0x91,val:%x,last:%x", reg_value,
+				fts_esdcheck_data.flow_work_cnt_last);
+			fts_esdcheck_data.flow_work_hold_cnt++;
+		} else {
+			fts_esdcheck_data.flow_work_hold_cnt = 0;
+		}
 
-    /* 3. check fts_esdcheck_data.proc_debug state, if 1-proc busy, no need check esd*/
-    if (fts_esdcheck_data.proc_debug == 1)
-    {
-        FTS_INFO("[ESD]: In apk or adb command mode, not check esd, return immediately!!");
-        return 0;
-    }
-//add by xlg end  20170923
+		fts_esdcheck_data.flow_work_cnt_last = reg_value;
+	}
 
-    reg_addr = FTS_REG_FLOW_WORK_CNT;
-    err = fts_i2c_read(fts_i2c_client, &reg_addr, 1, &reg_value, 1);
-    if (err < 0)
-    {
-        FTS_ERROR("[ESD]: Read Reg 0x91 failed ret = %d!!", err);
-        fts_esdcheck_data.i2c_nack_cnt++;
-    }
-    else
-    {
-        if ( reg_value == fts_esdcheck_data.flow_work_cnt_last )
-        {
-            fts_esdcheck_data.flow_work_hold_cnt++;
-        }
-        else
-        {
-            fts_esdcheck_data.flow_work_hold_cnt = 0;
-        }
+		/* Flow Work Cnt keep a value for 5 times, need execute TP reset */
+	if (fts_esdcheck_data.flow_work_hold_cnt >= 5) {
+		FTS_DEBUG("reg0x91 keep a value for 5 times, need execute TP reset");
+		return true;
+	}
 
-        fts_esdcheck_data.flow_work_cnt_last = reg_value;
-    }
-
-    /* if read flow work cnt 5 times and the value are all the same, then need hardware_reset */
-    if (fts_esdcheck_data.flow_work_hold_cnt >= 5)
-    {
-        FTS_DEBUG("[ESD]: Flow Work Cnt(reg0x91) keep a value for 5 times, need execute TP reset!!");
-        return 1;
-    }
-
-    return 0;
+	return false;
 }
 
-/*****************************************************************************
-*  Name: esdcheck_algorithm
-*  Brief: esd check algorithm
-*  Input:
-*  Output:
-*  Return:
-*****************************************************************************/
-static int esdcheck_algorithm(void)
+static int esdcheck_algorithm(struct fts_ts_data *ts_data)
 {
-    int     err = 0;
-    u8      reg_value = 0;
-    u8      reg_addr = 0;
-    bool    hardware_reset = 0;
+	int  ret = 0;
+	u8   reg_value = 0;
+	u8   reg_addr = 0;
+	bool hardware_reset = 0;
 
-    /* 1. esdcheck is interrupt, then return */
-    if (fts_esdcheck_data.intr == 1)
-    {
-        FTS_INFO("[ESD]: In interrupt state, not check esd, return immediately!!");
-        return 0;
-    }
+	/* 1. esdcheck is interrupt, then return */
+	if (fts_esdcheck_data.intr == 1) {
+		fts_esdcheck_data.intr_cnt++;
+		if (fts_esdcheck_data.intr_cnt > ESDCHECK_INTRCNT_MAX)
+			fts_esdcheck_data.intr = 0;
+		else
+			return 0;
+	}
 
-    /* 2. check power state, if suspend, no need check esd */
-    if (fts_esdcheck_data.suspend == 1)
-    {
-        FTS_INFO("[ESD]: In suspend, not check esd, return immediately!!");
-        /* because in suspend state, adb can be used, when upgrade FW, will active ESD check(active = 1)
-        *  But in suspend, then will don't queue_delayed_work, when resume, don't check ESD again
-        */
-        fts_esdcheck_data.active = 0;
-        return 0;
-    }
+	/* 2. check power state, if suspend, no need check esd */
+	if (fts_esdcheck_data.suspend == 1) {
+		FTS_DEBUG("In suspend, not check esd");
+		/* because in suspend state, adb can be used, when upgrade FW, will
+		 * active ESD check(active = 1); But in suspend, then will don't
+		 * queue_delayed_work, when resume, don't check ESD again
+		 */
+		return 0;
+	}
 
-    /* 3. check fts_esdcheck_data.proc_debug state, if 1-proc busy, no need check esd*/
-    if (fts_esdcheck_data.proc_debug == 1)
-    {
-        FTS_INFO("[ESD]: In apk or adb command mode, not check esd, return immediately!!");
-        return 0;
-    }
+	/* 3. check fts_esdcheck_data.proc_debug state, if 1-proc busy, no need check esd*/
+	if (fts_esdcheck_data.proc_debug == 1) {
+		FTS_INFO("In apk/adb command mode, not check esd");
+		return 0;
+	}
 
-    /* 4. In factory mode, can't check esd */
-    reg_addr = FTS_REG_WORKMODE;
-    err = fts_i2c_read(fts_i2c_client, &reg_addr, 1, &reg_value, 1);
-    if ( err < 0 )
-    {
-        fts_esdcheck_data.i2c_nack_cnt++;
-    }
-    else if ( (reg_value & 0x70) ==  FTS_REG_WORKMODE_FACTORY_VALUE)
-    {
-        FTS_INFO("[ESD]: In factory mode, not check esd, return immediately!!");
-        return 0;
-    }
+	/* 4. In factory mode, can't check esd */
+	reg_addr = FTS_REG_WORKMODE;
+	ret = fts_read_reg(reg_addr, &reg_value);
+	if ( ret < 0 ) {
+		fts_esdcheck_data.nack_cnt++;
+	} else if ( (reg_value & 0x70) !=  FTS_REG_WORKMODE_WORK_VALUE) {
+		FTS_DEBUG("not in work mode(%x), no check esd", reg_value);
+		return 0;
+	}
 
-    /* 5. Get Chip ID */
-    hardware_reset = get_chip_id();
+	/* 5. IDC esd check lcd  default:close */
+#if LCD_ESD_PATCH
+	idc_esdcheck_lcderror(ts_data);
+#endif
 
-    /* 6. get Flow work cnt: 0x91 If no change for 5 times, then ESD and reset */
-    /*if (!hardware_reset)
-    {
-        hardware_reset = get_flow_cnt();
-    }*/	//Marked by BossVee For 0x91 lcd reset
+	/* 6. Get Chip ID */
+	hardware_reset = get_chip_id(ts_data);
 
-    /* 7. If need hardware reset, then handle it here */
-    if ( hardware_reset == 1)
-    {
-        fts_esdcheck_tp_reset();
-    }
-	check_int_cnt();
-    FTS_INFO("[ESD]: NoACK=%d, Error Data=%d, Hardware Reset=%d\n", fts_esdcheck_data.i2c_nack_cnt, fts_esdcheck_data.i2c_dataerror_cnt, fts_esdcheck_data.hardware_reset_cnt);
-    return 0;
+	/* 7. get Flow work cnt: 0x91 If no change for 5 times, then ESD and reset */
+	if (!hardware_reset) {
+		hardware_reset = get_flow_cnt(ts_data);
+	}
+
+	/* 8. If need hardware reset, then handle it here */
+	if (hardware_reset == 1) {
+		FTS_DEBUG("NoACK=%d, Error Data=%d, Hardware Reset=%d",
+				fts_esdcheck_data.nack_cnt,
+				fts_esdcheck_data.dataerror_cnt,
+				fts_esdcheck_data.hardware_reset_cnt);
+		fts_esdcheck_tp_reset(ts_data);
+	}
+
+	return 0;
 }
 
-/*****************************************************************************
-*  Name: fts_esdcheck_func
-*  Brief: fts_esdcheck_func
-*  Input:
-*  Output:
-*  Return:
-*****************************************************************************/
 static void esdcheck_func(struct work_struct *work)
 {
-    FTS_FUNC_ENTER();
-    if (strstr(saved_command_line, "androidboot.device=PL2") != NULL) //add by snow@zzdc 20170825
-    {
-        idc_esdcheck_lcderror();
+	struct fts_ts_data *ts_data = container_of(work,
+					struct fts_ts_data, esdcheck_work.work);
 
-        esdcheck_algorithm();
-
-        if ( fts_esdcheck_data.suspend == 0 )
-        {
-            queue_delayed_work(fts_esdcheck_workqueue, &fts_esdcheck_work, msecs_to_jiffies(ESDCHECK_WAIT_TIME));
-        }
-    }
-    FTS_FUNC_EXIT();
+	if (ENABLE == fts_esdcheck_data.mode) {
+		esdcheck_algorithm(ts_data);
+		queue_delayed_work(ts_data->ts_workqueue,
+				&ts_data->esdcheck_work,
+				msecs_to_jiffies(ESDCHECK_WAIT_TIME));
+	}
 }
 
-/*****************************************************************************
-*  Name: fts_esdcheck_set_intr
-*  Brief: interrupt flag (main used in interrupt tp report)
-*  Input:
-*  Output:
-*  Return:
-*****************************************************************************/
 int fts_esdcheck_set_intr(bool intr)
 {
-    /* interrupt don't add debug message */
-    fts_esdcheck_data.intr = intr;
-    return 0;
+	/* interrupt don't add debug message */
+	fts_esdcheck_data.intr = intr;
+	fts_esdcheck_data.intr_cnt = (u8)intr;
+	return 0;
 }
 
-/*****************************************************************************
-*  Name: fts_esdcheck_get_status(void)
-*  Brief: get current status
-*  Input:
-*  Output:
-*  Return:
-*****************************************************************************/
-int fts_esdcheck_get_status(void)
+static int fts_esdcheck_get_status(void)
 {
-    /* interrupt don't add debug message */
-    return fts_esdcheck_data.active;
+	/* interrupt don't add debug message */
+	return fts_esdcheck_data.mode;
 }
 
 /*****************************************************************************
@@ -458,8 +310,8 @@ int fts_esdcheck_get_status(void)
 *****************************************************************************/
 int fts_esdcheck_proc_busy(bool proc_debug)
 {
-    fts_esdcheck_data.proc_debug = proc_debug;
-    return 0;
+	fts_esdcheck_data.proc_debug = proc_debug;
+	return 0;
 }
 
 /*****************************************************************************
@@ -472,103 +324,142 @@ int fts_esdcheck_proc_busy(bool proc_debug)
 *****************************************************************************/
 int fts_esdcheck_switch(bool enable)
 {
-    FTS_FUNC_ENTER();
-    if (enable == 1)
-    {
-        if (fts_esdcheck_data.active == 0)
-        {
-            FTS_INFO("[ESD]: ESD check start!!");
-            fts_esdcheck_data.active = 1;
-            queue_delayed_work(fts_esdcheck_workqueue, &fts_esdcheck_work, msecs_to_jiffies(ESDCHECK_WAIT_TIME));
-        }
-    }
-    else
-    {
-        if (fts_esdcheck_data.active == 1)
-        {
-            FTS_INFO("[ESD]: ESD check stop!!");
-            fts_esdcheck_data.active = 0;
-            cancel_delayed_work_sync(&fts_esdcheck_work);
-        }
-    }
+	struct fts_ts_data *ts_data = fts_data;
+	FTS_FUNC_ENTER();
+	if (fts_esdcheck_data.mode == ENABLE) {
+		if (enable) {
+			FTS_DEBUG("ESD check start");
+			fts_esdcheck_data.flow_work_hold_cnt = 0;
+			fts_esdcheck_data.flow_work_cnt_last = 0;
+			fts_esdcheck_data.intr = 0;
+			fts_esdcheck_data.intr_cnt = 0;
+			queue_delayed_work(ts_data->ts_workqueue,
+					&ts_data->esdcheck_work,
+					msecs_to_jiffies(ESDCHECK_WAIT_TIME));
+		} else {
+			FTS_DEBUG("ESD check stop");
+			cancel_delayed_work_sync(&ts_data->esdcheck_work);
+		}
+	}
 
-    FTS_FUNC_EXIT();
-    return 0;
+	FTS_FUNC_EXIT();
+	return 0;
 }
 
-/*****************************************************************************
-*  Name: fts_esdcheck_suspend
-*  Brief: Run when tp enter into suspend
-*  Input:
-*  Output:
-*  Return:
-*****************************************************************************/
 int fts_esdcheck_suspend(void)
 {
-    FTS_FUNC_ENTER();
-    fts_esdcheck_switch(DISABLE);
-    fts_esdcheck_data.suspend = 1;
-    FTS_FUNC_EXIT();
-    return 0;
+	FTS_FUNC_ENTER();
+	fts_esdcheck_switch(DISABLE);
+	fts_esdcheck_data.suspend = 1;
+	fts_esdcheck_data.intr = 0;
+	fts_esdcheck_data.intr_cnt = 0;
+	FTS_FUNC_EXIT();
+	return 0;
 }
 
-/*****************************************************************************
-*  Name: fts_esdcheck_resume
-*  Brief: Run when tp resume
-*  Input:
-*  Output:
-*  Return:
-*****************************************************************************/
 int fts_esdcheck_resume( void )
 {
-    FTS_FUNC_ENTER();
-    fts_esdcheck_switch(ENABLE);
-    fts_esdcheck_data.suspend = 0;
-    FTS_FUNC_EXIT();
-    return 0;
+	FTS_FUNC_ENTER();
+	fts_esdcheck_switch(ENABLE);
+	fts_esdcheck_data.suspend = 0;
+	fts_esdcheck_data.intr = 0;
+	fts_esdcheck_data.intr_cnt = 0;
+	FTS_FUNC_EXIT();
+	return 0;
 }
 
-
-/*****************************************************************************
-*  Name: fts_esdcheck_init
-*  Brief: Init and create a queue work to check esd
-*  Input:
-*  Output:
-*  Return: < 0: Fail to create esd check queue
-*****************************************************************************/
-int fts_esdcheck_init(void)
+static ssize_t fts_esdcheck_store(
+	struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
 {
-    FTS_FUNC_ENTER();
+	struct input_dev *input_dev = fts_data->input_dev;
 
-    INIT_DELAYED_WORK(&fts_esdcheck_work, esdcheck_func);
-    fts_esdcheck_workqueue = create_workqueue("fts_esdcheck_wq");
-    if (fts_esdcheck_workqueue == NULL)
-    {
-        FTS_INFO("[ESD]: Failed to create esd work queue!!");
-    }
+	mutex_lock(&input_dev->mutex);
+	if (FTS_SYSFS_ECHO_ON(buf)) {
+		FTS_DEBUG("enable esdcheck");
+		fts_esdcheck_data.mode = ENABLE;
+		fts_esdcheck_switch(ENABLE);
+	} else if (FTS_SYSFS_ECHO_OFF(buf)) {
+		FTS_DEBUG("disable esdcheck");
+		fts_esdcheck_switch(DISABLE);
+		fts_esdcheck_data.mode = DISABLE;
+	}
+	mutex_unlock(&input_dev->mutex);
 
-    memset((u8 *)&fts_esdcheck_data, 0, sizeof(struct fts_esdcheck_st));
-
-    fts_esdcheck_switch(ENABLE);
-    FTS_FUNC_EXIT();
-    return 0;
+	return count;
 }
 
-/*****************************************************************************
-*  Name: fts_esdcheck_exit
-*  Brief: When FTS TP driver is removed, then call this function to destory work queue
-*  Input:
-*  Output:
-*  Return:
-*****************************************************************************/
-int fts_esdcheck_exit(void)
+static ssize_t fts_esdcheck_show(
+	struct device *dev, struct device_attribute *attr, char *buf)
 {
-    FTS_FUNC_ENTER();
+	int count;
+	struct input_dev *input_dev = fts_data->input_dev;
 
-    destroy_workqueue(fts_esdcheck_workqueue);
+	mutex_lock(&input_dev->mutex);
+	count = snprintf(buf, PAGE_SIZE, "Esd check: %s\n", \
+			fts_esdcheck_get_status() ? "On" : "Off");
+	mutex_unlock(&input_dev->mutex);
 
-    FTS_FUNC_EXIT();
-    return 0;
+	return count;
 }
+
+/* sysfs esd node
+ *   read example: cat  fts_esd_mode        ---read esd mode
+ *   write example:echo 01 > fts_esd_mode   ---make esdcheck enable
+ *
+ */
+static DEVICE_ATTR (fts_esd_mode, S_IRUGO | S_IWUSR, fts_esdcheck_show, fts_esdcheck_store);
+
+static struct attribute *fts_esd_mode_attrs[] = {
+
+	&dev_attr_fts_esd_mode.attr,
+	NULL,
+};
+
+static struct attribute_group fts_esd_group = {
+	.attrs = fts_esd_mode_attrs,
+};
+
+int fts_create_esd_sysfs(struct device *dev)
+{
+	int ret = 0;
+
+	ret = sysfs_create_group(&dev->kobj, &fts_esd_group);
+	if ( ret != 0) {
+		FTS_ERROR("fts_create_esd_sysfs(sysfs) create fail");
+		sysfs_remove_group(&dev->kobj, &fts_esd_group);
+		return ret;
+	}
+	return 0;
+}
+
+int fts_esdcheck_init(struct fts_ts_data *ts_data)
+{
+	FTS_FUNC_ENTER();
+
+	if (ts_data->ts_workqueue) {
+		INIT_DELAYED_WORK(&ts_data->esdcheck_work, esdcheck_func);
+	} else {
+		FTS_ERROR("fts workqueue is NULL, can't run esd check func!");
+		return -EINVAL;
+	}
+
+	memset((u8 *)&fts_esdcheck_data, 0, sizeof(struct fts_esdcheck_st));
+
+	fts_esdcheck_data.mode = ENABLE;
+	fts_esdcheck_data.intr = 0;
+	fts_esdcheck_data.intr_cnt = 0;
+	fts_esdcheck_switch(ENABLE);
+	fts_create_esd_sysfs(ts_data->dev);
+	FTS_FUNC_EXIT();
+	return 0;
+}
+
+int fts_esdcheck_exit(struct fts_ts_data *ts_data)
+{
+	sysfs_remove_group(&ts_data->dev->kobj, &fts_esd_group);
+	return 0;
+}
+
 #endif /* FTS_ESDCHECK_EN */
 

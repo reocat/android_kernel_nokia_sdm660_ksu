@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * USB Keyspan PDA / Xircom / Entrega Converter driver
  *
  * Copyright (C) 1999 - 2001 Greg Kroah-Hartman	<greg@kroah.com>
  * Copyright (C) 1999, 2000 Brian Warner	<warner@lothar.com>
  * Copyright (C) 2000 Al Borchers		<borchers@steinerpoint.com>
- *
- *	This program is free software; you can redistribute it and/or modify
- *	it under the terms of the GNU General Public License as published by
- *	the Free Software Foundation; either version 2 of the License, or
- *	(at your option) any later version.
  *
  * See Documentation/usb/usb-serial.txt for more information on using this
  * driver
@@ -30,12 +26,12 @@
 #include <linux/usb/ezusb.h>
 
 /* make a simple define to handle if we are compiling keyspan_pda or xircom support */
-#if defined(CONFIG_USB_SERIAL_KEYSPAN_PDA) || defined(CONFIG_USB_SERIAL_KEYSPAN_PDA_MODULE)
+#if IS_ENABLED(CONFIG_USB_SERIAL_KEYSPAN_PDA)
 	#define KEYSPAN
 #else
 	#undef KEYSPAN
 #endif
-#if defined(CONFIG_USB_SERIAL_XIRCOM) || defined(CONFIG_USB_SERIAL_XIRCOM_MODULE)
+#if IS_ENABLED(CONFIG_USB_SERIAL_XIRCOM)
 	#define XIRCOM
 #else
 	#undef XIRCOM
@@ -789,6 +785,8 @@ static struct usb_serial_driver keyspan_pda_device = {
 	.description =		"Keyspan PDA",
 	.id_table =		id_table_std,
 	.num_ports =		1,
+	.num_bulk_out =		1,
+	.num_interrupt_in =	1,
 	.dtr_rts =		keyspan_pda_dtr_rts,
 	.open =			keyspan_pda_open,
 	.close =		keyspan_pda_close,

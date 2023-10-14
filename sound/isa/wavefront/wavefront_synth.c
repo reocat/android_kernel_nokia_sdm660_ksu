@@ -26,6 +26,7 @@
 #include <linux/delay.h>
 #include <linux/time.h>
 #include <linux/wait.h>
+#include <linux/sched/signal.h>
 #include <linux/firmware.h>
 #include <linux/moduleparam.h>
 #include <linux/slab.h>
@@ -1091,7 +1092,8 @@ wavefront_send_sample (snd_wavefront_t *dev,
 
 			if (dataptr < data_end) {
 		
-				__get_user (sample_short, dataptr);
+				if (get_user(sample_short, dataptr))
+					return -EFAULT;
 				dataptr += skip;
 		
 				if (data_is_unsigned) { /* GUS ? */
@@ -1787,7 +1789,7 @@ wavefront_should_cause_interrupt (snd_wavefront_t *dev,
 				  int val, int port, unsigned long timeout)
 
 {
-	wait_queue_t wait;
+	wait_queue_entry_t wait;
 
 	init_waitqueue_entry(&wait, current);
 	spin_lock_irq(&dev->irq_lock);

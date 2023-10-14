@@ -1,23 +1,5 @@
-/* Intel PRO/1000 Linux driver
- * Copyright(c) 1999 - 2015 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * Contact Information:
- * Linux NICS <linux.nics@intel.com>
- * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
- * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
- */
+// SPDX-License-Identifier: GPL-2.0
+/* Copyright(c) 1999 - 2018 Intel Corporation. */
 
 #include "e1000.h"
 
@@ -346,7 +328,7 @@ void e1000e_update_mc_addr_list_generic(struct e1000_hw *hw,
 		hash_reg = (hash_value >> 5) & (hw->mac.mta_reg_count - 1);
 		hash_bit = hash_value & 0x1F;
 
-		hw->mac.mta_shadow[hash_reg] |= (1 << hash_bit);
+		hw->mac.mta_shadow[hash_reg] |= BIT(hash_bit);
 		mc_addr_list += (ETH_ALEN);
 	}
 
@@ -426,20 +408,16 @@ s32 e1000e_check_for_copper_link(struct e1000_hw *hw)
 	 * Change or Rx Sequence Error interrupt.
 	 */
 	if (!mac->get_link_status)
-		return 1;
+		return 0;
+	mac->get_link_status = false;
 
 	/* First we want to see if the MII Status Register reports
 	 * link.  If so, then we want to get the current speed/duplex
 	 * of the PHY.
 	 */
 	ret_val = e1000e_phy_has_link_generic(hw, 1, 0, &link);
-	if (ret_val)
-		return ret_val;
-
-	if (!link)
-		return 0;	/* No link detected */
-
-	mac->get_link_status = false;
+	if (ret_val || !link)
+		goto out;
 
 	/* Check if there was DownShift, must be checked
 	 * immediately after link-up
@@ -469,7 +447,11 @@ s32 e1000e_check_for_copper_link(struct e1000_hw *hw)
 		return ret_val;
 	}
 
-	return 1;
+	return ret_val;
+
+out:
+	mac->get_link_status = true;
+	return ret_val;
 }
 
 /**

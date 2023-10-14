@@ -19,7 +19,7 @@
 #include <linux/proc_fs.h>
 #include <linux/reboot.h>
 #include <asm/delay.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/rtas.h>
 
 #define MODULE_VERS "1.0"
@@ -714,9 +714,9 @@ static int __init rtas_flash_init(void)
 	if (!rtas_validate_flash_data.buf)
 		return -ENOMEM;
 
-	flash_block_cache = kmem_cache_create("rtas_flash_cache",
-					      RTAS_BLK_SIZE, RTAS_BLK_SIZE, 0,
-					      NULL);
+	flash_block_cache = kmem_cache_create_usercopy("rtas_flash_cache",
+						       RTAS_BLK_SIZE, RTAS_BLK_SIZE,
+						       0, 0, RTAS_BLK_SIZE, NULL);
 	if (!flash_block_cache) {
 		printk(KERN_ERR "%s: failed to create block cache\n",
 				__func__);
@@ -727,7 +727,7 @@ static int __init rtas_flash_init(void)
 		const struct rtas_flash_file *f = &rtas_flash_files[i];
 		int token;
 
-		if (!proc_create(f->filename, S_IRUSR | S_IWUSR, NULL, &f->fops))
+		if (!proc_create(f->filename, 0600, NULL, &f->fops))
 			goto enomem;
 
 		/*

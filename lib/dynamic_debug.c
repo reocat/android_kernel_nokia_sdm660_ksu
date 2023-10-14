@@ -188,6 +188,13 @@ static int ddebug_change(const struct ddebug_query *query,
 			newflags = (dp->flags & mask) | flags;
 			if (newflags == dp->flags)
 				continue;
+#ifdef CONFIG_JUMP_LABEL
+			if (dp->flags & _DPRINTK_FLAGS_PRINT) {
+				if (!(flags & _DPRINTK_FLAGS_PRINT))
+					static_branch_disable(&dp->key.dd_key_true);
+			} else if (flags & _DPRINTK_FLAGS_PRINT)
+				static_branch_enable(&dp->key.dd_key_true);
+#endif
 			dp->flags = newflags;
 			vpr_info("changed %s:%d [%s]%s =%s\n",
 				 trim_prefix(dp->filename), dp->lineno,
@@ -320,10 +327,6 @@ static int ddebug_parse_query(char *words[], int nwords,
 	}
 	memset(query, 0, sizeof(*query));
 
-	if (modname)
-		/* support $modname.dyndbg=<multiple queries> */
-		query->module = modname;
-
 	for (i = 0; i < nwords; i += 2) {
 		if (!strcmp(words[i], "func")) {
 			rc = check_set(&query->function, words[i+1], "func");
@@ -372,6 +375,13 @@ static int ddebug_parse_query(char *words[], int nwords,
 		if (rc)
 			return rc;
 	}
+	if (!query->module && modname)
+		/*
+		 * support $modname.dyndbg=<multiple queries>, when
+		 * not given in the query itself
+		 */
+		query->module = modname;
+
 	vpr_info_dq(query, "parsed");
 	return 0;
 }
@@ -660,14 +670,9 @@ static ssize_t ddebug_proc_write(struct file *file, const char __user *ubuf,
 		pr_warn("expected <%d bytes into control\n", USER_BUF_PAGE);
 		return -E2BIG;
 	}
-	tmpbuf = kmalloc(len + 1, GFP_KERNEL);
-	if (!tmpbuf)
-		return -ENOMEM;
-	if (copy_from_user(tmpbuf, ubuf, len)) {
-		kfree(tmpbuf);
-		return -EFAULT;
-	}
-	tmpbuf[len] = '\0';
+	tmpbuf = memdup_user_nul(ubuf, len);
+	if (IS_ERR(tmpbuf))
+		return PTR_ERR(tmpbuf);
 	vpr_info("read %d bytes from userspace\n", (int)len);
 
 	ret = ddebug_exec_queries(tmpbuf, NULL);
@@ -951,22 +956,26 @@ static void ddebug_remove_all_tables(void)
 
 static __initdata int ddebug_init_success;
 
-static int __init dynamic_debug_init_debugfs(void)
+static int __init dynamic_debug_init_control(void)
 {
-	struct dentry *dir, *file;
+	struct proc_dir_entry *procfs_dir;
+	struct dentry *debugfs_dir;
 
 	if (!ddebug_init_success)
 		return -ENODEV;
 
-	dir = debugfs_create_dir("dynamic_debug", NULL);
-	if (!dir)
-		return -ENOMEM;
-	file = debugfs_create_file("control", 0644, dir, NULL,
-					&ddebug_proc_fops);
-	if (!file) {
-		debugfs_remove(dir);
-		return -ENOMEM;
+	/* Create the control file in debugfs if it is enabled */
+	if (debugfs_initialized()) {
+		debugfs_dir = debugfs_create_dir("dynamic_debug", NULL);
+		debugfs_create_file("control", 0644, debugfs_dir, NULL,
+				    &ddebug_proc_fops);
 	}
+
+	/* Also create the control file in procfs */
+	procfs_dir = proc_mkdir("dynamic_debug", NULL);
+	if (procfs_dir)
+		proc_create("control", 0644, procfs_dir, &ddebug_proc_fops);
+
 	return 0;
 }
 
@@ -979,7 +988,7 @@ static int __init dynamic_debug_init(void)
 	int n = 0, entries = 0, modct = 0;
 	int verbose_bytes = 0;
 
-	if (__start___verbose == __stop___verbose) {
+	if (&__start___verbose == &__stop___verbose) {
 		pr_warn("_ddebug table is empty in a CONFIG_DYNAMIC_DEBUG build\n");
 		return 1;
 	}
@@ -1043,4 +1052,4 @@ out_err:
 early_initcall(dynamic_debug_init);
 
 /* Debugfs setup must be done later */
-fs_initcall(dynamic_debug_init_debugfs);
+fs_initcall(dynamic_debug_init_control);

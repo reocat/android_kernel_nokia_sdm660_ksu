@@ -1,4 +1,5 @@
-/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2011-2016, 2018, 2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -47,6 +48,7 @@ struct msm_camera_slave_info {
 	uint16_t sensor_id_reg_addr;
 	uint16_t sensor_id;
 	uint16_t sensor_id_mask;
+	struct msm_camera_i2c_reg_setting *setting;
 };
 
 struct msm_cam_clk_info {

@@ -435,7 +435,7 @@ On host: serialc -v <vendorID> -p <productID> -i<interface#> -a1 -s1024 \
 
 where seriald and serialc are Felipe's utilities found here:
 
-https://git.gitorious.org/usb/usb-tools.git master
+https://github.com/felipebalbi/usb-tools.git master
 
 12. PHONET function
 ===================
@@ -580,6 +580,8 @@ The SOURCESINK function provides these attributes in its function directory:
 	isoc_mult	- 0..2 (hs/ss only)
 	isoc_maxburst	- 0..15 (ss only)
 	bulk_buflen	- buffer length
+	bulk_qlen	- depth of queue for bulk
+	iso_qlen	- depth of queue for iso
 
 Testing the SOURCESINK function
 -------------------------------
@@ -691,7 +693,7 @@ such specification consists of a number of lines with an inverval value
 in each line. The rules stated above are best illustrated with an example:
 
 # mkdir functions/uvc.usb0/control/header/h
-# cd functions/uvc.usb0/control/header/h
+# cd functions/uvc.usb0/control/
 # ln -s header/h class/fs
 # ln -s header/h class/ss
 # mkdir -p functions/uvc.usb0/streaming/uncompressed/u/360p
@@ -771,7 +773,7 @@ host:
 # cat /dev/usb/lp0
 
 More advanced testing can be done with the prn_example
-described in Documentation/usb/gadget-printer.txt.
+described in Documentation/usb/gadget_printer.txt.
 
 
 20. UAC1 function (virtual ALSA card, using u_audio API)

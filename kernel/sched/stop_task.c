@@ -1,6 +1,4 @@
-#include "sched.h"
-#include "walt.h"
-
+// SPDX-License-Identifier: GPL-2.0
 /*
  * stop-task scheduling class.
  *
@@ -9,6 +7,8 @@
  *
  * See kernel/stop_machine.c
  */
+#include "sched.h"
+#include "walt.h"
 
 #ifdef CONFIG_SMP
 static int
@@ -61,7 +61,7 @@ check_preempt_curr_stop(struct rq *rq, struct task_struct *p, int flags)
 }
 
 static struct task_struct *
-pick_next_task_stop(struct rq *rq, struct task_struct *prev)
+pick_next_task_stop(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 {
 	struct task_struct *stop = rq->stop;
 
@@ -80,7 +80,6 @@ enqueue_task_stop(struct rq *rq, struct task_struct *p, int flags)
 {
 	add_nr_running(rq, 1);
 	walt_inc_cumulative_runnable_avg(rq, p);
-	inc_hmp_sched_stats_stop(rq, p);
 }
 
 static void
@@ -88,7 +87,6 @@ dequeue_task_stop(struct rq *rq, struct task_struct *p, int flags)
 {
 	sub_nr_running(rq, 1);
 	walt_dec_cumulative_runnable_avg(rq, p);
-	dec_hmp_sched_stats_stop(rq, p);
 }
 
 static void yield_task_stop(struct rq *rq)
@@ -112,9 +110,17 @@ static void put_prev_task_stop(struct rq *rq, struct task_struct *prev)
 	account_group_exec_runtime(curr, delta_exec);
 
 	curr->se.exec_start = rq_clock_task(rq);
-	cpuacct_charge(curr, delta_exec);
+	cgroup_account_cputime(curr, delta_exec);
 }
 
+/*
+ * scheduler tick hitting a task of our scheduling class.
+ *
+ * NOTE: This function can be called remotely by the tick offload that
+ * goes along full dynticks. Therefore no local assumption can be made
+ * and everything must be accessed through the @rq and @curr passed in
+ * parameters.
+ */
 static void task_tick_stop(struct rq *rq, struct task_struct *curr, int queued)
 {
 }
@@ -175,9 +181,7 @@ const struct sched_class stop_sched_class = {
 	.prio_changed		= prio_changed_stop,
 	.switched_to		= switched_to_stop,
 	.update_curr		= update_curr_stop,
-#ifdef CONFIG_SCHED_HMP
-	.inc_hmp_sched_stats	= inc_hmp_sched_stats_stop,
-	.dec_hmp_sched_stats	= dec_hmp_sched_stats_stop,
-	.fixup_hmp_sched_stats	= fixup_hmp_sched_stats_stop,
+#ifdef CONFIG_SCHED_WALT
+	.fixup_walt_sched_stats	= fixup_walt_sched_stats_common,
 #endif
 };

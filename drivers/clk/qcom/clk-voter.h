@@ -1,15 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+ * Copyright (c) 2017, 2019, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __QCOM_CLK_VOTER_H__
@@ -25,7 +16,7 @@ struct clk_voter {
 	unsigned long rate;
 };
 
-extern struct clk_ops clk_ops_voter;
+extern const struct clk_ops clk_ops_voter;
 
 #define to_clk_voter(_hw) container_of(_hw, struct clk_voter, hw)
 

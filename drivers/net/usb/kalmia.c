@@ -69,8 +69,8 @@ kalmia_send_init_packet(struct usbnet *dev, u8 *init_msg, u8 init_msg_len,
 		init_msg, init_msg_len, &act_len, KALMIA_USB_TIMEOUT);
 	if (status != 0) {
 		netdev_err(dev->net,
-			"Error sending init packet. Status %i, length %i\n",
-			status, act_len);
+			"Error sending init packet. Status %i\n",
+			status);
 		return status;
 	}
 	else if (act_len != init_msg_len) {
@@ -87,8 +87,8 @@ kalmia_send_init_packet(struct usbnet *dev, u8 *init_msg, u8 init_msg_len,
 
 	if (status != 0)
 		netdev_err(dev->net,
-			"Error receiving init result. Status %i, length %i\n",
-			status, act_len);
+			"Error receiving init result. Status %i\n",
+			status);
 	else if (act_len != expected_len)
 		netdev_err(dev->net, "Unexpected init result length: %i\n",
 			act_len);
@@ -114,14 +114,14 @@ kalmia_init_and_get_ethernet_addr(struct usbnet *dev, u8 *ethernet_addr)
 		return -ENOMEM;
 
 	memcpy(usb_buf, init_msg_1, 12);
-	status = kalmia_send_init_packet(dev, usb_buf, sizeof(init_msg_1)
-		/ sizeof(init_msg_1[0]), usb_buf, 24);
+	status = kalmia_send_init_packet(dev, usb_buf, ARRAY_SIZE(init_msg_1),
+					 usb_buf, 24);
 	if (status != 0)
 		goto out;
 
 	memcpy(usb_buf, init_msg_2, 12);
-	status = kalmia_send_init_packet(dev, usb_buf, sizeof(init_msg_2)
-		/ sizeof(init_msg_2[0]), usb_buf, 28);
+	status = kalmia_send_init_packet(dev, usb_buf, ARRAY_SIZE(init_msg_2),
+					 usb_buf, 28);
 	if (status != 0)
 		goto out;
 
@@ -150,12 +150,8 @@ kalmia_bind(struct usbnet *dev, struct usb_interface *intf)
 	dev->rx_urb_size = dev->hard_mtu * 10; // Found as optimal after testing
 
 	status = kalmia_init_and_get_ethernet_addr(dev, ethernet_addr);
-
-	if (status < 0) {
-		usb_set_intfdata(intf, NULL);
-		usb_driver_release_interface(driver_of(intf), intf);
+	if (status)
 		return status;
-	}
 
 	memcpy(dev->net->dev_addr, ethernet_addr, ETH_ALEN);
 
@@ -217,7 +213,7 @@ done:
 	remainder = skb->len % KALMIA_ALIGN_SIZE;
 	if (remainder > 0) {
 		padlen = KALMIA_ALIGN_SIZE - remainder;
-		memset(skb_put(skb, padlen), 0, padlen);
+		skb_put_zero(skb, padlen);
 	}
 
 	netdev_dbg(dev->net,
@@ -343,7 +339,7 @@ static const struct driver_info kalmia_info = {
 static const struct usb_device_id products[] = {
 	/* The unswitched USB ID, to get the module auto loaded: */
 	{ USB_DEVICE(0x04e8, 0x689a) },
-	/* The stick swithed into modem (by e.g. usb_modeswitch): */
+	/* The stick switched into modem (by e.g. usb_modeswitch): */
 	{ USB_DEVICE(0x04e8, 0x6889),
 		.driver_info = (unsigned long) &kalmia_info, },
 	{ /* EMPTY == end of list */} };

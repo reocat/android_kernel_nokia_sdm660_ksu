@@ -1,13 +1,6 @@
-/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _LINUX_SLIMBUS_H
@@ -138,7 +131,7 @@ struct slim_framer {
 	int	rootfreq;
 	int	superfreq;
 };
-#define to_slim_framer(d) container_of(d, struct slim_framer, dev);
+#define to_slim_framer(d) container_of(d, struct slim_framer, dev)
 
 /*
  * struct slim_addrt: slimbus address used internally by the slimbus framework.
@@ -514,7 +507,7 @@ enum slim_clk_state {
  * @devs: List of devices on this controller
  * @wq: Workqueue per controller used to notify devices when they report present
  * @txnt: Table of transactions having transaction ID
- * @last_tid: size of the table txnt (can't grow beyond 256 since TID is 8-bits)
+ * @last_tid: size of the table txnt (can't grow beyond 256)
  * @ports: Ports associated with this controller
  * @nports: Number of ports supported by the controller
  * @chans: Channels associated with this controller
@@ -576,7 +569,7 @@ struct slim_controller {
 	struct list_head	devs;
 	struct workqueue_struct *wq;
 	struct slim_msg_txn	*txnt[SLIM_MAX_TXNS];
-	u8			last_tid;
+	unsigned int		last_tid;
 	spinlock_t		txn_lock;
 	struct slim_port	*ports;
 	int			nports;
@@ -601,7 +594,7 @@ struct slim_controller {
 	int			(*framer_handover)(struct slim_controller *ctrl,
 				struct slim_framer *new_framer);
 	int			(*port_xfer)(struct slim_controller *ctrl,
-				u8 pn, phys_addr_t iobuf, u32 len,
+				u8 pn, void *buf, u32 len,
 				struct completion *comp);
 	enum slim_port_err	(*port_xfer_status)(struct slim_controller *ctr,
 				u8 pn, phys_addr_t *done_buf, u32 *done_len);
@@ -635,17 +628,14 @@ struct slim_controller {
  * @id_table: List of slimbus devices supported by this driver
  */
 struct slim_driver {
-	int				(*probe)(struct slim_device *sldev);
-	int				(*remove)(struct slim_device *sldev);
-	void				(*shutdown)(struct slim_device *sldev);
-	int				(*suspend)(struct slim_device *sldev,
-					pm_message_t pmesg);
-	int				(*resume)(struct slim_device *sldev);
-	int				(*device_up)(struct slim_device *sldev);
-	int				(*device_down)
-						(struct slim_device *sldev);
-	int				(*reset_device)
-						(struct slim_device *sldev);
+	int (*probe)(struct slim_device *sldev);
+	int (*remove)(struct slim_device *sldev);
+	void (*shutdown)(struct slim_device *sldev);
+	int (*suspend)(struct slim_device *sldev, pm_message_t pmesg);
+	int (*resume)(struct slim_device *sldev);
+	int (*device_up)(struct slim_device *sldev);
+	int (*device_down)(struct slim_device *sldev);
+	int (*reset_device)(struct slim_device *sldev);
 
 	struct device_driver		driver;
 	const struct slim_device_id	*id_table;
@@ -687,6 +677,7 @@ struct slim_pending_ch {
  *	first time it has reported present.
  *  @dev_list: List of devices on a controller
  *  @wd: Work structure associated with workqueue for presence notification
+ *  @device_reset: Work structure for device reset notification
  *  @sldev_reconf: Mutex to protect the pending data-channel lists.
  *  @pending_msgsl: Message bandwidth reservation request by this client in
  *	slots that's pending reconfiguration.
@@ -709,6 +700,7 @@ struct slim_device {
 	bool			notified;
 	struct list_head	dev_list;
 	struct work_struct	wd;
+	struct work_struct	device_reset;
 	struct mutex		sldev_reconf;
 	u32			pending_msgsl;
 	u32			cur_msgsl;
@@ -727,7 +719,7 @@ struct slim_boardinfo {
 
 /*
  * slim_get_logical_addr: Return the logical address of a slimbus device.
- * @sb: client handle requesting the adddress.
+ * @sb: client handle requesting the address.
  * @e_addr: Elemental address of the device.
  * @e_len: Length of e_addr
  * @laddr: output buffer to store the address
@@ -870,7 +862,7 @@ extern int slim_config_mgrports(struct slim_device *sb, u32 *ph, int nports,
  * Client will call slim_port_get_xfer_status to get error and/or number of
  * bytes transferred if used asynchronously.
  */
-extern int slim_port_xfer(struct slim_device *sb, u32 ph, phys_addr_t iobuf,
+extern int slim_port_xfer(struct slim_device *sb, u32 ph, void *buf,
 				u32 len, struct completion *comp);
 
 /*
@@ -1185,10 +1177,10 @@ struct slim_device_id *slim_get_device_id(const struct slim_device *sdev);
  */
 #ifdef CONFIG_SLIMBUS
 extern int slim_register_board_info(struct slim_boardinfo const *info,
-					unsigned n);
+					unsigned int n);
 #else
 static inline int slim_register_board_info(struct slim_boardinfo const *info,
-					unsigned n)
+					unsigned int n)
 {
 	return 0;
 }

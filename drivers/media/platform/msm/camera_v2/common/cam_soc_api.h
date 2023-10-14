@@ -1,4 +1,6 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2015-2016, 2018-2020, The Linux Foundation.
+ * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -168,10 +170,11 @@ int msm_camera_put_clk_info_and_rates(struct platform_device *pdev,
  */
 
 int msm_camera_clk_enable(struct device *dev,
-					struct msm_cam_clk_info *clk_info,
-					struct clk **clk_ptr,
-					int num_clk,
-					int enable);
+		struct msm_cam_clk_info *clk_info,
+		struct clk **clk_ptr,
+		int num_clk,
+		int enable);
+
 /**
  * @brief      : Set clock rate
  *
@@ -247,6 +250,9 @@ int msm_camera_get_regulator_info(struct platform_device *pdev,
 int msm_camera_regulator_enable(struct msm_cam_regulator *vdd_info,
 				int cnt, int enable);
 
+
+int msm_camera_regulator_disable(struct msm_cam_regulator *vdd_info,
+				int cnt, int disable);
 /**
  * @brief      : set the regultors mode
  *

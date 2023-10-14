@@ -1,20 +1,57 @@
-/* Copyright (c) 2002,2007-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2002,2007-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
-#include <linux/ioctl.h>
-#include "kgsl_device.h"
+#include <linux/slab.h>
+
 #include "adreno.h"
 #include "adreno_a5xx.h"
+
+/*
+ * Add a perfcounter to the per-fd list.
+ * Call with the device mutex held
+ */
+static int adreno_process_perfcounter_add(struct kgsl_device_private *dev_priv,
+	unsigned int groupid, unsigned int countable)
+{
+	struct adreno_device_private *adreno_priv = container_of(dev_priv,
+		struct adreno_device_private, dev_priv);
+	struct adreno_perfcounter_list_node *perfctr;
+
+	perfctr = kmalloc(sizeof(*perfctr), GFP_KERNEL);
+	if (!perfctr)
+		return -ENOMEM;
+
+	perfctr->groupid = groupid;
+	perfctr->countable = countable;
+
+	/* add the pair to process perfcounter list */
+	list_add(&perfctr->node, &adreno_priv->perfcounter_list);
+	return 0;
+}
+
+/*
+ * Remove a perfcounter from the per-fd list.
+ * Call with the device mutex held
+ */
+static int adreno_process_perfcounter_del(struct kgsl_device_private *dev_priv,
+	unsigned int groupid, unsigned int countable)
+{
+	struct adreno_device_private *adreno_priv = container_of(dev_priv,
+		struct adreno_device_private, dev_priv);
+	struct adreno_perfcounter_list_node *p;
+
+	list_for_each_entry(p, &adreno_priv->perfcounter_list, node) {
+		if (p->groupid == groupid && p->countable == countable) {
+			list_del(&p->node);
+			kfree(p);
+			return 0;
+		}
+	}
+	return -ENODEV;
+}
 
 long adreno_ioctl_perfcounter_get(struct kgsl_device_private *dev_priv,
 	unsigned int cmd, void *data)
@@ -31,14 +68,28 @@ long adreno_ioctl_perfcounter_get(struct kgsl_device_private *dev_priv,
 	 * during start(), so it is not safe to take an
 	 * active count inside that function.
 	 */
-	result = kgsl_active_count_get(device);
 
-	if (result == 0) {
-		result = adreno_perfcounter_get(adreno_dev,
+	result = adreno_perfcntr_active_oob_get(device);
+	if (result) {
+		mutex_unlock(&device->mutex);
+		return (long)result;
+	}
+
+	result = adreno_perfcounter_get(adreno_dev,
 			get->groupid, get->countable, &get->offset,
 			&get->offset_hi, PERFCOUNTER_FLAG_NONE);
-		kgsl_active_count_put(device);
+
+	/* Add the perfcounter into the list */
+	if (!result) {
+		result = adreno_process_perfcounter_add(dev_priv, get->groupid,
+				get->countable);
+		if (result)
+			adreno_perfcounter_put(adreno_dev, get->groupid,
+				get->countable, PERFCOUNTER_FLAG_NONE);
 	}
+
+	adreno_perfcntr_active_oob_put(device);
+
 	mutex_unlock(&device->mutex);
 
 	return (long) result;
@@ -53,8 +104,15 @@ long adreno_ioctl_perfcounter_put(struct kgsl_device_private *dev_priv,
 	int result;
 
 	mutex_lock(&device->mutex);
-	result = adreno_perfcounter_put(adreno_dev, put->groupid,
-		put->countable, PERFCOUNTER_FLAG_NONE);
+
+	/* Delete the perfcounter from the process list */
+	result = adreno_process_perfcounter_del(dev_priv, put->groupid,
+		put->countable);
+
+	/* Put the perfcounter refcount */
+	if (!result)
+		adreno_perfcounter_put(adreno_dev, put->groupid,
+			put->countable, PERFCOUNTER_FLAG_NONE);
 	mutex_unlock(&device->mutex);
 
 	return (long) result;
@@ -75,6 +133,14 @@ static long adreno_ioctl_perfcounter_read(struct kgsl_device_private *dev_priv,
 {
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(dev_priv->device);
 	struct kgsl_perfcounter_read *read = data;
+
+	/*
+	 * When performance counter zapping is enabled, the counters are cleared
+	 * across context switches. Reading the counters when they are zapped is
+	 * not permitted.
+	 */
+	if (!adreno_dev->perfcounter)
+		return -EPERM;
 
 	return (long) adreno_perfcounter_read_group(adreno_dev, read->reads,
 		read->count);
@@ -103,7 +169,7 @@ static long adreno_ioctl_preemption_counters_query(
 		levels_to_copy = gpudev->num_prio_levels;
 
 	if (copy_to_user((void __user *) (uintptr_t) read->counters,
-			adreno_dev->preempt.counters.hostptr,
+			adreno_dev->preempt.scratch.hostptr,
 			levels_to_copy * size_level))
 		return -EFAULT;
 
@@ -126,13 +192,15 @@ long adreno_ioctl_helper(struct kgsl_device_private *dev_priv,
 			break;
 	}
 
-	if (i == len) {
-		KGSL_DRV_INFO(dev_priv->device,
-			"invalid ioctl code 0x%08X\n", cmd);
+	if (i == len)
 		return -ENOIOCTLCMD;
-	}
 
-	BUG_ON(_IOC_SIZE(cmds[i].cmd) > sizeof(data));
+	if (_IOC_SIZE(cmds[i].cmd > sizeof(data))) {
+		dev_err_ratelimited(dev_priv->device->dev,
+			"data too big for ioctl 0x%08x: %d/%zu\n",
+			cmd, _IOC_SIZE(cmds[i].cmd), sizeof(data));
+		return -EINVAL;
+	}
 
 	if (_IOC_SIZE(cmds[i].cmd)) {
 		ret = kgsl_ioctl_copy_in(cmds[i].cmd, cmd, arg, data);

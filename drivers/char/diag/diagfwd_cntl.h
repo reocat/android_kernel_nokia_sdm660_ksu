@@ -1,13 +1,5 @@
-/* Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0 */
+/* Copyright (c) 2011-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef DIAGFWD_CNTL_H
@@ -46,9 +38,10 @@
 #define DIAG_CTRL_MSG_DCI_HANDSHAKE_PKT		29
 #define DIAG_CTRL_MSG_PD_STATUS			30
 #define DIAG_CTRL_MSG_TIME_SYNC_PKT		31
-
+#define DIAG_CTRL_MSG_DIAGID	33
+#define DIAG_CTRL_MSG_PASSTHRU	35
 /*
- * Feature Mask Definitions: Feature mask is used to sepcify Diag features
+ * Feature Mask Definitions: Feature mask is used to specify Diag features
  * supported by the Apps processor
  *
  * F_DIAG_FEATURE_MASK_SUPPORT - Denotes we support sending and receiving
@@ -67,8 +60,11 @@
 #define F_DIAG_MASK_CENTRALIZATION		11
 #define F_DIAG_SOCKETS_ENABLED			13
 #define F_DIAG_DCI_EXTENDED_HEADER_SUPPORT	14
+#define F_DIAG_DIAGID_SUPPORT	15
 #define F_DIAG_PKT_HEADER_UNTAG			16
 #define F_DIAG_PD_BUFFERING		17
+#define F_DIAGID_FEATURE_MASK	19
+#define F_DIAG_MULTI_SIM_SUPPORT		20
 
 #define ENABLE_SEPARATE_CMDRSP	1
 #define DISABLE_SEPARATE_CMDRSP	0
@@ -76,7 +72,7 @@
 #define DISABLE_STM	0
 #define ENABLE_STM	1
 #define STATUS_STM	2
-
+#define STM_AUTO_QUERY  3
 #define UPDATE_PERIPHERAL_STM_STATE	1
 #define CLEAR_PERIPHERAL_STM_STATE	2
 
@@ -88,6 +84,16 @@
 
 #define DIAG_MODE_PKT_LEN		36
 #define DIAG_MODE_PKT_LEN_V2	37
+
+#define DIAGID_VERSION_1	1
+#define DIAGID_VERSION_2	2
+
+#define MAX_DIAGID_STR_LEN	30
+#define MIN_DIAGID_STR_LEN	5
+
+#define BITMASK_DIAGID_FMASK		0x0001
+#define BITMASK_HW_ACCEL_STM_V1		0x0002
+#define BITMASK_HW_ACCEL_ATB_V1		0x0004
 
 struct diag_ctrl_pkt_header_t {
 	uint32_t pkt_id;
@@ -149,6 +155,51 @@ struct diag_ctrl_msg_mask {
 	uint16_t ssid_first; /* Start of range of supported SSIDs */
 	uint16_t ssid_last; /* Last SSID in range */
 	uint32_t msg_mask_size; /* ssid_last - ssid_first + 1 */
+	/* Copy msg mask here */
+} __packed;
+
+struct diag_ctrl_event_mask_sub {
+	uint32_t cmd_type;
+	uint32_t data_len;
+	uint8_t version;
+	uint8_t stream_id;
+	uint8_t preset_id;
+	uint8_t status;
+	uint8_t id_valid;
+	uint32_t sub_id;
+	uint8_t event_config;
+	uint32_t event_mask_size;
+	/* Copy event mask here */
+} __packed;
+
+struct diag_ctrl_log_mask_sub {
+	uint32_t cmd_type;
+	uint32_t data_len;
+	uint8_t version;
+	uint8_t stream_id;
+	uint8_t preset_id;
+	uint8_t status;
+	uint8_t id_valid;
+	uint32_t sub_id;
+	uint8_t equip_id;
+	uint32_t num_items;
+	uint32_t log_mask_size;
+	/* Copy log mask here */
+} __packed;
+
+struct diag_ctrl_msg_mask_sub {
+	uint32_t cmd_type;
+	uint32_t data_len;
+	uint8_t version;
+	uint8_t stream_id;
+	uint8_t preset_id;
+	uint8_t status;
+	uint8_t msg_mode;
+	uint8_t id_valid;
+	uint32_t sub_id;
+	uint16_t ssid_first;
+	uint16_t ssid_last;
+	uint32_t msg_mask_size;
 	/* Copy msg mask here */
 } __packed;
 
@@ -309,7 +360,37 @@ struct diag_ctrl_set_wq_val_v2 {
 	uint8_t low_wm_val;
 } __packed;
 
+struct diag_ctrl_diagid_header {
+	uint32_t pkt_id;
+	uint32_t len;
+	uint32_t version;
+} __packed;
+
+struct diag_ctrl_diagid {
+	struct diag_ctrl_diagid_header header;
+	uint32_t diag_id;
+	char process_name[MAX_DIAGID_STR_LEN];
+} __packed;
+
+struct diag_ctrl_diagid_v2 {
+	struct diag_ctrl_diagid_header header;
+	uint32_t diag_id;
+	uint32_t feature_len;
+	uint32_t pd_feature_mask;
+	char process_name[MAX_DIAGID_STR_LEN];
+} __packed;
+
+struct diag_ctrl_passthru {
+	struct diag_ctrl_diagid_header header;
+	uint32_t diagid_mask;
+	uint8_t hw_accel_type;
+	uint8_t hw_accel_ver;
+	uint8_t control_data;
+} __packed;
+
 int diagfwd_cntl_init(void);
+int diag_add_diag_id_to_list(uint8_t diag_id,
+	char *process_name, uint8_t pd_val, uint8_t peripheral);
 void diagfwd_cntl_channel_init(void);
 void diagfwd_cntl_exit(void);
 void diag_cntl_channel_open(struct diagfwd_info *p_info);
@@ -319,6 +400,7 @@ void diag_cntl_process_read_data(struct diagfwd_info *p_info, void *buf,
 int diag_send_real_time_update(uint8_t peripheral, int real_time);
 void diag_map_pd_to_diagid(uint8_t pd, uint8_t *diag_id, int *peripheral);
 int diag_send_peripheral_buffering_mode(struct diag_buffering_mode_t *params);
+void diag_send_hw_accel_status(uint8_t peripheral);
 void diag_update_proc_vote(uint16_t proc, uint8_t vote, int index);
 void diag_update_real_time_vote(uint16_t proc, uint8_t real_time, int index);
 void diag_real_time_work_fn(struct work_struct *work);
@@ -329,4 +411,5 @@ int diag_send_buffering_tx_mode_pkt(uint8_t peripheral,
 		    uint8_t diag_id, struct diag_buffering_mode_t *params);
 int diag_send_buffering_wm_values(uint8_t peripheral,
 		    uint8_t diag_id, struct diag_buffering_mode_t *params);
+int diag_send_passthru_ctrl_pkt(struct diag_hw_accel_cmd_req_t *req_params);
 #endif

@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2016-2018, 2020, The Linux Foundation. All rights reserved.
  *
  */
 
@@ -330,7 +322,7 @@ static int pp_hist_lut_get_config(char __iomem *base_addr, void *cfg_data,
 		return -EFAULT;
 	}
 	if (lut_data->len != ENHIST_LUT_ENTRIES) {
-		pr_err("invalid hist_lut len %d", lut_data->len);
+		pr_err("invalid hist_lut len %d\n", lut_data->len);
 		return -EINVAL;
 	}
 	sz = ENHIST_LUT_ENTRIES * sizeof(u32);
@@ -497,7 +489,7 @@ static int pp_pa_set_config(char __iomem *base_addr,
 		return -EINVAL;
 	}
 	if (!(pa_cfg_data->flags & ~(MDP_PP_OPS_READ))) {
-		pr_info("only read ops is set %d", pa_cfg_data->flags);
+		pr_info("only read ops is set %d\n", pa_cfg_data->flags);
 		return 0;
 	}
 
@@ -538,7 +530,7 @@ static int pp_pa_get_config(char __iomem *base_addr, void *cfg_data,
 static int pp_pa_get_version(u32 *version)
 {
 	if (!version) {
-		pr_err("invalid param version");
+		pr_err("invalid param version\n");
 		return -EINVAL;
 	}
 	*version = mdp_pa_v1_7;
@@ -635,7 +627,7 @@ dither_set_sts:
 static int pp_dither_get_version(u32 *version)
 {
 	if (!version) {
-		pr_err("invalid param version");
+		pr_err("invalid param version\n");
 		return -EINVAL;
 	}
 	*version = mdp_dither_v1_7;
@@ -860,7 +852,7 @@ static void pp_pa_opmode_config(char __iomem *base_addr,
 	}
 
 	/* reset hist_en, hist_lutv_en and hist_lutv_first_en
-	   bits based on the pp_sts
+	 * bits based on the pp_sts
 	 */
 	if (pp_sts->hist_sts & PP_STS_ENABLE)
 		opmode |= BIT(16);
@@ -875,7 +867,7 @@ static void pp_pa_opmode_config(char __iomem *base_addr,
 static int pp_pa_dither_get_version(u32 *version)
 {
 	if (!version) {
-		pr_err("invalid param version");
+		pr_err("invalid param version\n");
 		return -EINVAL;
 	}
 	*version = mdp_dither_pa_v1_7;
@@ -909,13 +901,13 @@ static int pp_pa_dither_set_config(char __iomem *base_addr,
 		return -EINVAL;
 	}
 	if (!(dither_cfg_data->flags & ~(MDP_PP_OPS_READ))) {
-		pr_debug("only read ops is set %d", dither_cfg_data->flags);
+		pr_debug("only read ops is set %d\n", dither_cfg_data->flags);
 		return 0;
 	}
 	opmode_addr = base_addr + PA_DSPP_BLOCK_REG_OFF + PA_DITHER_REG_OFF;
 	if (dither_cfg_data->flags & MDP_PP_OPS_DISABLE ||
 	    !(dither_cfg_data->flags & MDP_PP_OPS_WRITE)) {
-		pr_debug("Disable pa dither/No write ops set flags %x",
+		pr_debug("Disable pa dither/No write ops set flags %x\n",
 			dither_cfg_data->flags);
 		goto dither_set_sts;
 	}
@@ -1018,7 +1010,7 @@ static int pp_igc_get_config(char __iomem *base_addr, void *cfg_data,
 static int pp_igc_get_version(u32 *version)
 {
 	if (!version) {
-		pr_err("invalid param version");
+		pr_err("invalid param version\n");
 		return -EINVAL;
 	}
 	*version = mdp_igc_v3;

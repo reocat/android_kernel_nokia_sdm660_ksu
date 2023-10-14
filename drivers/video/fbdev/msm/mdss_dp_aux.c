@@ -1,15 +1,5 @@
-/* Copyright (c) 2013-2014, 2016-2017 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2013-2014, 2016-2017 The Linux Foundation. All rights reserved. */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
@@ -28,7 +18,6 @@
 #include <linux/platform_device.h>
 #include <linux/bug.h>
 #include <linux/of_gpio.h>
-#include <linux/clk/msm-clk.h>
 
 #include "mdss_panel.h"
 #include "mdss_dp.h"
@@ -851,13 +840,13 @@ void dp_extract_edid_detailed_timing_description(struct edp_edid *edid,
 	pr_debug("flags: interlaced=%d stereo=%d sync_type=%d sync_sep=%d\n",
 			dp->interlaced, dp->stereo,
 			dp->sync_type, dp->sync_separate);
-	pr_debug("polarity vsync=%d, hsync=%d",
+	pr_debug("polarity vsync=%d, hsync=%d\n",
 			dp->vsync_pol, dp->hsync_pol);
 }
 
 
 /*
- * EDID structure can be found in VESA standart here:
+ * EDID structure can be found in VESA standard here:
  * http://read.pudn.com/downloads110/ebook/456020/E-EDID%20Standard.pdf
  *
  * following table contains default edid
@@ -1168,7 +1157,7 @@ int mdss_dp_dpcd_cap_read(struct mdss_dp_drv_pdata *ep)
 
 	data = *bp++; /* byte 4 */
 	cap->num_rx_port = (data & BIT(0)) + 1;
-	pr_debug("rx_ports=%d", cap->num_rx_port);
+	pr_debug("rx_ports=%d\n", cap->num_rx_port);
 
 	data = *bp++; /* Byte 5: DOWN_STREAM_PORT_PRESENT */
 	cap->downstream_port.dsp_present = data & BIT(0);
@@ -1219,7 +1208,7 @@ int mdss_dp_dpcd_cap_read(struct mdss_dp_drv_pdata *ep)
 	data = *bp++;	/* byte 12 */
 	cap->i2c_speed_ctrl = data;
 	if (cap->i2c_speed_ctrl > 0)
-		pr_debug("i2c_rate=%d", cap->i2c_speed_ctrl);
+		pr_debug("i2c_rate=%d\n", cap->i2c_speed_ctrl);
 
 	data = *bp++;	/* byte 13 */
 	cap->scrambler_reset = data & BIT(0);
@@ -1253,7 +1242,7 @@ int mdss_dp_aux_link_status_read(struct mdss_dp_drv_pdata *ep, int len)
 	struct edp_buf *rp;
 	int rlen;
 
-	pr_debug("len=%d", len);
+	pr_debug("len=%d\n", len);
 	/* skip byte 0x200 and 0x201 */
 	rlen = dp_aux_read_buf(ep, 0x202, len, 0);
 	if (rlen < len) {
@@ -1355,7 +1344,7 @@ void mdss_dp_aux_send_test_response(struct mdss_dp_drv_pdata *dp)
 
 	test_response[0] = dp->test_data.response;
 
-	pr_debug("sending test response %s",
+	pr_debug("sending test response %s\n",
 			mdss_dp_get_test_response(test_response[0]));
 	dp_aux_write_buf(dp, 0x260, test_response, 1, 0);
 }
@@ -1962,7 +1951,7 @@ static int dp_parse_video_pattern_params(struct mdss_dp_drv_pdata *ep)
 	/* Dynamic Range */
 	dyn_range = (data & BIT(3)) >> 3;
 	if (!mdss_dp_is_dynamic_range_valid(dyn_range)) {
-		pr_err("invalid test dynamic range = 0x%x", dyn_range);
+		pr_err("invalid test dynamic range = 0x%x\n", dyn_range);
 		ret = -EINVAL;
 		goto exit;
 	}
@@ -2239,7 +2228,7 @@ static int dp_lane_set_write(struct mdss_dp_drv_pdata *ep, int voltage_level,
 	for (i = 0; i < 4; i++)
 		buf[i] = voltage_level | pre_emphasis_level | max_level_reached;
 
-	pr_debug("p|v=0x%x", voltage_level | pre_emphasis_level);
+	pr_debug("p|v=0x%x\n", voltage_level | pre_emphasis_level);
 	return dp_aux_write_buf(ep, 0x103, buf, 4, 0);
 }
 
@@ -2288,7 +2277,7 @@ bool mdss_dp_aux_channel_eq_done(struct mdss_dp_drv_pdata *ep)
 
 	if (!ep->link_status.interlane_align_done) { /* not align */
 		pr_err("interlane align failed\n");
-		return 0;
+		return false;
 	}
 
 	if (ep->lane_cnt == 1) {
@@ -2321,7 +2310,7 @@ void dp_sink_train_set_adjust(struct mdss_dp_drv_pdata *ep)
 
 	/* use the max level across lanes */
 	for (i = 0; i < ep->lane_cnt; i++) {
-		pr_debug("lane=%d req_voltage_swing=%d",
+		pr_debug("lane=%d req_voltage_swing=%d\n",
 			i, ep->link_status.req_voltage_swing[i]);
 		if (max < ep->link_status.req_voltage_swing[i])
 			max = ep->link_status.req_voltage_swing[i];
@@ -2332,7 +2321,7 @@ void dp_sink_train_set_adjust(struct mdss_dp_drv_pdata *ep)
 	/* use the max level across lanes */
 	max = 0;
 	for (i = 0; i < ep->lane_cnt; i++) {
-		pr_debug("lane=%d req_pre_emphasis=%d",
+		pr_debug("lane=%d req_pre_emphasis=%d\n",
 			i, ep->link_status.req_pre_emphasis[i]);
 		if (max < ep->link_status.req_pre_emphasis[i])
 			max = ep->link_status.req_pre_emphasis[i];
@@ -2363,7 +2352,7 @@ void dp_sink_train_set_adjust(struct mdss_dp_drv_pdata *ep)
 		ep->p_level = DPCD_LINK_PRE_EMPHASIS_LEVEL_1;
 	}
 
-	pr_debug("v_level=%d, p_level=%d",
+	pr_debug("v_level=%d, p_level=%d\n",
 					ep->v_level, ep->p_level);
 }
 
@@ -2443,7 +2432,7 @@ void mdss_dp_aux_update_voltage_and_pre_emphasis_lvl(
 			QSERDES_TX1_OFFSET + TXn_TX_EMP_POST1_LVL,
 			value1);
 
-		pr_debug("host PHY settings: value0=0x%x value1=0x%x",
+		pr_debug("host PHY settings: value0=0x%x value1=0x%x\n",
 						value0, value1);
 		dp_lane_set_write(dp, dp->v_level, dp->p_level);
 	}
@@ -2457,7 +2446,7 @@ static int dp_start_link_train_1(struct mdss_dp_drv_pdata *ep)
 	int usleep_time;
 	int const maximum_retries = 5;
 
-	pr_debug("Entered++");
+	pr_debug("Entered++\n");
 
 	dp_write(ep->base + DP_STATE_CTRL, 0x0);
 	/* Make sure to clear the current pattern before starting a new one */
@@ -2472,7 +2461,7 @@ static int dp_start_link_train_1(struct mdss_dp_drv_pdata *ep)
 	old_v_level = ep->v_level;
 	while (1) {
 		usleep_time = ep->dpcd.training_read_interval;
-		usleep_range(usleep_time, usleep_time);
+		usleep_range(usleep_time, usleep_time + 50);
 
 		ret = mdss_dp_aux_link_status_read(ep, 6);
 		if (ret == -ENODEV)
@@ -2514,7 +2503,7 @@ static int dp_start_link_train_2(struct mdss_dp_drv_pdata *ep)
 	char pattern;
 	int const maximum_retries = 5;
 
-	pr_debug("Entered++");
+	pr_debug("Entered++\n");
 
 	if (ep->dpcd.flags & DPCD_TPS3)
 		pattern = 0x03;
@@ -2527,7 +2516,7 @@ static int dp_start_link_train_2(struct mdss_dp_drv_pdata *ep)
 
 	do  {
 		usleep_time = ep->dpcd.training_read_interval;
-		usleep_range(usleep_time, usleep_time);
+		usleep_range(usleep_time, usleep_time + 50);
 
 		ret = mdss_dp_aux_link_status_read(ep, 6);
 		if (ret == -ENODEV)
@@ -2569,7 +2558,7 @@ static int dp_link_rate_down_shift(struct mdss_dp_drv_pdata *ep)
 	default:
 		ret = -EINVAL;
 		break;
-	};
+	}
 
 	pr_debug("new rate=%d\n", ep->link_rate);
 
@@ -2583,7 +2572,7 @@ static void dp_clear_training_pattern(struct mdss_dp_drv_pdata *ep)
 	pr_debug("Entered++\n");
 	dp_train_pattern_set_write(ep, 0);
 	usleep_time = ep->dpcd.training_read_interval;
-	usleep_range(usleep_time, usleep_time);
+	usleep_range(usleep_time, usleep_time + 50);
 }
 
 int mdss_dp_link_train(struct mdss_dp_drv_pdata *dp)
@@ -2606,8 +2595,8 @@ int mdss_dp_link_train(struct mdss_dp_drv_pdata *dp)
 	if (ret < 0) {
 		if ((ret == -EAGAIN) && !dp_link_rate_down_shift(dp)) {
 			pr_debug("retry with lower rate\n");
-			dp_clear_training_pattern(dp);
-			return -EAGAIN;
+			ret = -EINVAL;
+			goto clear;
 		} else {
 			pr_err("Training 1 failed\n");
 			ret = -EINVAL;
@@ -2625,8 +2614,8 @@ int mdss_dp_link_train(struct mdss_dp_drv_pdata *dp)
 	if (ret < 0) {
 		if ((ret == -EAGAIN) && !dp_link_rate_down_shift(dp)) {
 			pr_debug("retry with lower rate\n");
-			dp_clear_training_pattern(dp);
-			return -EAGAIN;
+			ret = -EINVAL;
+			goto clear;
 		} else {
 			pr_err("Training 2 failed\n");
 			ret = -EINVAL;

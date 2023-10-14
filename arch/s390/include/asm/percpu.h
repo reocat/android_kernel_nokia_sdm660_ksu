@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __ARCH_S390_PERCPU__
 #define __ARCH_S390_PERCPU__
 
@@ -30,7 +31,7 @@
 	pcp_op_T__ *ptr__;						\
 	preempt_disable_notrace();					\
 	ptr__ = raw_cpu_ptr(&(pcp));					\
-	prev__ = *ptr__;						\
+	prev__ = READ_ONCE(*ptr__);					\
 	do {								\
 		old__ = prev__;						\
 		new__ = old__ op (val);					\
@@ -178,7 +179,6 @@
 	ret__;								\
 })
 
-#define this_cpu_cmpxchg_double_4 arch_this_cpu_cmpxchg_double
 #define this_cpu_cmpxchg_double_8 arch_this_cpu_cmpxchg_double
 
 #include <asm-generic/percpu.h>

@@ -6,7 +6,7 @@
 #include <linux/percpu.h>
 #include <linux/sched.h>
 #include <linux/syscalls.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/ptrace-abi.h>
 #include <os.h>
 #include <skas.h>
@@ -64,9 +64,6 @@ static int get_free_idx(struct task_struct* task)
 {
 	struct thread_struct *t = &task->thread;
 	int idx;
-
-	if (!t->arch.tls_array)
-		return GDT_ENTRY_TLS_MIN;
 
 	for (idx = 0; idx < GDT_ENTRY_TLS_ENTRIES; idx++)
 		if (!t->arch.tls_array[idx].present)
@@ -241,9 +238,6 @@ static int get_tls_entry(struct task_struct *task, struct user_desc *info,
 			 int idx)
 {
 	struct thread_struct *t = &task->thread;
-
-	if (!t->arch.tls_array)
-		goto clear;
 
 	if (idx < GDT_ENTRY_TLS_MIN || idx > GDT_ENTRY_TLS_MAX)
 		return -EINVAL;

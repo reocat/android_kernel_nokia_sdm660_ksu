@@ -1,27 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- *
  * Copyright (c) 2011-2016 The Linux Foundation. All rights reserved.
- *
- * This file is based on include/net/bluetooth/hci_core.h
  *
  * Written 2000,2001 by Maxim Krasnyansky <maxk@qualcomm.com>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation;
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF THIRD PARTY RIGHTS.
- * IN NO EVENT SHALL THE COPYRIGHT HOLDER(S) AND AUTHOR(S) BE LIABLE FOR ANY
- * CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- *
- * ALL LIABILITY, INCLUDING LIABILITY FOR INFRINGEMENT OF ANY PATENTS,
- * COPYRIGHTS, TRADEMARKS OR OTHER RIGHTS, RELATING TO USE OF THIS
- * SOFTWARE IS DISCLAIMED.
  */
 
 #ifndef __RADIO_IRIS_H
@@ -33,6 +15,9 @@
 #include <linux/interrupt.h>
 #include <linux/mutex.h>
 #include <linux/atomic.h>
+
+#define RDS_PS_SIMPLE_OFFSET 2
+extern struct mutex fm_smd_enable;
 
 struct radio_hci_dev {
 	char		name[8];
@@ -75,7 +60,7 @@ struct radio_hci_dev {
 };
 
 int radio_hci_register_dev(struct radio_hci_dev *hdev);
-int radio_hci_unregister_dev(struct radio_hci_dev *hdev);
+int radio_hci_unregister_dev(void);
 int radio_hci_recv_frame(struct sk_buff *skb);
 int radio_hci_send_cmd(struct radio_hci_dev *hdev, __u16 opcode, __u32 plen,
 	void *param);
@@ -86,13 +71,15 @@ void radio_hci_event_packet(struct radio_hci_dev *hdev, struct sk_buff *skb);
 
 #undef FMDBG
 #ifdef FM_DEBUG
-#define FMDBG(fmt, args...) pr_info("iris_radio: " fmt, ##args)
+#define FMDBG(fmt, args...) pr_debug("iris_radio: " fmt, ##args)
 #else
 #define FMDBG(fmt, args...)
 #endif
 
 #undef FMDERR
 #define FMDERR(fmt, args...) pr_err("iris_radio: " fmt, ##args)
+
+#define FM_INFO(fmt, args...) pr_info("iris_transport: " fmt, ##args)
 
 /* HCI timeouts */
 #define RADIO_HCI_TIMEOUT	(10000)	/* 10 seconds */

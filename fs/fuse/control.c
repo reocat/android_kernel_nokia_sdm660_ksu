@@ -35,7 +35,7 @@ static ssize_t fuse_conn_abort_write(struct file *file, const char __user *buf,
 {
 	struct fuse_conn *fc = fuse_ctl_file_conn_get(file);
 	if (fc) {
-		fuse_abort_conn(fc);
+		fuse_abort_conn(fc, true);
 		fuse_conn_put(fc);
 	}
 	return count;
@@ -117,7 +117,7 @@ static ssize_t fuse_conn_max_background_write(struct file *file,
 					      const char __user *buf,
 					      size_t count, loff_t *ppos)
 {
-	unsigned uninitialized_var(val);
+	unsigned val;
 	ssize_t ret;
 
 	ret = fuse_conn_limit_write(file, buf, count, ppos, &val,
@@ -221,7 +221,7 @@ static struct dentry *fuse_ctl_add_dentry(struct dentry *parent,
 	inode->i_mode = mode;
 	inode->i_uid = fc->user_id;
 	inode->i_gid = fc->group_id;
-	inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
+	inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
 	/* setting ->i_op to NULL is not allowed */
 	if (iop)
 		inode->i_op = iop;
@@ -299,7 +299,7 @@ void fuse_ctl_remove_conn(struct fuse_conn *fc)
 
 static int fuse_ctl_fill_super(struct super_block *sb, void *data, int silent)
 {
-	struct tree_descr empty_descr = {""};
+	static const struct tree_descr empty_descr = {""};
 	struct fuse_conn *fc;
 	int err;
 

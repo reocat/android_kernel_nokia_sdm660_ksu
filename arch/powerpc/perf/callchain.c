@@ -22,6 +22,7 @@
 #ifdef CONFIG_PPC64
 #include "../kernel/ppc32.h"
 #endif
+#include <asm/pte-walk.h>
 
 
 /*
@@ -67,6 +68,7 @@ perf_callchain_kernel(struct perf_callchain_entry_ctx *entry, struct pt_regs *re
 		next_sp = fp[0];
 
 		if (next_sp == sp + STACK_INT_FRAME_SIZE &&
+		    validate_sp(sp, current, STACK_INT_FRAME_SIZE) &&
 		    fp[STACK_FRAME_MARKER] == STACK_FRAME_REGS_MARKER) {
 			/*
 			 * This looks like an interrupt frame for an
@@ -76,7 +78,7 @@ perf_callchain_kernel(struct perf_callchain_entry_ctx *entry, struct pt_regs *re
 			next_ip = regs->nip;
 			lr = regs->link;
 			level = 0;
-			perf_callchain_store(entry, PERF_CONTEXT_KERNEL);
+			perf_callchain_store_context(entry, PERF_CONTEXT_KERNEL);
 
 		} else {
 			if (level == 0)
@@ -127,7 +129,7 @@ static int read_user_stack_slow(void __user *ptr, void *buf, int nb)
 		return -EFAULT;
 
 	local_irq_save(flags);
-	ptep = find_linux_pte_or_hugepte(pgdir, addr, NULL, &shift);
+	ptep = find_current_mm_pte(pgdir, addr, NULL, &shift);
 	if (!ptep)
 		goto err_out;
 	if (!shift)
@@ -137,7 +139,7 @@ static int read_user_stack_slow(void __user *ptr, void *buf, int nb)
 	offset = addr & ((1UL << shift) - 1);
 
 	pte = READ_ONCE(*ptep);
-	if (!pte_present(pte) || !(pte_val(pte) & _PAGE_USER))
+	if (!pte_present(pte) || !pte_user(pte))
 		goto err_out;
 	pfn = pte_pfn(pte);
 	if (!page_is_ram(pfn))
@@ -247,7 +249,7 @@ static void perf_callchain_user_64(struct perf_callchain_entry_ctx *entry,
 	sp = regs->gpr[1];
 	perf_callchain_store(entry, next_ip);
 
-	while (entry->entry->nr < entry->max_stack) {
+	while (entry->nr < entry->max_stack) {
 		fp = (unsigned long __user *) sp;
 		if (!valid_user_sp(sp, 1) || read_user_stack_64(fp, &next_sp))
 			return;
@@ -274,7 +276,7 @@ static void perf_callchain_user_64(struct perf_callchain_entry_ctx *entry,
 			    read_user_stack_64(&uregs[PT_R1], &sp))
 				return;
 			level = 0;
-			perf_callchain_store(entry, PERF_CONTEXT_USER);
+			perf_callchain_store_context(entry, PERF_CONTEXT_USER);
 			perf_callchain_store(entry, next_ip);
 			continue;
 		}
@@ -453,7 +455,7 @@ static void perf_callchain_user_32(struct perf_callchain_entry_ctx *entry,
 	sp = regs->gpr[1];
 	perf_callchain_store(entry, next_ip);
 
-	while (entry->entry->nr < entry->max_stack) {
+	while (entry->nr < entry->max_stack) {
 		fp = (unsigned int __user *) (unsigned long) sp;
 		if (!valid_user_sp(sp, 0) || read_user_stack_32(fp, &next_sp))
 			return;
@@ -473,7 +475,7 @@ static void perf_callchain_user_32(struct perf_callchain_entry_ctx *entry,
 			    read_user_stack_32(&uregs[PT_R1], &sp))
 				return;
 			level = 0;
-			perf_callchain_store(entry, PERF_CONTEXT_USER);
+			perf_callchain_store_context(entry, PERF_CONTEXT_USER);
 			perf_callchain_store(entry, next_ip);
 			continue;
 		}

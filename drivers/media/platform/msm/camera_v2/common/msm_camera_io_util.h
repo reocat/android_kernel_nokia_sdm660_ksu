@@ -1,4 +1,5 @@
-/* Copyright (c) 2011-2014, The Linux Foundataion. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2011-2014, 2018,2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -26,7 +27,7 @@
 #define INIT_RATE -2
 
 struct msm_gpio_set_tbl {
-	unsigned gpio;
+	unsigned int gpio;
 	unsigned long flags;
 	uint32_t delay;
 };
@@ -42,9 +43,9 @@ u32 msm_camera_io_r(void __iomem *addr);
 u32 msm_camera_io_r_mb(void __iomem *addr);
 void msm_camera_io_dump(void __iomem *addr, int size, int enable);
 void msm_camera_io_memcpy(void __iomem *dest_addr,
-		void __iomem *src_addr, u32 len);
+		void *src_addr, u32 len);
 void msm_camera_io_memcpy_mb(void __iomem *dest_addr,
-	void __iomem *src_addr, u32 len);
+	void *src_addr, u32 len);
 int msm_cam_clk_sel_src(struct device *dev, struct msm_cam_clk_info *clk_info,
 		struct msm_cam_clk_info *clk_src_info, int num_clk);
 int msm_cam_clk_enable(struct device *dev, struct msm_cam_clk_info *clk_info,

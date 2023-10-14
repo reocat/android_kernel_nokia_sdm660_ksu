@@ -173,8 +173,6 @@ static int go7007_i2c_master_xfer(struct i2c_adapter *adapter,
 		} else if (msgs[i].len == 3) {
 			if (msgs[i].flags & I2C_M_RD)
 				return -EIO;
-			if (msgs[i].len != 3)
-				return -EIO;
 			if (go7007_i2c_xfer(go, msgs[i].addr, 0,
 					(msgs[i].buf[0] << 8) | msgs[i].buf[1],
 					0x01, &msgs[i].buf[2]) < 0)
@@ -191,7 +189,7 @@ static u32 go7007_functionality(struct i2c_adapter *adapter)
 	return I2C_FUNC_SMBUS_BYTE_DATA;
 }
 
-static struct i2c_algorithm go7007_algo = {
+static const struct i2c_algorithm go7007_algo = {
 	.smbus_xfer	= go7007_smbus_xfer,
 	.master_xfer	= go7007_i2c_master_xfer,
 	.functionality	= go7007_functionality,

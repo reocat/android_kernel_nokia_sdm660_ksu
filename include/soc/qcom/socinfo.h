@@ -1,15 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2009-2018, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+ * Copyright (c) 2009-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _ARCH_ARM_MACH_MSM_SOCINFO_H_
@@ -22,6 +14,64 @@
 #include <linux/of.h>
 
 #include <asm/cputype.h>
+
+enum feature_code {
+	/* External feature code */
+	SOCINFO_FC_UNKNOWN = 0x0,
+	SOCINFO_FC_AA,
+	SOCINFO_FC_AB,
+	SOCINFO_FC_AC,
+	SOCINFO_FC_AD,
+	SOCINFO_FC_AE,
+	SOCINFO_FC_AF,
+	SOCINFO_FC_AG,
+	SOCINFO_FC_AH,
+	SOCINFO_FC_EXT_RESERVE,
+
+	/* Internal feature code */
+	SOCINFO_FC_Y0 = 0xf1,
+	SOCINFO_FC_Y1,
+	SOCINFO_FC_Y2,
+	SOCINFO_FC_Y3,
+	SOCINFO_FC_Y4,
+	SOCINFO_FC_Y5,
+	SOCINFO_FC_Y6,
+	SOCINFO_FC_Y7,
+	SOCINFO_FC_INT_RESERVE
+};
+
+enum pcode {
+	SOCINFO_PCODE_UNKNOWN = 0,
+	SOCINFO_PCODE_0,
+	SOCINFO_PCODE_1,
+	SOCINFO_PCODE_2,
+	SOCINFO_PCODE_3,
+	SOCINFO_PCODE_4,
+	SOCINFO_PCODE_5,
+	SOCINFO_PCODE_6,
+	SOCINFO_PCODE_7,
+	SOCINFO_PCODE_8,
+	SOCINFO_PCODE_RESERVE = 0x7fffffff
+};
+
+enum socinfo_parttype {
+	SOCINFO_PART_GPU,
+	SOCINFO_PART_VIDEO,
+	SOCINFO_PART_CAMERA,
+	SOCINFO_PART_DISPLAY,
+	SOCINFO_PART_AUDIO,
+	SOCINFO_PART_MODEM,
+	SOCINFO_PART_WLAN,
+	SOCINFO_PART_COMP,
+	SOCINFO_PART_SENSORS,
+	SOCINFO_PART_NPU,
+	SOCINFO_PART_SPSS,
+	SOCINFO_PART_NAV,
+	SOCINFO_PART_COMPUTE_1,
+	SOCINFO_PART_DISPLAY_1,
+	SOCINFO_PART_MAX_PARTTYPE
+};
+
 /*
  * SOC version type with major number in the upper 16 bits and minor
  * number in the lower 16 bits.  For example:
@@ -48,68 +98,77 @@
 #define of_board_is_sbc()	of_machine_is_compatible("qcom,sbc")
 
 #define machine_is_msm8974()	of_machine_is_compatible("qcom,msm8974")
-#define machine_is_msm9625()	of_machine_is_compatible("qcom,msm9625")
-#define machine_is_msm8610()	of_machine_is_compatible("qcom,msm8610")
-#define machine_is_msm8226()	of_machine_is_compatible("qcom,msm8226")
-#define machine_is_apq8074()	of_machine_is_compatible("qcom,apq8074")
-#define machine_is_msm8926()	of_machine_is_compatible("qcom,msm8926")
 
-#define early_machine_is_msm8610()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8610")
-#define early_machine_is_msm8909()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8909")
 #define early_machine_is_msm8916()	\
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8916")
-#define early_machine_is_msm8936()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8936")
-#define early_machine_is_msm8939()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8939")
 #define early_machine_is_apq8084()	\
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,apq8084")
-#define early_machine_is_mdm9630()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,mdm9630")
-#define early_machine_is_msmzirc()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msmzirc")
-#define early_machine_is_fsm9900()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,fsm9900")
-#define early_machine_is_msm8994()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8994")
-#define early_machine_is_msm8992()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8992")
-#define early_machine_is_fsm9010()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,fsm9010")
-#define early_machine_is_msm8976()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8976")
-#define early_machine_is_msmtellurium()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msmtellurium")
 #define early_machine_is_msm8996()	\
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8996")
-#define early_machine_is_msm8929()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8929")
-#define early_machine_is_msm8998()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8998")
-#define early_machine_is_apq8098()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,apq8098")
-#define early_machine_is_msmhamster()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msmhamster")
+#define early_machine_is_msm8996_auto()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8996-cdp")
+#define early_machine_is_sm8150()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sm8150")
+#define early_machine_is_sa8150()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sa8150")
+#define early_machine_is_kona()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,kona")
+#define early_machine_is_kona_7230_iot()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,kona-7230-iot")
+#define early_machine_is_lito()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,lito")
+#define early_machine_is_orchid()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,orchid")
+#define early_machine_is_bengal()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,bengal")
+#define early_machine_is_bengalp()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,bengalp")
+#define early_machine_is_khaje()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,khaje")
+#define early_machine_is_khajep()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,khajep")
+#define early_machine_is_khajeq()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,khajeq")
+#define early_machine_is_khajeg()       \
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,khajeg")
+#define early_machine_is_lagoon()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,lagoon")
+#define early_machine_is_scuba()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,scuba")
+#define early_machine_is_scubaiot()        \
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,scuba-iot")
+#define early_machine_is_scubapiot()        \
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,scubap-iot")
+#define early_machine_is_sdmshrike()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdmshrike")
+#define early_machine_is_sm6150()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sm6150")
+#define early_machine_is_qcs405()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,qcs405")
+#define early_machine_is_sdxprairie()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdxprairie")
+#define early_machine_is_sdmmagpie()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdmmagpie")
 #define early_machine_is_sdm660()	\
 	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdm660")
-#define early_machine_is_sda660()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sda660")
-#define early_machine_is_sdm455()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdm455")
-#define early_machine_is_sdm636()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdm636")
-#define early_machine_is_sda636()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sda636")
-#define early_machine_is_sdm658()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdm658")
-#define early_machine_is_sda658()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sda658")
-#define early_machine_is_sdm630()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdm630")
-#define early_machine_is_sda630()	\
-	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sda630")
+#define early_machine_is_bengal_iot()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,bengal-iot")
+#define early_machine_is_bengalp_iot()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,bengalp-iot")
+#define early_machine_is_msm8937()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8937")
+#define early_machine_is_msm8917()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8917")
+#define early_machine_is_sdm439()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdm439")
+#define early_machine_is_sdm429()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdm429")
+#define early_machine_is_qm215()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,qm215")
+#define early_machine_is_msm8953()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,msm8953")
+#define early_machine_is_sdm450()	\
+	of_flat_dt_is_compatible(of_get_flat_dt_root(), "qcom,sdm450")
 #else
 #define of_board_is_sim()		0
 #define of_board_is_rumi()		0
@@ -124,99 +183,91 @@
 #define of_board_is_sbc()		0
 
 #define machine_is_msm8974()		0
-#define machine_is_msm9625()		0
-#define machine_is_msm8610()		0
-#define machine_is_msm8226()		0
-#define machine_is_apq8074()		0
-#define machine_is_msm8926()		0
 
-#define early_machine_is_msm8610()	0
-#define early_machine_is_msm8909()	0
 #define early_machine_is_msm8916()	0
-#define early_machine_is_msm8936()	0
-#define early_machine_is_msm8939()	0
 #define early_machine_is_apq8084()	0
-#define early_machine_is_mdm9630()	0
-#define early_machine_is_fsm9900()	0
-#define early_machine_is_fsm9010()	0
-#define early_machine_is_msmtellurium()	0
 #define early_machine_is_msm8996()	0
-#define early_machine_is_msm8976() 0
-#define early_machine_is_msm8929()	0
-#define early_machine_is_msm8998()	0
-#define early_machine_is_apq8098()	0
-#define early_machine_is_msmhamster()	0
+#define early_machine_is_sm8150()	0
+#define early_machine_is_sa8150()	0
+#define early_machine_is_kona()		0
+#define early_machine_is_lito()		0
+#define early_machine_is_orchid()	0
+#define early_machine_is_bengal()	0
+#define early_machine_is_bengalp()	0
+#define early_machine_is_khaje()	0
+#define early_machine_is_khajep()	0
+#define early_machine_is_khajeq()	0
+#define early_machine_is_khajeg()	0
+#define early_machine_is_lagoon()	0
+#define early_machine_is_scuba()	0
+#define early_machine_is_scubaiot()	0
+#define early_machine_is_scubapiot()	0
+#define early_machine_is_sdmshrike()	0
+#define early_machine_is_sm6150()	0
+#define early_machine_is_qcs405()	0
+#define early_machine_is_sdxprairie()	0
+#define early_machine_is_sdmmagpie()	0
 #define early_machine_is_sdm660()	0
-#define early_machine_is_sda660()	0
-#define early_machine_is_sdm455()	0
-#define early_machine_is_sdm636()	0
-#define early_machine_is_sda636()	0
-#define early_machine_is_sdm658()	0
-#define early_machine_is_sda658()	0
-#define early_machine_is_sdm630()	0
-#define early_machine_is_sda630()	0
+#define early_machine_is_bengal_iot()	0
+#define early_machine_is_bengalp_iot()	0
+#define early_machine_is_msm8937()	0
+#define early_machine_is_msm8917()	0
+#define early_machine_is_sdm439()	0
+#define early_machine_is_sdm429()	0
+#define early_machine_is_qm215()	0
+#define early_machine_is_msm8953()	0
+#define early_machine_is_sdm450()	0
 #endif
 
 #define PLATFORM_SUBTYPE_MDM	1
 #define PLATFORM_SUBTYPE_INTERPOSERV3 2
 #define PLATFORM_SUBTYPE_SGLTE	6
 
+#define SMEM_IMAGE_VERSION_TABLE	469
+#define SMEM_HW_SW_BUILD_ID		137
 enum msm_cpu {
 	MSM_CPU_UNKNOWN = 0,
-	MSM_CPU_7X01,
-	MSM_CPU_7X25,
-	MSM_CPU_7X27,
-	MSM_CPU_8X50,
-	MSM_CPU_8X50A,
-	MSM_CPU_7X30,
-	MSM_CPU_8X55,
-	MSM_CPU_8X60,
 	MSM_CPU_8960,
 	MSM_CPU_8960AB,
-	MSM_CPU_7X27A,
-	FSM_CPU_9XXX,
-	MSM_CPU_7X25A,
-	MSM_CPU_7X25AA,
-	MSM_CPU_7X25AB,
 	MSM_CPU_8064,
-	MSM_CPU_8064AB,
-	MSM_CPU_8064AA,
-	MSM_CPU_8930,
-	MSM_CPU_8930AA,
-	MSM_CPU_8930AB,
-	MSM_CPU_7X27AA,
-	MSM_CPU_9615,
 	MSM_CPU_8974,
 	MSM_CPU_8974PRO_AA,
 	MSM_CPU_8974PRO_AB,
 	MSM_CPU_8974PRO_AC,
-	MSM_CPU_8627,
-	MSM_CPU_8625,
-	MSM_CPU_9625,
-	MSM_CPU_8909,
 	MSM_CPU_8916,
-	MSM_CPU_8936,
-	MSM_CPU_8939,
-	MSM_CPU_8226,
-	MSM_CPU_8610,
-	MSM_CPU_8625Q,
 	MSM_CPU_8084,
-	MSM_CPU_9630,
-	FSM_CPU_9900,
-	MSM_CPU_ZIRC,
-	MSM_CPU_8994,
-	MSM_CPU_8992,
-	FSM_CPU_9010,
-	MSM_CPU_TELLURIUM,
 	MSM_CPU_8996,
-	MSM_CPU_8976,
-	MSM_CPU_8929,
-	MSM_CPU_8998,
-	MSM_CPU_HAMSTER,
-	MSM_CPU_660,
-	MSM_CPU_455,
-	MSM_CPU_630,
-	MSM_CPU_636,
+	MSM_CPU_SDM660,
+	MSM_CPU_SM8150,
+	MSM_CPU_SA8150,
+	MSM_CPU_KONA,
+	MSM_CPU_KONA_IOT,
+	MSM_CPU_LITO,
+	MSM_CPU_ORCHID,
+	MSM_CPU_BENGAL,
+	MSM_CPU_BENGALP,
+	MSM_CPU_KHAJE,
+	MSM_CPU_KHAJEP,
+	MSM_CPU_KHAJEQ,
+	MSM_CPU_KHAJEG,
+	MSM_CPU_LAGOON,
+	MSM_CPU_SCUBA,
+	MSM_CPU_SCUBAIOT,
+	MSM_CPU_SCUBAPIOT,
+	MSM_CPU_SDMSHRIKE,
+	MSM_CPU_SM6150,
+	MSM_CPU_QCS405,
+	SDX_CPU_SDXPRAIRIE,
+	MSM_CPU_SDMMAGPIE,
+	MSM_CPU_BENGAL_IOT,
+	MSM_CPU_BENGALP_IOT,
+	MSM_CPU_8937,
+	MSM_CPU_8917,
+	MSM_CPU_SDM439,
+	MSM_CPU_SDM429,
+	MSM_CPU_QM215,
+	MSM_CPU_8953,
+	MSM_CPU_SDM450,
 };
 
 struct msm_soc_info {
@@ -241,17 +292,47 @@ enum pmic_model {
 	PMIC_MODEL_UNKNOWN	= 0xFFFFFFFF
 };
 
+enum subset_part_type {
+	PART_UNKNOWN      = 0,
+	PART_GPU          = 1,
+	PART_VIDEO        = 2,
+	PART_CAMERA       = 3,
+	PART_DISPLAY      = 4,
+	PART_AUDIO        = 5,
+	PART_MODEM        = 6,
+	PART_WLAN         = 7,
+	PART_COMP         = 8,
+	PART_SENSORS      = 9,
+	PART_NPU          = 10,
+	PART_SPSS         = 11,
+	PART_NAV          = 12,
+	PART_COMP1        = 13,
+	PART_DISPLAY1     = 14,
+	NUM_PARTS_MAX,
+};
+
+enum subset_cluster_type {
+	CLUSTER_CPUSS      = 0,
+	NUM_CLUSTERS_MAX,
+};
+
 enum msm_cpu socinfo_get_msm_cpu(void);
 uint32_t socinfo_get_id(void);
 uint32_t socinfo_get_version(void);
 uint32_t socinfo_get_raw_id(void);
 char *socinfo_get_build_id(void);
+char *socinfo_get_id_string(void);
 uint32_t socinfo_get_platform_type(void);
 uint32_t socinfo_get_platform_subtype(void);
 uint32_t socinfo_get_platform_version(void);
 uint32_t socinfo_get_serial_number(void);
+uint32_t socinfo_get_cluster_info(enum subset_cluster_type cluster);
+bool socinfo_get_part_info(enum subset_part_type part);
 enum pmic_model socinfo_get_pmic_model(void);
 uint32_t socinfo_get_pmic_die_revision(void);
 int __init socinfo_init(void) __must_check;
+int socinfo_get_feature_code(void);
+int socinfo_get_pcode(void);
+char *socinfo_get_partinfo_details(unsigned int part_id);
 
 #endif

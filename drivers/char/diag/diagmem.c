@@ -1,14 +1,5 @@
-/* Copyright (c) 2008-2014, 2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2008-2014, 2016-2019, 2021 The Linux Foundation. All rights reserved.
  */
 
 #include <linux/init.h>
@@ -18,7 +9,7 @@
 #include <linux/of.h>
 #include <linux/kmemleak.h>
 #include <linux/ratelimit.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <linux/slab.h>
 #include <linux/of.h>
 #include <linux/kmemleak.h>
@@ -152,6 +143,9 @@ void diagmem_setsize(int pool_idx, int itemsize, int poolsize)
 	}
 
 	diag_mempools[pool_idx].itemsize = itemsize;
+	if (diag_mempools[pool_idx].pool)
+		diag_mempools[pool_idx].pool->pool_data =
+			(void *)(uintptr_t)itemsize;
 	diag_mempools[pool_idx].poolsize = poolsize;
 	pr_debug("diag: Mempool %s sizes: itemsize %d poolsize %d\n",
 		 diag_mempools[pool_idx].name, diag_mempools[pool_idx].itemsize,
@@ -177,7 +171,8 @@ void *diagmem_alloc(struct diagchar_dev *driver, int size, int pool_type)
 					   mempool->name);
 			break;
 		}
-		if (size == 0 || size > mempool->itemsize) {
+		if (size == 0 || size > mempool->itemsize ||
+			size > (size_t)mempool->pool->pool_data) {
 			pr_err_ratelimited("diag: cannot alloc from mempool %s, invalid size: %d\n",
 					   mempool->name, size);
 			break;
@@ -221,7 +216,7 @@ void diagmem_free(struct diagchar_dev *driver, void *buf, int pool_type)
 			break;
 		}
 		spin_lock_irqsave(&mempool->lock, flags);
-		if (mempool->count > 0) {
+		if (mempool->count > 0 && buf) {
 			mempool_free(buf, mempool->pool);
 			atomic_add(-1, (atomic_t *)&mempool->count);
 		} else {
@@ -236,6 +231,7 @@ void diagmem_free(struct diagchar_dev *driver, void *buf, int pool_type)
 void diagmem_init(struct diagchar_dev *driver, int index)
 {
 	struct diag_mempool_t *mempool = NULL;
+
 	if (!driver)
 		return;
 
@@ -286,7 +282,7 @@ void diagmem_exit(struct diagchar_dev *driver, int index)
 		mempool_destroy(mempool->pool);
 		mempool->pool = NULL;
 	} else {
-		pr_err("diag: Unable to destory %s pool, count: %d\n",
+		pr_err("diag: Unable to destroy %s pool, count: %d\n",
 		       mempool->name, mempool->count);
 	}
 	spin_unlock_irqrestore(&mempool->lock, flags);

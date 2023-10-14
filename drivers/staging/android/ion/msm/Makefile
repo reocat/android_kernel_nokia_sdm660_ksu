@@ -1,4 +1,2 @@
-obj-y += msm_ion.o
-ifdef CONFIG_COMPAT
-obj-y += compat_msm_ion.o
-endif
+# SPDX-License-Identifier: GPL-2.0-only
+obj-y += msm_ion_of.o

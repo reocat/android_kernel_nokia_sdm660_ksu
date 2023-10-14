@@ -1,4 +1,5 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2016, 2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -35,13 +36,13 @@ enum msm_ir_cut_driver_type {
 struct msm_ir_cut_ctrl_t;
 
 struct msm_ir_cut_func_t {
-	int32_t (*camera_ir_cut_init)(struct msm_ir_cut_ctrl_t *,
-		struct msm_ir_cut_cfg_data_t *);
-	int32_t (*camera_ir_cut_release)(struct msm_ir_cut_ctrl_t *);
-	int32_t (*camera_ir_cut_off)(struct msm_ir_cut_ctrl_t *,
-		struct msm_ir_cut_cfg_data_t *);
-	int32_t (*camera_ir_cut_on)(struct msm_ir_cut_ctrl_t *,
-		struct msm_ir_cut_cfg_data_t *);
+	int32_t (*camera_ir_cut_init)(struct msm_ir_cut_ctrl_t *ir_cut_ctrl,
+		struct msm_ir_cut_cfg_data_t *ir_cut_data);
+	int32_t (*camera_ir_cut_release)(struct msm_ir_cut_ctrl_t *ir_cut_ctrl);
+	int32_t (*camera_ir_cut_off)(struct msm_ir_cut_ctrl_t *ir_cut_ctrl,
+		struct msm_ir_cut_cfg_data_t *ir_cut_data);
+	int32_t (*camera_ir_cut_on)(struct msm_ir_cut_ctrl_t *ir_cut_ctrl,
+		struct msm_ir_cut_cfg_data_t *ir_cut_data);
 };
 
 struct msm_ir_cut_table {

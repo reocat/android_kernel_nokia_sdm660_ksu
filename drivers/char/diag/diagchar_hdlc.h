@@ -1,14 +1,6 @@
-/* Copyright (c) 2008-2009, 2012-2014, The Linux Foundation.
+/* SPDX-License-Identifier: GPL-2.0 */
+/* Copyright (c) 2008-2009, 2012-2014, 2016, 2018 The Linux Foundation.
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #ifndef DIAGCHAR_HDLC
@@ -27,8 +19,8 @@ struct diag_send_desc_type {
 	const void *pkt;
 	const void *last;	/* Address of last byte to send. */
 	enum diag_send_state_enum_type state;
-	unsigned char terminate;	/* True if this fragment
-					   terminates the packet */
+	/* True if this fragment terminates the packet */
+	unsigned char terminate;
 };
 
 struct diag_hdlc_dest_type {

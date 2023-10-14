@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 #ifndef __UAPI_MSMB_PPROC_H
 #define __UAPI_MSMB_PPROC_H
 
@@ -82,7 +83,7 @@ struct msm_cpp_frame_info_t {
 	struct msm_cpp_buffer_info_t tnr_scratch_buffer_info[2];
 	uint32_t reserved;
 	uint8_t partial_frame_indicator;
-	/* the followings are used only for partial_frame type
+	/* the following are used only for partial_frame type
 	 * and is only used for offline frame processing and
 	 * only if payload big enough and need to be split into partial_frame
 	 * if first_payload, kernel acquires output buffer
@@ -252,4 +253,3 @@ struct msm_camera_v4l2_ioctl_t {
 };
 
 #endif
-

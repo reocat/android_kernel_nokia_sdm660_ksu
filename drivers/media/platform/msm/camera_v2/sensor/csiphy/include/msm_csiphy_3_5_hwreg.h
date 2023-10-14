@@ -1,4 +1,5 @@
-/* Copyright (c) 2015-2016, 2018 The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2015-2016, 2018-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -17,14 +18,14 @@
 
 #include <sensor/csiphy/msm_csiphy.h>
 
-struct csiphy_reg_parms_t csiphy_v3_5 = {
+static struct csiphy_reg_parms_t csiphy_v3_5 = {
 	.mipi_csiphy_interrupt_status0_addr = 0x8B0,
 	.mipi_csiphy_interrupt_clear0_addr = 0x858,
 	.mipi_csiphy_glbl_irq_cmd_addr = 0x828,
 	.combo_clk_mask = 0x10,
 };
 
-struct csiphy_reg_3ph_parms_t csiphy_v3_5_3ph = {
+static struct csiphy_reg_3ph_parms_t csiphy_v3_5_3ph = {
 	/*MIPI CSI PHY registers*/
 	{0x814, 0x0},
 	{0x818, 0x1},

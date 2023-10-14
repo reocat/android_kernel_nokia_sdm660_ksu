@@ -1,13 +1,6 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2015-2016, 2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/ipa.h>
@@ -266,7 +259,7 @@ union IpaHwMhiStopEventUpdateData_t {
  * @channelHandle: The channel identifier
  * @additonalParams: For stop: the number of pending bam descriptors currently
  *	queued
-*/
+ */
 union IpaHwMhiChangeChannelStateResponseData_t {
 	struct IpaHwMhiChangeChannelStateResponseParams_t {
 		u32 state:8;
@@ -538,19 +531,20 @@ static void ipa_uc_mhi_event_log_info_hdlr(
 		return;
 	}
 
-	if (uc_event_top_mmio->statsInfo.featureInfo[IPA_HW_FEATURE_MHI].
-		params.size != sizeof(struct IpaHwStatsMhiInfoData_t)) {
-		IPAERR("mhi stats sz invalid exp=%zu is=%u\n",
-			sizeof(struct IpaHwStatsMhiInfoData_t),
-			uc_event_top_mmio->statsInfo.
-			featureInfo[IPA_HW_FEATURE_MHI].params.size);
+if (uc_event_top_mmio->statsInfo.featureInfo[IPA_HW_FEATURE_MHI].params.size !=
+	sizeof(struct IpaHwStatsMhiInfoData_t)) {
+	IPAERR("mhi stats sz invalid exp=%zu is=%u\n",
+	sizeof(struct IpaHwStatsMhiInfoData_t),
+	uc_event_top_mmio->statsInfo.featureInfo[IPA_HW_FEATURE_MHI].params.size
+	);
 		return;
-	}
+}
 
-	ipa_uc_mhi_ctx->mhi_uc_stats_ofst = uc_event_top_mmio->
-		statsInfo.baseAddrOffset + uc_event_top_mmio->statsInfo.
-		featureInfo[IPA_HW_FEATURE_MHI].params.offset;
-	IPAERR("MHI stats ofst=0x%x\n", ipa_uc_mhi_ctx->mhi_uc_stats_ofst);
+ipa_uc_mhi_ctx->mhi_uc_stats_ofst =
+uc_event_top_mmio->statsInfo.baseAddrOffset +
+uc_event_top_mmio->statsInfo.featureInfo[IPA_HW_FEATURE_MHI].params.offset;
+IPAERR("MHI stats ofst=0x%x\n", ipa_uc_mhi_ctx->mhi_uc_stats_ofst);
+
 	if (ipa_uc_mhi_ctx->mhi_uc_stats_ofst +
 		sizeof(struct IpaHwStatsMhiInfoData_t) >=
 		ipa_ctx->ctrl->ipa_reg_base_ofst +
@@ -602,7 +596,7 @@ int ipa2_uc_mhi_init(void (*ready_cb)(void), void (*wakeup_request_cb)(void))
 
 void ipa2_uc_mhi_cleanup(void)
 {
-	struct ipa_uc_hdlrs null_hdlrs = { 0 };
+	struct ipa_uc_hdlrs null_hdlrs = { NULL };
 
 	IPADBG("Enter\n");
 
@@ -640,14 +634,13 @@ int ipa_uc_mhi_init_engine(struct ipa_mhi_msi_info *msi, u32 mmio_addr,
 	}
 
 	mem.size = sizeof(*init_cmd_data);
-	mem.base = dma_alloc_coherent(ipa_ctx->pdev, mem.size, &mem.phys_base,
+	mem.base = dma_zalloc_coherent(ipa_ctx->pdev, mem.size, &mem.phys_base,
 		GFP_KERNEL);
 	if (!mem.base) {
 		IPAERR("fail to alloc DMA buff of size %d\n", mem.size);
 		res = -ENOMEM;
 		goto disable_clks;
 	}
-	memset(mem.base, 0, mem.size);
 	init_cmd_data = (struct IpaHwMhiInitCmdData_t *)mem.base;
 	init_cmd_data->msiAddress = msi->addr_low;
 	init_cmd_data->mmioBaseAddress = mmio_addr;

@@ -1,17 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+ * Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
  */
-
 #include <linux/compat.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
@@ -36,13 +26,16 @@
 		_IOWR('R', 9, struct compat_fastrpc_ioctl_perf)
 #define COMPAT_FASTRPC_IOCTL_INIT_ATTRS \
 		_IOWR('R', 10, struct compat_fastrpc_ioctl_init_attrs)
+#define COMPAT_FASTRPC_IOCTL_INVOKE_CRC \
+		_IOWR('R', 11, struct compat_fastrpc_ioctl_invoke_crc)
 #define COMPAT_FASTRPC_IOCTL_CONTROL \
 		_IOWR('R', 12, struct compat_fastrpc_ioctl_control)
 #define COMPAT_FASTRPC_IOCTL_MMAP_64 \
 		_IOWR('R', 14, struct compat_fastrpc_ioctl_mmap_64)
 #define COMPAT_FASTRPC_IOCTL_MUNMAP_64 \
 		_IOWR('R', 15, struct compat_fastrpc_ioctl_munmap_64)
-
+#define COMPAT_FASTRPC_IOCTL_GET_DSP_INFO \
+		_IOWR('R', 16, struct compat_fastrpc_ioctl_dsp_capabilities)
 
 struct compat_remote_buf {
 	compat_uptr_t pv;	/* buffer pointer */
@@ -69,6 +62,13 @@ struct compat_fastrpc_ioctl_invoke_attrs {
 	struct compat_fastrpc_ioctl_invoke inv;
 	compat_uptr_t fds;	/* fd list */
 	compat_uptr_t attrs;	/* attribute list */
+};
+
+struct compat_fastrpc_ioctl_invoke_crc {
+	struct compat_fastrpc_ioctl_invoke inv;
+	compat_uptr_t fds;	/* fd list */
+	compat_uptr_t attrs;	/* attribute list */
+	compat_uptr_t crc;	/* crc list */
 };
 
 struct compat_fastrpc_ioctl_mmap {
@@ -119,15 +119,10 @@ struct compat_fastrpc_ioctl_perf {	/* kernel performance data */
 	compat_uptr_t keys;
 };
 
-#define FASTRPC_CONTROL_LATENCY (1)
+#define FASTRPC_CONTROL_LATENCY		(1)
 struct compat_fastrpc_ctrl_latency {
-	compat_uint_t enable;
-	compat_uint_t level;
-};
-
-#define FASTRPC_CONTROL_SMMU (2)
-struct compat_fastrpc_ctrl_smmu {
-	compat_uint_t sharedcb;
+	compat_uint_t enable;	/* latency control enable */
+	compat_uint_t latency;	/* target latency in us */
 };
 
 #define FASTRPC_CONTROL_KALLOC		(3)
@@ -135,31 +130,41 @@ struct compat_fastrpc_ctrl_kalloc {
 	compat_uint_t kalloc_support; /* Remote memory allocation from kernel */
 };
 
+struct compat_fastrpc_ctrl_wakelock {
+	compat_uint_t enable;	/* wakelock control enable */
+};
+
+struct compat_fastrpc_ctrl_pm {
+	compat_uint_t timeout;	/* timeout(in ms) for PM to keep system awake*/
+};
+
 struct compat_fastrpc_ioctl_control {
 	compat_uint_t req;
 	union {
 		struct compat_fastrpc_ctrl_latency lp;
-		struct compat_fastrpc_ctrl_smmu smmu;
 		struct compat_fastrpc_ctrl_kalloc kalloc;
+		struct compat_fastrpc_ctrl_wakelock wp;
+		struct compat_fastrpc_ctrl_pm pm;
 	};
 };
 
+struct compat_fastrpc_ioctl_dsp_capabilities {
+	compat_uint_t domain;	/* DSP domain to query capabilities */
+	compat_uint_t dsp_attributes[FASTRPC_MAX_DSP_ATTRIBUTES];
+};
+
 static int compat_get_fastrpc_ioctl_invoke(
-			struct compat_fastrpc_ioctl_invoke_attrs __user *inv32,
-			struct fastrpc_ioctl_invoke_attrs __user **inva,
-			unsigned int cmd)
+			struct compat_fastrpc_ioctl_invoke_crc __user *inv32,
+			struct fastrpc_ioctl_invoke_crc __user **inva,
+			unsigned int cmd, compat_uint_t sc)
 {
-	compat_uint_t u, sc;
+	compat_uint_t u;
 	compat_size_t s;
 	compat_uptr_t p;
-	struct fastrpc_ioctl_invoke_attrs *inv;
+	struct fastrpc_ioctl_invoke_crc *inv;
 	union compat_remote_arg *pra32;
 	union remote_arg *pra;
-	int err, len, num, j;
-
-	err = get_user(sc, &inv32->inv.sc);
-	if (err)
-		return err;
+	int err, len, j;
 
 	len = REMOTE_SCALARS_LENGTH(sc);
 	VERIFY(err, NULL != (inv = compat_alloc_user_space(
@@ -178,16 +183,11 @@ static int compat_get_fastrpc_ioctl_invoke(
 
 	pra32 = compat_ptr(p);
 	pra = (union remote_arg *)(inv + 1);
-	num = REMOTE_SCALARS_INBUFS(sc) + REMOTE_SCALARS_OUTBUFS(sc);
-	for (j = 0; j < num; j++) {
+	for (j = 0; j < len; j++) {
 		err |= get_user(p, &pra32[j].buf.pv);
 		err |= put_user(p, (uintptr_t *)&pra[j].buf.pv);
 		err |= get_user(s, &pra32[j].buf.len);
 		err |= put_user(s, &pra[j].buf.len);
-	}
-	for (j = 0; j < REMOTE_SCALARS_INHANDLES(sc); j++) {
-		err |= get_user(u, &pra32[num + j].h);
-		err |= put_user(u, &pra[num + j].h);
 	}
 
 	err |= put_user(NULL, &inv->fds);
@@ -196,39 +196,18 @@ static int compat_get_fastrpc_ioctl_invoke(
 		err |= put_user(p, (compat_uptr_t *)&inv->fds);
 	}
 	err |= put_user(NULL, &inv->attrs);
-	if (cmd == COMPAT_FASTRPC_IOCTL_INVOKE_ATTRS) {
+	if ((cmd == COMPAT_FASTRPC_IOCTL_INVOKE_ATTRS) ||
+		(cmd == COMPAT_FASTRPC_IOCTL_INVOKE_CRC)) {
 		err |= get_user(p, &inv32->attrs);
 		err |= put_user(p, (compat_uptr_t *)&inv->attrs);
 	}
-
-	*inva = inv;
-	return err;
-}
-
-static int compat_put_fastrpc_ioctl_invoke(
-			struct compat_fastrpc_ioctl_invoke_attrs __user *inv32,
-			struct fastrpc_ioctl_invoke_attrs __user *inv)
-{
-	compat_uptr_t p;
-	compat_uint_t u, h;
-	union compat_remote_arg *pra32;
-	union remote_arg *pra;
-	int err, i, num;
-
-	err = get_user(u, &inv32->inv.sc);
-	err |= get_user(p, &inv32->inv.pra);
-	if (err)
-		return err;
-
-	pra32 = compat_ptr(p);
-	pra = (union remote_arg *)(inv + 1);
-	num = REMOTE_SCALARS_INBUFS(u) + REMOTE_SCALARS_OUTBUFS(u)
-		+ REMOTE_SCALARS_INHANDLES(u);
-	for (i = 0;  i < REMOTE_SCALARS_OUTHANDLES(u); i++) {
-		err |= get_user(h, &pra[num + i].h);
-		err |= put_user(h, &pra32[num + i].h);
+	err |= put_user(NULL, (compat_uptr_t __user **)&inv->crc);
+	if (cmd == COMPAT_FASTRPC_IOCTL_INVOKE_CRC) {
+		err |= get_user(p, &inv32->crc);
+		err |= put_user(p, (compat_uptr_t __user *)&inv->crc);
 	}
 
+	*inva = inv;
 	return err;
 }
 
@@ -358,6 +337,18 @@ static int compat_get_fastrpc_ioctl_control(
 
 	err = get_user(p, &ctrl32->req);
 	err |= put_user(p, &ctrl->req);
+	if (p == FASTRPC_CONTROL_LATENCY) {
+		err |= get_user(p, &ctrl32->lp.enable);
+		err |= put_user(p, &ctrl->lp.enable);
+		err |= get_user(p, &ctrl32->lp.latency);
+		err |= put_user(p, &ctrl->lp.latency);
+	} else if (p == FASTRPC_CONTROL_WAKELOCK) {
+		err |= get_user(p, &ctrl32->wp.enable);
+		err |= put_user(p, &ctrl->wp.enable);
+	} else if (p == FASTRPC_CONTROL_PM) {
+		err |= get_user(p, &ctrl32->pm.timeout);
+		err |= put_user(p, &ctrl->pm.timeout);
+	}
 
 	return err;
 }
@@ -402,10 +393,123 @@ static int compat_get_fastrpc_ioctl_init(
 	return err;
 }
 
+static int compat_put_fastrpc_ioctl_get_dsp_info(
+		struct compat_fastrpc_ioctl_dsp_capabilities __user *info32,
+		struct fastrpc_ioctl_dsp_capabilities __user *info)
+{
+	compat_uint_t u, *dsp_attr, *dsp_attr_32;
+	int err, ii;
+
+	dsp_attr = info->dsp_attributes;
+	dsp_attr_32 = info32->dsp_attributes;
+	for (ii = 0, err = 0; ii < FASTRPC_MAX_DSP_ATTRIBUTES; ii++) {
+		err |= get_user(u, dsp_attr++);
+		err |= put_user(u, dsp_attr_32++);
+	}
+
+	return err;
+}
+
+static int fastrpc_setmode(struct file *filp, unsigned int cmd,
+		unsigned long arg)
+{
+	return filp->f_op->unlocked_ioctl(filp, cmd,
+					(unsigned long)compat_ptr(arg));
+}
+
+static int compat_fastrpc_control(struct file *filp,
+		unsigned long arg)
+{
+	int err = 0;
+	struct compat_fastrpc_ioctl_control __user *ctrl32;
+	struct fastrpc_ioctl_control __user *ctrl;
+	compat_uptr_t p;
+
+	ctrl32 = compat_ptr(arg);
+	VERIFY(err, NULL != (ctrl = compat_alloc_user_space(
+						sizeof(*ctrl))));
+	if (err)
+		return -EFAULT;
+	VERIFY(err, 0 == compat_get_fastrpc_ioctl_control(ctrl32,
+						ctrl));
+	if (err)
+		return err;
+	err = filp->f_op->unlocked_ioctl(filp, FASTRPC_IOCTL_CONTROL,
+						(unsigned long)ctrl);
+	if (err)
+		return err;
+	err = get_user(p, &ctrl32->req);
+	if (err)
+		return err;
+	if (p == FASTRPC_CONTROL_KALLOC) {
+		err = get_user(p, &ctrl->kalloc.kalloc_support);
+		err |= put_user(p, &ctrl32->kalloc.kalloc_support);
+	}
+	return err;
+}
+
+static int compat_fastrpc_getperf(struct file *filp,
+		unsigned long arg)
+{
+	int err = 0;
+	struct compat_fastrpc_ioctl_perf __user *perf32;
+	struct fastrpc_ioctl_perf *perf;
+	compat_uint_t u;
+	long ret;
+
+	perf32 = compat_ptr(arg);
+	VERIFY(err, NULL != (perf = compat_alloc_user_space(
+						sizeof(*perf))));
+	if (err)
+		return -EFAULT;
+	VERIFY(err, 0 == compat_get_fastrpc_ioctl_perf(perf32,
+						perf));
+	if (err)
+		return err;
+	ret = filp->f_op->unlocked_ioctl(filp, FASTRPC_IOCTL_GETPERF,
+						(unsigned long)perf);
+	if (ret)
+		return ret;
+	err = get_user(u, &perf->numkeys);
+	err |= put_user(u, &perf32->numkeys);
+	return err;
+}
+
+static int compat_fastrpc_get_dsp_info(struct file *filp,
+		unsigned long arg)
+{
+	struct compat_fastrpc_ioctl_dsp_capabilities __user *info32;
+	struct fastrpc_ioctl_dsp_capabilities *info;
+	compat_uint_t u;
+	long ret;
+	int err = 0;
+
+	info32 = compat_ptr(arg);
+	VERIFY(err, NULL != (info = compat_alloc_user_space(
+						sizeof(*info))));
+	if (err)
+		return -EFAULT;
+
+	err = get_user(u, &info32->domain);
+	err |= put_user(u, &info->domain);
+	if (err)
+		return err;
+
+	ret = filp->f_op->unlocked_ioctl(filp,
+			FASTRPC_IOCTL_GET_DSP_INFO,
+			(unsigned long)info);
+	if (ret)
+		return ret;
+
+	err = compat_put_fastrpc_ioctl_get_dsp_info(info32, info);
+	return err;
+}
+
 long compat_fastrpc_device_ioctl(struct file *filp, unsigned int cmd,
 				unsigned long arg)
 {
 	int err = 0;
+	compat_uint_t sc;
 
 	if (!filp->f_op || !filp->f_op->unlocked_ioctl)
 		return -ENOTTY;
@@ -414,22 +518,22 @@ long compat_fastrpc_device_ioctl(struct file *filp, unsigned int cmd,
 	case COMPAT_FASTRPC_IOCTL_INVOKE:
 	case COMPAT_FASTRPC_IOCTL_INVOKE_FD:
 	case COMPAT_FASTRPC_IOCTL_INVOKE_ATTRS:
+	case COMPAT_FASTRPC_IOCTL_INVOKE_CRC:
 	{
-		struct compat_fastrpc_ioctl_invoke_attrs __user *inv32;
-		struct fastrpc_ioctl_invoke_attrs __user *inv;
-		long ret;
+		struct compat_fastrpc_ioctl_invoke_crc __user *inv32 = NULL;
+		struct fastrpc_ioctl_invoke_crc __user *inv = NULL;
 
 		inv32 = compat_ptr(arg);
-		VERIFY(err, 0 == compat_get_fastrpc_ioctl_invoke(inv32,
-							&inv, cmd));
+		err = get_user(sc, &inv32->inv.sc);
 		if (err)
 			return err;
-		ret = filp->f_op->unlocked_ioctl(filp,
-				FASTRPC_IOCTL_INVOKE_ATTRS, (unsigned long)inv);
-		if (ret)
-			return ret;
-		VERIFY(err, 0 == compat_put_fastrpc_ioctl_invoke(inv32, inv));
-		return err;
+
+		VERIFY(err, 0 == compat_get_fastrpc_ioctl_invoke(inv32,
+							&inv, cmd, sc));
+		if (err)
+			return err;
+		return filp->f_op->unlocked_ioctl(filp,
+				FASTRPC_IOCTL_INVOKE_CRC, (unsigned long)inv);
 	}
 	case COMPAT_FASTRPC_IOCTL_MMAP:
 	{
@@ -551,59 +655,18 @@ long compat_fastrpc_device_ioctl(struct file *filp, unsigned int cmd,
 		return err;
 	}
 	case FASTRPC_IOCTL_SETMODE:
-		return filp->f_op->unlocked_ioctl(filp, cmd,
-						(unsigned long)compat_ptr(arg));
+		return fastrpc_setmode(filp, cmd, arg);
 	case COMPAT_FASTRPC_IOCTL_CONTROL:
 	{
-		struct compat_fastrpc_ioctl_control __user *ctrl32;
-		struct fastrpc_ioctl_control __user *ctrl;
-		compat_uptr_t p;
-
-		ctrl32 = compat_ptr(arg);
-		VERIFY(err, NULL != (ctrl = compat_alloc_user_space(
-							sizeof(*ctrl))));
-		if (err)
-			return -EFAULT;
-		VERIFY(err, 0 == compat_get_fastrpc_ioctl_control(ctrl32,
-							ctrl));
-		if (err)
-			return err;
-		err = filp->f_op->unlocked_ioctl(filp, FASTRPC_IOCTL_CONTROL,
-							(unsigned long)ctrl);
-		if (err)
-			return err;
-		err = get_user(p, &ctrl32->req);
-		if (err)
-			return err;
-		if (p == FASTRPC_CONTROL_KALLOC) {
-			err = get_user(p, &ctrl->kalloc.kalloc_support);
-			err |= put_user(p, &ctrl32->kalloc.kalloc_support);
-		}
-		return err;
+		return compat_fastrpc_control(filp, arg);
 	}
 	case COMPAT_FASTRPC_IOCTL_GETPERF:
 	{
-		struct compat_fastrpc_ioctl_perf __user *perf32;
-		struct fastrpc_ioctl_perf *perf;
-		compat_uint_t u;
-		long ret;
-
-		perf32 = compat_ptr(arg);
-		VERIFY(err, NULL != (perf = compat_alloc_user_space(
-							sizeof(*perf))));
-		if (err)
-			return -EFAULT;
-		VERIFY(err, 0 == compat_get_fastrpc_ioctl_perf(perf32,
-							perf));
-		if (err)
-			return err;
-		ret = filp->f_op->unlocked_ioctl(filp, FASTRPC_IOCTL_GETPERF,
-							(unsigned long)perf);
-		if (ret)
-			return ret;
-		err = get_user(u, &perf->numkeys);
-		err |= put_user(u, &perf32->numkeys);
-		return err;
+		return compat_fastrpc_getperf(filp, arg);
+	}
+	case COMPAT_FASTRPC_IOCTL_GET_DSP_INFO:
+	{
+		return compat_fastrpc_get_dsp_info(filp, arg);
 	}
 	default:
 		return -ENOIOCTLCMD;

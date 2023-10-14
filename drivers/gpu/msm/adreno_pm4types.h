@@ -1,24 +1,17 @@
-/* Copyright (c) 2002,2007-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (c) 2002,2007-2018,2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #ifndef __ADRENO_PM4TYPES_H
 #define __ADRENO_PM4TYPES_H
 
 #include "adreno.h"
 
-#define CP_TYPE0_PKT	((unsigned int)0 << 30)
-#define CP_TYPE3_PKT	((unsigned int)3 << 30)
-#define CP_TYPE4_PKT    ((unsigned int)4 << 28)
-#define CP_TYPE7_PKT    ((unsigned int)7 << 28)
+#define CP_TYPE0_PKT	(0 << 30)
+#define CP_TYPE3_PKT	(3 << 30)
+#define CP_TYPE4_PKT	(4 << 28)
+#define CP_TYPE7_PKT	(7 << 28)
 
 #define PM4_TYPE4_PKT_SIZE_MAX  128
 
@@ -54,6 +47,15 @@
 
 /* switches SMMU pagetable, used on a5xx only */
 #define CP_SMMU_TABLE_UPDATE 0x53
+
+/* Designate command streams to be executed before/after state restore */
+#define CP_SET_AMBLE		0x55
+
+/*  Set internal CP registers, used to indicate context save data addresses */
+#define CP_SET_PSEUDO_REGISTER      0x56
+
+/* Tell CP the current operation mode, indicates save and restore procedure */
+#define CP_SET_MARKER  0x65
 
 /* register read/modify/write */
 #define CP_REG_RMW		0x21
@@ -96,6 +98,8 @@
 
 /* A5XX Enable yield in RB only */
 #define CP_YIELD_ENABLE 0x1C
+
+#define CP_WHERE_AM_I 0x62
 
 /* Enable/Disable/Defer A5x global preemption model */
 #define CP_PREEMPT_ENABLE_GLOBAL    0x69
@@ -153,6 +157,9 @@
 #define CP_LOADSTATE_NUMOFUNITS_SHIFT 0x00000016
 #define CP_LOADSTATE_STATETYPE_SHIFT 0x00000000
 #define CP_LOADSTATE_EXTSRCADDR_SHIFT 0x00000002
+
+/* Used to define amble type in SET_AMBLE packet to execute during preemption */
+#define CP_KMD_AMBLE_TYPE 3
 
 static inline uint pm4_calc_odd_parity_bit(uint val)
 {
@@ -384,6 +391,24 @@ static inline uint cp_invalidate_state(struct adreno_device *adreno_dev,
 	}
 
 	return cmds - start;
+}
+
+static inline u32 cp_protected_mode(struct adreno_device *adreno_dev,
+		u32 *cmds, int on)
+{
+	cmds[0] = cp_packet(adreno_dev, CP_SET_PROTECTED_MODE, 1);
+	cmds[1] = on;
+
+	return 2;
+}
+
+static inline u32 cp_identifier(struct adreno_device *adreno_dev,
+		u32 *cmds, u32 id)
+{
+	cmds[0] = cp_packet(adreno_dev, CP_NOP, 1);
+	cmds[1] = id;
+
+	return 2;
 }
 
 #endif	/* __ADRENO_PM4TYPES_H */

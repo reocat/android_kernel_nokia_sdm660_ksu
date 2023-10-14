@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * This is a maximally equidistributed combined Tausworthe generator
  * based on code from GNU Scientific Library 1.5 (30 Jun 2004)
@@ -37,6 +38,9 @@
 #include <linux/jiffies.h>
 #include <linux/random.h>
 #include <linux/sched.h>
+#include <linux/bitops.h>
+#include <linux/slab.h>
+#include <linux/notifier.h>
 #include <asm/unaligned.h>
 
 /**
@@ -121,6 +125,7 @@ void prandom_seed_full_state(struct rnd_state __percpu *pcpu_state)
 		prandom_warmup(state);
 	}
 }
+EXPORT_SYMBOL(prandom_seed_full_state);
 
 #ifdef CONFIG_RANDOM32_SELFTEST
 static struct prandom_test1 {
@@ -333,7 +338,7 @@ struct siprand_state {
 	unsigned long v3;
 };
 
-static DEFINE_PER_CPU(struct siprand_state, net_rand_state);
+static DEFINE_PER_CPU(struct siprand_state, net_rand_state) __latent_entropy;
 
 /*
  * This is the core CPRNG function.  As "pseudorandom", this is not used
@@ -480,11 +485,11 @@ core_initcall(prandom_init_early);
 
 
 /* Stronger reseeding when available, and periodically thereafter. */
-static void prandom_reseed(unsigned long dontcare);
+static void prandom_reseed(struct timer_list *unused);
 
-static DEFINE_TIMER(seed_timer, prandom_reseed, 0, 0);
+static DEFINE_TIMER(seed_timer, prandom_reseed);
 
-static void prandom_reseed(unsigned long dontcare)
+static void prandom_reseed(struct timer_list *unused)
 {
 	unsigned long expires;
 	int i;
@@ -542,9 +547,11 @@ static void prandom_reseed(unsigned long dontcare)
  * To avoid worrying about whether it's safe to delay that interrupt
  * long enough to seed all CPUs, just schedule an immediate timer event.
  */
-static void prandom_timer_start(struct random_ready_callback *unused)
+static int prandom_timer_start(struct notifier_block *nb,
+			       unsigned long action, void *data)
 {
 	mod_timer(&seed_timer, jiffies);
+	return 0;
 }
 
 /*
@@ -553,13 +560,13 @@ static void prandom_timer_start(struct random_ready_callback *unused)
  */
 static int __init prandom_init_late(void)
 {
-	static struct random_ready_callback random_ready = {
-		.func = prandom_timer_start
+	static struct notifier_block random_ready = {
+		.notifier_call = prandom_timer_start
 	};
-	int ret = add_random_ready_callback(&random_ready);
+	int ret = register_random_ready_notifier(&random_ready);
 
 	if (ret == -EALREADY) {
-		prandom_timer_start(&random_ready);
+		prandom_timer_start(&random_ready, 0, NULL);
 		ret = 0;
 	}
 	return ret;

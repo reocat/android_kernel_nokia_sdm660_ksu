@@ -2,7 +2,7 @@
  *
  * FocalTech TouchScreen driver.
  *
- * Copyright (c) 2010-2016, FocalTech Systems, Ltd., all rights reserved.
+ * Copyright (c) 2012-2019, FocalTech Systems, Ltd., all rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -19,17 +19,16 @@
 *
 * File Name: focaltech_point_report_check.c
 *
-*    Author: WangTao
+* Author: Focaltech Driver Team
 *
-*   Created: 2016-11-16
+* Created: 2016-11-16
 *
-*  Abstract: point report check function
+* Abstract: point report check function
 *
-*   Version: v1.0
+* Version: v1.0
 *
 * Revision History:
-*        v1.0:
-*            First release. By WangTao 2016-11-16
+*
 *****************************************************************************/
 
 /*****************************************************************************
@@ -41,68 +40,59 @@
 /*****************************************************************************
 * Private constant and macro definitions using #define
 *****************************************************************************/
-#define POINT_REPORT_CHECK_WAIT_TIME              200    //ms
-
-/*****************************************************************************
-* Private enumerations, structures and unions using typedef
-*****************************************************************************/
-
-/*****************************************************************************
-* Static variables
-*****************************************************************************/
-static struct delayed_work fts_point_report_check_work;
-static struct workqueue_struct *fts_point_report_check_workqueue = NULL;
-
-/*****************************************************************************
-* Global variable or extern global variabls/functions
-*****************************************************************************/
-
-/*****************************************************************************
-* Static function prototypes
-*****************************************************************************/
+#define POINT_REPORT_CHECK_WAIT_TIME              200    /* unit:ms */
 
 /*****************************************************************************
 * functions body
 *****************************************************************************/
-
-
 /*****************************************************************************
-*  Name: fts_point_report_check_func
-*  Brief:
+*  Name: fts_prc_func
+*  Brief: fts point report check work func, report whole up of points
 *  Input:
 *  Output:
 *  Return:
 *****************************************************************************/
-static void fts_point_report_check_func(struct work_struct *work)
+static void fts_prc_func(struct work_struct *work)
 {
+	struct fts_ts_data *ts_data = container_of(work,
+					struct fts_ts_data, prc_work.work);
+	struct input_dev *input_dev = ts_data->input_dev;
+#if FTS_MT_PROTOCOL_B_EN
+	u32 finger_count = 0;
+	u32 max_touches = fts_data->pdata->max_touch_number;
+#endif
+
+	FTS_FUNC_ENTER();
+	mutex_lock(&ts_data->report_mutex);
 
 #if FTS_MT_PROTOCOL_B_EN
-    unsigned int finger_count=0;
-
-    FTS_FUNC_ENTER();
-
-    for (finger_count = 0; finger_count < FTS_MAX_POINTS; finger_count++)
-    {
-        input_mt_slot(fts_input_dev, finger_count);
-        input_mt_report_slot_state(fts_input_dev, MT_TOOL_FINGER, false);
-    }
+	for (finger_count = 0; finger_count < max_touches; finger_count++) {
+		input_mt_slot(input_dev, finger_count);
+		input_mt_report_slot_state(input_dev, MT_TOOL_FINGER, false);
+	}
 #else
-    input_mt_sync(fts_input_dev);
+	input_mt_sync(input_dev);
 #endif
-    input_report_key(fts_input_dev, BTN_TOUCH, 0);
-    input_sync(fts_input_dev);
+	input_report_key(input_dev, BTN_TOUCH, 0);
+	input_sync(input_dev);
 
+	mutex_unlock(&ts_data->report_mutex);
 
-
-    FTS_FUNC_EXIT();
+	FTS_FUNC_EXIT();
 }
 
-void fts_point_report_check_queue_work(void)
+/*****************************************************************************
+*  Name: fts_prc_queue_work
+*  Brief: fts point report check queue work, call it when interrupt comes
+*  Input:
+*  Output:
+*  Return:
+*****************************************************************************/
+void fts_prc_queue_work(struct fts_ts_data *ts_data)
 {
-
-    cancel_delayed_work(&fts_point_report_check_work);
-    queue_delayed_work(fts_point_report_check_workqueue, &fts_point_report_check_work, msecs_to_jiffies(POINT_REPORT_CHECK_WAIT_TIME));
-
+	cancel_delayed_work_sync(&ts_data->prc_work);
+	queue_delayed_work(ts_data->ts_workqueue, &ts_data->prc_work,
+			msecs_to_jiffies(POINT_REPORT_CHECK_WAIT_TIME));
 }
 
 /*****************************************************************************
@@ -112,24 +102,19 @@ void fts_point_report_check_queue_work(void)
 *  Output:
 *  Return: < 0: Fail to create esd check queue
 *****************************************************************************/
-int fts_point_report_check_init(void)
+int fts_point_report_check_init(struct fts_ts_data *ts_data)
 {
-    FTS_FUNC_ENTER();
+	FTS_FUNC_ENTER();
 
-    INIT_DELAYED_WORK(&fts_point_report_check_work, fts_point_report_check_func);
-    fts_point_report_check_workqueue = create_workqueue("fts_point_report_check_func_wq");
-    if (fts_point_report_check_workqueue == NULL)
-    {
-        FTS_ERROR("[POINT_REPORT]: Failed to create fts_point_report_check_workqueue!!");
-    }
-    else
-    {
-        FTS_DEBUG("[POINT_REPORT]: Success to create fts_point_report_check_workqueue!!");
-    }
+	if (ts_data->ts_workqueue) {
+		INIT_DELAYED_WORK(&ts_data->prc_work, fts_prc_func);
+	} else {
+		FTS_ERROR("fts workqueue is NULL, can't run point report check function");
+		return -EINVAL;
+	}
 
-    FTS_FUNC_EXIT();
-
-    return 0;
+	FTS_FUNC_EXIT();
+	return 0;
 }
 
 /*****************************************************************************
@@ -139,14 +124,12 @@ int fts_point_report_check_init(void)
 *  Output:
 *  Return:
 *****************************************************************************/
-int fts_point_report_check_exit(void)
+int fts_point_report_check_exit(struct fts_ts_data *ts_data)
 {
-    FTS_FUNC_ENTER();
+	FTS_FUNC_ENTER();
 
-    destroy_workqueue(fts_point_report_check_workqueue);
-
-    FTS_FUNC_EXIT();
-    return 0;
+	FTS_FUNC_EXIT();
+	return 0;
 }
 #endif /* FTS_POINT_REPORT_CHECK_EN */
 

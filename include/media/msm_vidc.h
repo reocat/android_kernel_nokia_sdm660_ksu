@@ -1,4 +1,6 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -8,7 +10,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
  */
 
 #ifndef _MSM_VIDC_H_
@@ -20,18 +21,20 @@
 #include <linux/msm_ion.h>
 #include <uapi/media/msm_vidc.h>
 
-#define HAL_BUFFER_MAX 0xb
+#define HAL_BUFFER_MAX 0xd
 
 enum smem_type {
 	SMEM_ION,
 };
 
 enum smem_prop {
-	SMEM_CACHED,
-	SMEM_SECURE,
+	SMEM_UNCACHED = 0x1,
+	SMEM_CACHED = 0x2,
+	SMEM_SECURE = 0x4,
+	SMEM_ADSP = 0x8,
 };
 
-/* NOTE: if you change this enum you MUST update the
+/* NOTE:  if you change this enum you MUST update the
  * "buffer-type-tz-usage-table" for any affected target
  * in arch/arm/boot/dts/<arch>.dtsi
  */
@@ -49,26 +52,32 @@ enum hal_buffer {
 	HAL_BUFFER_INTERNAL_PERSIST = 0x200,
 	HAL_BUFFER_INTERNAL_PERSIST_1 = 0x400,
 	HAL_BUFFER_INTERNAL_CMD_QUEUE = 0x800,
+	HAL_BUFFER_INTERNAL_RECON = 0x1000,
 };
 
 struct dma_mapping_info {
 	struct device *dev;
-	struct dma_iommu_mapping *mapping;
+	struct iommu_domain *domain;
 	struct sg_table *table;
 	struct dma_buf_attachment *attach;
 	struct dma_buf *buf;
+	void *cb_info;
 };
 
 struct msm_smem {
-	int mem_type;
-	size_t size;
+	u32 refcount;
+	int fd;
+	void *dma_buf;
+	void *handle;
 	void *kvaddr;
-	ion_phys_addr_t device_addr;
+	u32 device_addr;
+	unsigned int offset;
+	unsigned int size;
 	unsigned long flags;
-	void *smem_priv;
 	enum hal_buffer buffer_type;
 	struct dma_mapping_info mapping_info;
-	unsigned int offset;
+	int mem_type;
+	void *smem_priv;
 };
 
 enum smem_cache_ops {
@@ -101,17 +110,19 @@ int msm_vidc_querycap(void *instance, struct v4l2_capability *cap);
 int msm_vidc_enum_fmt(void *instance, struct v4l2_fmtdesc *f);
 int msm_vidc_s_fmt(void *instance, struct v4l2_format *f);
 int msm_vidc_g_fmt(void *instance, struct v4l2_format *f);
+int msm_vidc_release_buffers(void *instance, int buffer_type);
+int msm_vidc_prepare_buf(void *instance, struct v4l2_buffer *b);
 int msm_vidc_s_ctrl(void *instance, struct v4l2_control *a);
 int msm_vidc_s_ext_ctrl(void *instance, struct v4l2_ext_controls *a);
+int msm_vidc_g_ext_ctrl(void *instance, struct v4l2_ext_controls *a);
 int msm_vidc_g_ctrl(void *instance, struct v4l2_control *a);
 int msm_vidc_reqbufs(void *instance, struct v4l2_requestbuffers *b);
-int msm_vidc_prepare_buf(void *instance, struct v4l2_buffer *b);
-int msm_vidc_release_buffers(void *instance, int buffer_type);
+int msm_vidc_release_buffer(void *instance, int buffer_type,
+		unsigned int buffer_index);
 int msm_vidc_qbuf(void *instance, struct v4l2_buffer *b);
 int msm_vidc_dqbuf(void *instance, struct v4l2_buffer *b);
 int msm_vidc_streamon(void *instance, enum v4l2_buf_type i);
 int msm_vidc_query_ctrl(void *instance, struct v4l2_queryctrl *ctrl);
-int msm_vidc_query_ext_ctrl(void *instance, struct v4l2_query_ext_ctrl *ctrl);
 int msm_vidc_streamoff(void *instance, enum v4l2_buf_type i);
 int msm_vidc_comm_cmd(void *instance, union msm_v4l2_cmd *cmd);
 int msm_vidc_poll(void *instance, struct file *filp,
@@ -121,5 +132,6 @@ int msm_vidc_subscribe_event(void *instance,
 int msm_vidc_unsubscribe_event(void *instance,
 		const struct v4l2_event_subscription *sub);
 int msm_vidc_dqevent(void *instance, struct v4l2_event *event);
+int msm_vidc_g_crop(void *instance, struct v4l2_crop *a);
 int msm_vidc_enum_framesizes(void *instance, struct v4l2_frmsizeenum *fsize);
 #endif

@@ -1,4 +1,5 @@
-/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -14,9 +15,9 @@
 #include "msm_vb2.h"
 
 static int msm_vb2_queue_setup(struct vb2_queue *q,
-	const void *parg,
+//	const void *parg,
 	unsigned int *num_buffers, unsigned int *num_planes,
-	unsigned int sizes[], void *alloc_ctxs[])
+	unsigned int sizes[], struct device *alloc_ctxs[])
 {
 	int i;
 	struct msm_v4l2_format_data *data = NULL;
@@ -49,7 +50,7 @@ done:
 	return rc;
 }
 
-int msm_vb2_buf_init(struct vb2_buffer *vb)
+static int msm_vb2_buf_init(struct vb2_buffer *vb)
 {
 	struct msm_stream *stream;
 	struct msm_session *session;
@@ -85,7 +86,7 @@ static void msm_vb2_buf_queue(struct vb2_buffer *vb)
 
 	msm_vb2 = container_of(vbuf, struct msm_vb2_buffer, vb2_v4l2_buf);
 	if (!msm_vb2) {
-		pr_err("%s:%d] vb2_buf NULL", __func__, __LINE__);
+		pr_err("%s:%d] vb2_buf NULL\n", __func__, __LINE__);
 		return;
 	}
 
@@ -97,7 +98,7 @@ static void msm_vb2_buf_queue(struct vb2_buffer *vb)
 
 	stream = msm_get_stream_from_vb2q(vb->vb2_queue);
 	if (!stream) {
-		pr_err("%s:%d] NULL stream", __func__, __LINE__);
+		pr_err("%s:%d] NULL stream\n", __func__, __LINE__);
 		read_unlock_irqrestore(&session->stream_rwlock, rl_flags);
 		return;
 	}
@@ -119,7 +120,7 @@ static void msm_vb2_buf_finish(struct vb2_buffer *vb)
 
 	msm_vb2 = container_of(vbuf, struct msm_vb2_buffer, vb2_v4l2_buf);
 	if (!msm_vb2) {
-		pr_err("%s:%d] vb2_buf NULL", __func__, __LINE__);
+		pr_err("%s:%d] vb2_buf NULL\n", __func__, __LINE__);
 		return;
 	}
 
@@ -131,7 +132,7 @@ static void msm_vb2_buf_finish(struct vb2_buffer *vb)
 
 	stream = msm_get_stream_from_vb2q(vb->vb2_queue);
 	if (!stream) {
-		pr_err("%s:%d] NULL stream", __func__, __LINE__);
+		pr_err("%s:%d] NULL stream\n", __func__, __LINE__);
 		read_unlock_irqrestore(&session->stream_rwlock, rl_flags);
 		return;
 	}
@@ -146,7 +147,6 @@ static void msm_vb2_buf_finish(struct vb2_buffer *vb)
 	}
 	spin_unlock_irqrestore(&stream->stream_lock, flags);
 	read_unlock_irqrestore(&session->stream_rwlock, rl_flags);
-	return;
 }
 
 static void msm_vb2_stop_stream(struct vb2_queue *q)
@@ -165,7 +165,7 @@ static void msm_vb2_stop_stream(struct vb2_queue *q)
 
 	stream = msm_get_stream_from_vb2q(q);
 	if (!stream) {
-		pr_err_ratelimited("%s:%d] NULL stream", __func__, __LINE__);
+		pr_err_ratelimited("%s:%d] NULL stream\n", __func__, __LINE__);
 		read_unlock_irqrestore(&session->stream_rwlock, rl_flags);
 		return;
 	}
@@ -178,13 +178,13 @@ static void msm_vb2_stop_stream(struct vb2_queue *q)
 	spin_lock_irqsave(&stream->stream_lock, flags);
 	list_for_each_entry_safe(msm_vb2, temp, &(stream->queued_list),
 		list) {
-			vb2_v4l2_buf = &(msm_vb2->vb2_v4l2_buf);
-			if (vb2_v4l2_buf->vb2_buf.state == VB2_BUF_STATE_DONE)
-				continue;
-			vb2_buffer_done(&vb2_v4l2_buf->vb2_buf,
-				VB2_BUF_STATE_DONE);
-			msm_vb2->in_freeq = 0;
-		}
+		vb2_v4l2_buf = &(msm_vb2->vb2_v4l2_buf);
+		if (vb2_v4l2_buf->vb2_buf.state == VB2_BUF_STATE_DONE)
+			continue;
+		vb2_buffer_done(&vb2_v4l2_buf->vb2_buf,
+			VB2_BUF_STATE_DONE);
+		msm_vb2->in_freeq = 0;
+	}
 	spin_unlock_irqrestore(&stream->stream_lock, flags);
 	read_unlock_irqrestore(&session->stream_rwlock, rl_flags);
 }
@@ -222,11 +222,12 @@ struct vb2_ops *msm_vb2_get_q_ops(void)
 	return &msm_vb2_get_q_op;
 }
 
-static void *msm_vb2_dma_contig_get_userptr(void *alloc_ctx,
+static void *msm_vb2_dma_contig_get_userptr(struct device *alloc_ctx,
 	unsigned long vaddr, unsigned long size,
 	enum dma_data_direction dma_dir)
 {
 	struct msm_vb2_private_data *priv;
+
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return ERR_PTR(-ENOMEM);
@@ -407,7 +408,7 @@ static int msm_vb2_put_buf(struct vb2_v4l2_buffer *vb, int session_id,
 
 static int msm_vb2_buf_done(struct vb2_v4l2_buffer *vb, int session_id,
 				unsigned int stream_id, uint32_t sequence,
-				struct timeval *ts, uint32_t reserved)
+				struct timeval *ts, uint32_t buf_type)
 {
 	unsigned long flags, rl_flags;
 	struct msm_vb2_buffer *msm_vb2;
@@ -444,11 +445,15 @@ static int msm_vb2_buf_done(struct vb2_v4l2_buffer *vb, int session_id,
 			return -EINVAL;
 		}
 		msm_vb2 =
-			container_of(vb2_v4l2_buf, struct msm_vb2_buffer, vb2_v4l2_buf);
+			container_of(vb2_v4l2_buf, struct msm_vb2_buffer,
+				vb2_v4l2_buf);
 		/* put buf before buf done */
 		if (msm_vb2->in_freeq) {
 			vb2_v4l2_buf->sequence = sequence;
-			vb2_v4l2_buf->timestamp = *ts;
+			vb2_v4l2_buf->timecode.type = buf_type;
+			vb2_v4l2_buf->vb2_buf.timestamp =
+				((u64)ts->tv_sec * 1000000 +
+				ts->tv_usec) * 1000;
 			vb2_buffer_done(&vb2_v4l2_buf->vb2_buf,
 				VB2_BUF_STATE_DONE);
 			msm_vb2->in_freeq = 0;
@@ -509,7 +514,9 @@ static int msm_vb2_buf_error(struct vb2_v4l2_buffer *vb, int session_id,
 		/* put buf before buf done */
 		if (msm_vb2->in_freeq) {
 			vb2_v4l2_buf->sequence = sequence;
-			vb2_v4l2_buf->timestamp = *ts;
+			vb2_v4l2_buf->timecode.type = buf_type;
+			vb2_v4l2_buf->vb2_buf.timestamp =
+				(ts->tv_sec * 1000000 + ts->tv_usec) * 1000;
 			vb2_buffer_done(&vb2_v4l2_buf->vb2_buf,
 				VB2_BUF_STATE_ERROR);
 			msm_vb2->in_freeq = 0;
@@ -627,4 +634,3 @@ int msm_vb2_request_cb(struct msm_sd_req_vb2_q *req)
 	req->buf_error = msm_vb2_buf_error;
 	return 0;
 }
-

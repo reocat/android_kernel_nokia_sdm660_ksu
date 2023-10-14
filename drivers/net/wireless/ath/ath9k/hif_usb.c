@@ -20,10 +20,11 @@
 MODULE_FIRMWARE(HTC_7010_MODULE_FW);
 MODULE_FIRMWARE(HTC_9271_MODULE_FW);
 
-static struct usb_device_id ath9k_hif_usb_ids[] = {
+static const struct usb_device_id ath9k_hif_usb_ids[] = {
 	{ USB_DEVICE(0x0cf3, 0x9271) }, /* Atheros */
 	{ USB_DEVICE(0x0cf3, 0x1006) }, /* Atheros */
 	{ USB_DEVICE(0x0846, 0x9030) }, /* Netgear N150 */
+	{ USB_DEVICE(0x07b8, 0x9271) }, /* Altai WA1011N-GU */
 	{ USB_DEVICE(0x07D1, 0x3A10) }, /* Dlink Wireless 150 */
 	{ USB_DEVICE(0x13D3, 0x3327) }, /* Azurewave */
 	{ USB_DEVICE(0x13D3, 0x3328) }, /* Azurewave */
@@ -56,6 +57,8 @@ static struct usb_device_id ath9k_hif_usb_ids[] = {
 	  .driver_info = AR9280_USB },  /* Buffalo WLI-UV-AG300P */
 	{ USB_DEVICE(0x04da, 0x3904),
 	  .driver_info = AR9280_USB },
+	{ USB_DEVICE(0x0930, 0x0a08),
+	  .driver_info = AR9280_USB },  /* Toshiba WLM-20U2 and GN-1080 */
 
 	{ USB_DEVICE(0x0cf3, 0x20ff),
 	  .driver_info = STORAGE_DEVICE },
@@ -135,6 +138,7 @@ static void hif_usb_mgmt_cb(struct urb *urb)
 {
 	struct cmd_buf *cmd = (struct cmd_buf *)urb->context;
 	struct hif_device_usb *hif_dev;
+	unsigned long flags;
 	bool txok = true;
 
 	if (!cmd || !cmd->skb || !cmd->hif_dev)
@@ -155,14 +159,14 @@ static void hif_usb_mgmt_cb(struct urb *urb)
 		 * If the URBs are being flushed, no need to complete
 		 * this packet.
 		 */
-		spin_lock(&hif_dev->tx.tx_lock);
+		spin_lock_irqsave(&hif_dev->tx.tx_lock, flags);
 		if (hif_dev->tx.flags & HIF_USB_TX_FLUSH) {
-			spin_unlock(&hif_dev->tx.tx_lock);
+			spin_unlock_irqrestore(&hif_dev->tx.tx_lock, flags);
 			dev_kfree_skb_any(cmd->skb);
 			kfree(cmd);
 			return;
 		}
-		spin_unlock(&hif_dev->tx.tx_lock);
+		spin_unlock_irqrestore(&hif_dev->tx.tx_lock, flags);
 
 		break;
 	default:
@@ -197,7 +201,7 @@ static int hif_usb_send_mgmt(struct hif_device_usb *hif_dev,
 	cmd->skb = skb;
 	cmd->hif_dev = hif_dev;
 
-	hdr = (__le16 *) skb_push(skb, 4);
+	hdr = skb_push(skb, 4);
 	*hdr++ = cpu_to_le16(skb->len - 4);
 	*hdr++ = cpu_to_le16(ATH_USB_TX_STREAM_MODE_TAG);
 
@@ -240,11 +244,11 @@ static inline void ath9k_skb_queue_complete(struct hif_device_usb *hif_dev,
 		ath9k_htc_txcompletion_cb(hif_dev->htc_handle,
 					  skb, txok);
 		if (txok) {
-			TX_STAT_INC(skb_success);
-			TX_STAT_ADD(skb_success_bytes, ln);
+			TX_STAT_INC(hif_dev, skb_success);
+			TX_STAT_ADD(hif_dev, skb_success_bytes, ln);
 		}
 		else
-			TX_STAT_INC(skb_failed);
+			TX_STAT_INC(hif_dev, skb_failed);
 	}
 }
 
@@ -298,7 +302,7 @@ static void hif_usb_tx_cb(struct urb *urb)
 	hif_dev->tx.tx_buf_cnt++;
 	if (!(hif_dev->tx.flags & HIF_USB_TX_STOP))
 		__hif_usb_tx(hif_dev); /* Check for pending SKBs */
-	TX_STAT_INC(buf_completed);
+	TX_STAT_INC(hif_dev, buf_completed);
 	spin_unlock(&hif_dev->tx.tx_lock);
 }
 
@@ -349,7 +353,7 @@ static int __hif_usb_tx(struct hif_device_usb *hif_dev)
 			tx_buf->len += tx_buf->offset;
 
 		__skb_queue_tail(&tx_buf->skb_queue, nskb);
-		TX_STAT_INC(skb_queued);
+		TX_STAT_INC(hif_dev, skb_queued);
 	}
 
 	usb_fill_bulk_urb(tx_buf->urb, hif_dev->udev,
@@ -364,10 +368,9 @@ static int __hif_usb_tx(struct hif_device_usb *hif_dev)
 		__skb_queue_head_init(&tx_buf->skb_queue);
 		list_move_tail(&tx_buf->list, &hif_dev->tx.tx_buf);
 		hif_dev->tx.tx_buf_cnt++;
+	} else {
+		TX_STAT_INC(hif_dev, buf_queued);
 	}
-
-	if (!ret)
-		TX_STAT_INC(buf_queued);
 
 	return ret;
 }
@@ -422,7 +425,7 @@ static int hif_usb_send_tx(struct hif_device_usb *hif_dev, struct sk_buff *skb)
 
 static void hif_usb_start(void *hif_handle)
 {
-	struct hif_device_usb *hif_dev = (struct hif_device_usb *)hif_handle;
+	struct hif_device_usb *hif_dev = hif_handle;
 	unsigned long flags;
 
 	hif_dev->flags |= HIF_USB_START;
@@ -434,7 +437,7 @@ static void hif_usb_start(void *hif_handle)
 
 static void hif_usb_stop(void *hif_handle)
 {
-	struct hif_device_usb *hif_dev = (struct hif_device_usb *)hif_handle;
+	struct hif_device_usb *hif_dev = hif_handle;
 	struct tx_buf *tx_buf = NULL, *tx_buf_tmp = NULL;
 	unsigned long flags;
 
@@ -464,7 +467,7 @@ static void hif_usb_stop(void *hif_handle)
 
 static int hif_usb_send(void *hif_handle, u8 pipe_id, struct sk_buff *skb)
 {
-	struct hif_device_usb *hif_dev = (struct hif_device_usb *)hif_handle;
+	struct hif_device_usb *hif_dev = hif_handle;
 	int ret = 0;
 
 	switch (pipe_id) {
@@ -499,7 +502,7 @@ static inline bool check_index(struct sk_buff *skb, u8 idx)
 
 static void hif_usb_sta_drain(void *hif_handle, u8 idx)
 {
-	struct hif_device_usb *hif_dev = (struct hif_device_usb *)hif_handle;
+	struct hif_device_usb *hif_dev = hif_handle;
 	struct sk_buff *skb, *tmp;
 	unsigned long flags;
 
@@ -511,7 +514,7 @@ static void hif_usb_sta_drain(void *hif_handle, u8 idx)
 			ath9k_htc_txcompletion_cb(hif_dev->htc_handle,
 						  skb, false);
 			hif_dev->tx.tx_skb_cnt--;
-			TX_STAT_INC(skb_failed);
+			TX_STAT_INC(hif_dev, skb_failed);
 		}
 	}
 
@@ -531,11 +534,29 @@ static struct ath9k_htc_hif hif_usb = {
 	.send = hif_usb_send,
 };
 
+/* Need to free remain_skb allocated in ath9k_hif_usb_rx_stream
+ * in case ath9k_hif_usb_rx_stream wasn't called next time to
+ * process the buffer and subsequently free it.
+ */
+static void ath9k_hif_usb_free_rx_remain_skb(struct hif_device_usb *hif_dev)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&hif_dev->rx_lock, flags);
+	if (hif_dev->remain_skb) {
+		dev_kfree_skb_any(hif_dev->remain_skb);
+		hif_dev->remain_skb = NULL;
+		hif_dev->rx_remain_len = 0;
+		RX_STAT_INC(hif_dev, skb_dropped);
+	}
+	spin_unlock_irqrestore(&hif_dev->rx_lock, flags);
+}
+
 static void ath9k_hif_usb_rx_stream(struct hif_device_usb *hif_dev,
 				    struct sk_buff *skb)
 {
 	struct sk_buff *nskb, *skb_pool[MAX_PKT_NUM_IN_TRANSFER];
-	int index = 0, i = 0, len = skb->len;
+	int index = 0, i, len = skb->len;
 	int rx_remain_len, rx_pkt_len;
 	u16 pool_index = 0;
 	u8 *ptr;
@@ -558,11 +579,11 @@ static void ath9k_hif_usb_rx_stream(struct hif_device_usb *hif_dev,
 			memcpy(ptr, skb->data, rx_remain_len);
 
 			rx_pkt_len += rx_remain_len;
-			hif_dev->rx_remain_len = 0;
 			skb_put(remain_skb, rx_pkt_len);
 
 			skb_pool[pool_index++] = remain_skb;
-
+			hif_dev->remain_skb = NULL;
+			hif_dev->rx_remain_len = 0;
 		} else {
 			index = rx_remain_len;
 		}
@@ -581,9 +602,21 @@ static void ath9k_hif_usb_rx_stream(struct hif_device_usb *hif_dev,
 		pkt_len = get_unaligned_le16(ptr + index);
 		pkt_tag = get_unaligned_le16(ptr + index + 2);
 
+		/* It is supposed that if we have an invalid pkt_tag or
+		 * pkt_len then the whole input SKB is considered invalid
+		 * and dropped; the associated packets already in skb_pool
+		 * are dropped, too.
+		 */
 		if (pkt_tag != ATH_USB_RX_STREAM_MODE_TAG) {
-			RX_STAT_INC(skb_dropped);
-			return;
+			RX_STAT_INC(hif_dev, skb_dropped);
+			goto invalid_pkt;
+		}
+
+		if (pkt_len > 2 * MAX_RX_BUF_SIZE) {
+			dev_err(&hif_dev->udev->dev,
+				"ath9k_htc: invalid pkt_len (%x)\n", pkt_len);
+			RX_STAT_INC(hif_dev, skb_dropped);
+			goto invalid_pkt;
 		}
 
 		if (pkt_len > 2 * MAX_RX_BUF_SIZE) {
@@ -602,11 +635,6 @@ static void ath9k_hif_usb_rx_stream(struct hif_device_usb *hif_dev,
 
 		if (index > MAX_RX_BUF_SIZE) {
 			spin_lock(&hif_dev->rx_lock);
-			hif_dev->rx_remain_len = index - MAX_RX_BUF_SIZE;
-			hif_dev->rx_transfer_len =
-				MAX_RX_BUF_SIZE - chk_idx - 4;
-			hif_dev->rx_pad_len = pad_len;
-
 			nskb = __dev_alloc_skb(pkt_len + 32, GFP_ATOMIC);
 			if (!nskb) {
 				dev_err(&hif_dev->udev->dev,
@@ -614,8 +642,14 @@ static void ath9k_hif_usb_rx_stream(struct hif_device_usb *hif_dev,
 				spin_unlock(&hif_dev->rx_lock);
 				goto err;
 			}
+
+			hif_dev->rx_remain_len = index - MAX_RX_BUF_SIZE;
+			hif_dev->rx_transfer_len =
+				MAX_RX_BUF_SIZE - chk_idx - 4;
+			hif_dev->rx_pad_len = pad_len;
+
 			skb_reserve(nskb, 32);
-			RX_STAT_INC(skb_allocated);
+			RX_STAT_INC(hif_dev, skb_allocated);
 
 			memcpy(nskb->data, &(skb->data[chk_idx+4]),
 			       hif_dev->rx_transfer_len);
@@ -636,7 +670,7 @@ static void ath9k_hif_usb_rx_stream(struct hif_device_usb *hif_dev,
 				goto err;
 			}
 			skb_reserve(nskb, 32);
-			RX_STAT_INC(skb_allocated);
+			RX_STAT_INC(hif_dev, skb_allocated);
 
 			memcpy(nskb->data, &(skb->data[chk_idx+4]), pkt_len);
 			skb_put(nskb, pkt_len);
@@ -646,11 +680,18 @@ static void ath9k_hif_usb_rx_stream(struct hif_device_usb *hif_dev,
 
 err:
 	for (i = 0; i < pool_index; i++) {
-		RX_STAT_ADD(skb_completed_bytes, skb_pool[i]->len);
+		RX_STAT_ADD(hif_dev, skb_completed_bytes, skb_pool[i]->len);
 		ath9k_htc_rx_msg(hif_dev->htc_handle, skb_pool[i],
 				 skb_pool[i]->len, USB_WLAN_RX_PIPE);
-		RX_STAT_INC(skb_completed);
+		RX_STAT_INC(hif_dev, skb_completed);
 	}
+	return;
+invalid_pkt:
+	for (i = 0; i < pool_index; i++) {
+		dev_kfree_skb_any(skb_pool[i]);
+		RX_STAT_INC(hif_dev, skb_dropped);
+	}
+	return;
 }
 
 static void ath9k_hif_usb_rx_cb(struct urb *urb)
@@ -705,14 +746,13 @@ static void ath9k_hif_usb_reg_in_cb(struct urb *urb)
 	struct rx_buf *rx_buf = (struct rx_buf *)urb->context;
 	struct hif_device_usb *hif_dev = rx_buf->hif_dev;
 	struct sk_buff *skb = rx_buf->skb;
-	struct sk_buff *nskb;
 	int ret;
 
 	if (!skb)
 		return;
 
 	if (!hif_dev)
-		goto free;
+		goto free_skb;
 
 	switch (urb->status) {
 	case 0:
@@ -721,7 +761,7 @@ static void ath9k_hif_usb_reg_in_cb(struct urb *urb)
 	case -ECONNRESET:
 	case -ENODEV:
 	case -ESHUTDOWN:
-		goto free;
+		goto free_skb;
 	default:
 		skb_reset_tail_pointer(skb);
 		skb_trim(skb, 0);
@@ -732,25 +772,27 @@ static void ath9k_hif_usb_reg_in_cb(struct urb *urb)
 	if (likely(urb->actual_length != 0)) {
 		skb_put(skb, urb->actual_length);
 
-		/* Process the command first */
+		/*
+		 * Process the command first.
+		 * skb is either freed here or passed to be
+		 * managed to another callback function.
+		 */
 		ath9k_htc_rx_msg(hif_dev->htc_handle, skb,
 				 skb->len, USB_REG_IN_PIPE);
 
-
-		nskb = alloc_skb(MAX_REG_IN_BUF_SIZE, GFP_ATOMIC);
-		if (!nskb) {
+		skb = alloc_skb(MAX_REG_IN_BUF_SIZE, GFP_ATOMIC);
+		if (!skb) {
 			dev_err(&hif_dev->udev->dev,
 				"ath9k_htc: REG_IN memory allocation failure\n");
-			urb->context = NULL;
-			return;
+			goto free_rx_buf;
 		}
 
-		rx_buf->skb = nskb;
+		rx_buf->skb = skb;
 
 		usb_fill_int_urb(urb, hif_dev->udev,
 				 usb_rcvintpipe(hif_dev->udev,
 						 USB_REG_IN_PIPE),
-				 nskb->data, MAX_REG_IN_BUF_SIZE,
+				 skb->data, MAX_REG_IN_BUF_SIZE,
 				 ath9k_hif_usb_reg_in_cb, rx_buf, 1);
 	}
 
@@ -759,12 +801,13 @@ resubmit:
 	ret = usb_submit_urb(urb, GFP_ATOMIC);
 	if (ret) {
 		usb_unanchor_urb(urb);
-		goto free;
+		goto free_skb;
 	}
 
 	return;
-free:
+free_skb:
 	kfree_skb(skb);
+free_rx_buf:
 	kfree(rx_buf);
 	urb->context = NULL;
 }
@@ -777,9 +820,6 @@ static void ath9k_hif_usb_dealloc_tx_urbs(struct hif_device_usb *hif_dev)
 	spin_lock_irqsave(&hif_dev->tx.tx_lock, flags);
 	list_for_each_entry_safe(tx_buf, tx_buf_tmp,
 				 &hif_dev->tx.tx_buf, list) {
-		usb_get_urb(tx_buf->urb);
-		spin_unlock_irqrestore(&hif_dev->tx.tx_lock, flags);
-		usb_kill_urb(tx_buf->urb);
 		list_del(&tx_buf->list);
 		usb_free_urb(tx_buf->urb);
 		kfree(tx_buf->buf);
@@ -854,6 +894,7 @@ err:
 static void ath9k_hif_usb_dealloc_rx_urbs(struct hif_device_usb *hif_dev)
 {
 	usb_kill_anchored_urbs(&hif_dev->rx_submitted);
+	ath9k_hif_usb_free_rx_remain_skb(hif_dev);
 }
 
 static int ath9k_hif_usb_alloc_rx_urbs(struct hif_device_usb *hif_dev)
@@ -1055,7 +1096,8 @@ static int ath9k_hif_usb_download_fw(struct hif_device_usb *hif_dev)
 		err = usb_control_msg(hif_dev->udev,
 				      usb_sndctrlpipe(hif_dev->udev, 0),
 				      FIRMWARE_DOWNLOAD, 0x40 | USB_DIR_OUT,
-				      addr >> 8, 0, buf, transfer, HZ);
+				      addr >> 8, 0, buf, transfer,
+				      USB_MSG_TIMEOUT);
 		if (err < 0) {
 			kfree(buf);
 			return err;
@@ -1078,7 +1120,7 @@ static int ath9k_hif_usb_download_fw(struct hif_device_usb *hif_dev)
 	err = usb_control_msg(hif_dev->udev, usb_sndctrlpipe(hif_dev->udev, 0),
 			      FIRMWARE_DOWNLOAD_COMP,
 			      0x40 | USB_DIR_OUT,
-			      firm_offset >> 8, 0, NULL, 0, HZ);
+			      firm_offset >> 8, 0, NULL, 0, USB_MSG_TIMEOUT);
 	if (err)
 		return -EIO;
 
@@ -1310,7 +1352,7 @@ static int send_eject_command(struct usb_interface *interface)
 
 	dev_info(&udev->dev, "Ejecting storage device...\n");
 	r = usb_bulk_msg(udev, usb_sndbulkpipe(udev, bulk_out_ep),
-		cmd, 31, NULL, 2000);
+		cmd, 31, NULL, 2 * USB_MSG_TIMEOUT);
 	kfree(cmd);
 	if (r)
 		return r;
@@ -1325,9 +1367,23 @@ static int send_eject_command(struct usb_interface *interface)
 static int ath9k_hif_usb_probe(struct usb_interface *interface,
 			       const struct usb_device_id *id)
 {
+	struct usb_endpoint_descriptor *bulk_in, *bulk_out, *int_in, *int_out;
 	struct usb_device *udev = interface_to_usbdev(interface);
+	struct usb_host_interface *alt;
 	struct hif_device_usb *hif_dev;
 	int ret = 0;
+
+	/* Verify the expected endpoints are present */
+	alt = interface->cur_altsetting;
+	if (usb_find_common_endpoints(alt, &bulk_in, &bulk_out, &int_in, &int_out) < 0 ||
+	    usb_endpoint_num(bulk_in) != USB_WLAN_RX_PIPE ||
+	    usb_endpoint_num(bulk_out) != USB_WLAN_TX_PIPE ||
+	    usb_endpoint_num(int_in) != USB_REG_IN_PIPE ||
+	    usb_endpoint_num(int_out) != USB_REG_OUT_PIPE) {
+		dev_err(&udev->dev,
+			"ath9k_htc: Device endpoint numbers are not the expected ones\n");
+		return -ENODEV;
+	}
 
 	if (id->driver_info == STORAGE_DEVICE)
 		return send_eject_command(interface);
@@ -1375,7 +1431,7 @@ static void ath9k_hif_usb_reboot(struct usb_device *udev)
 		return;
 
 	ret = usb_interrupt_msg(udev, usb_sndintpipe(udev, USB_REG_OUT_PIPE),
-			   buf, 4, NULL, HZ);
+			   buf, 4, NULL, USB_MSG_TIMEOUT);
 	if (ret)
 		dev_err(&udev->dev, "ath9k_htc: USB reboot failed\n");
 

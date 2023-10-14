@@ -172,22 +172,22 @@ static int smu_slotspow_get(struct wf_sensor *sr, s32 *value)
 }
 
 
-static struct wf_sensor_ops smu_cputemp_ops = {
+static const struct wf_sensor_ops smu_cputemp_ops = {
 	.get_value	= smu_cputemp_get,
 	.release	= smu_ads_release,
 	.owner		= THIS_MODULE,
 };
-static struct wf_sensor_ops smu_cpuamp_ops = {
+static const struct wf_sensor_ops smu_cpuamp_ops = {
 	.get_value	= smu_cpuamp_get,
 	.release	= smu_ads_release,
 	.owner		= THIS_MODULE,
 };
-static struct wf_sensor_ops smu_cpuvolt_ops = {
+static const struct wf_sensor_ops smu_cpuvolt_ops = {
 	.get_value	= smu_cpuvolt_get,
 	.release	= smu_ads_release,
 	.owner		= THIS_MODULE,
 };
-static struct wf_sensor_ops smu_slotspow_ops = {
+static const struct wf_sensor_ops smu_slotspow_ops = {
 	.get_value	= smu_slotspow_get,
 	.release	= smu_ads_release,
 	.owner		= THIS_MODULE,
@@ -275,8 +275,8 @@ struct smu_cpu_power_sensor {
 	struct list_head	link;
 	struct wf_sensor	*volts;
 	struct wf_sensor	*amps;
-	int			fake_volts : 1;
-	int			quadratic : 1;
+	unsigned int		fake_volts : 1;
+	unsigned int		quadratic : 1;
 	struct wf_sensor	sens;
 };
 #define to_smu_cpu_power(c) container_of(c, struct smu_cpu_power_sensor, sens)
@@ -327,7 +327,7 @@ static int smu_cpu_power_get(struct wf_sensor *sr, s32 *value)
 	return 0;
 }
 
-static struct wf_sensor_ops smu_cpu_power_ops = {
+static const struct wf_sensor_ops smu_cpu_power_ops = {
 	.get_value	= smu_cpu_power_get,
 	.release	= smu_cpu_power_release,
 	.owner		= THIS_MODULE,

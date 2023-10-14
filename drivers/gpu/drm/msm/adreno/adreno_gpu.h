@@ -2,7 +2,7 @@
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
- * Copyright (c) 2014,2016-2017 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014,2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published by
@@ -52,6 +52,15 @@ enum adreno_regs {
 	REG_ADRENO_REGISTER_MAX,
 };
 
+enum {
+	ADRENO_FW_PM4 = 0,
+	ADRENO_FW_SQE = 0, /* a6xx */
+	ADRENO_FW_PFP = 1,
+	ADRENO_FW_GMU = 1, /* a6xx */
+	ADRENO_FW_GPMU = 2,
+	ADRENO_FW_MAX,
+};
+
 enum adreno_quirks {
 	ADRENO_QUIRK_TWO_PASS_USE_WFI = 1,
 	ADRENO_QUIRK_FAULT_DETECT_MASK = 2,
@@ -76,42 +85,15 @@ struct adreno_info {
 	struct adreno_rev rev;
 	uint32_t revn;
 	const char *name;
-	const char *pm4fw, *pfpfw;
+	const char *fw[ADRENO_FW_MAX];
 	uint32_t gmem;
+	enum adreno_quirks quirks;
 	struct msm_gpu *(*init)(struct drm_device *dev);
+	const char *zapfw;
+	u32 inactive_period;
 };
 
 const struct adreno_info *adreno_info(struct adreno_rev rev);
-
-struct adreno_counter {
-	u32 lo;
-	u32 hi;
-	u32 sel;
-	int load_bit;
-	u32 countable;
-	u32 refcount;
-	u64 value;
-};
-
-struct adreno_counter_group {
-	struct adreno_counter *counters;
-	size_t nr_counters;
-	spinlock_t lock;
-	struct {
-		int (*get)(struct msm_gpu *,
-			struct adreno_counter_group *, u32, u32 *, u32 *);
-		void (*enable)(struct msm_gpu *,
-			struct adreno_counter_group *, int, bool);
-		u64 (*read)(struct msm_gpu *,
-			struct adreno_counter_group *, int);
-		void (*put)(struct msm_gpu *,
-			struct adreno_counter_group *, int);
-		void (*save)(struct msm_gpu *,
-			struct adreno_counter_group *);
-		void (*restore)(struct msm_gpu *,
-			struct adreno_counter_group *);
-	} funcs;
-};
 
 struct adreno_gpu {
 	struct msm_gpu base;
@@ -124,8 +106,29 @@ struct adreno_gpu {
 	/* interesting register offsets to dump: */
 	const unsigned int *registers;
 
+	/*
+	 * Are we loading fw from legacy path?  Prior to addition
+	 * of gpu firmware to linux-firmware, the fw files were
+	 * placed in toplevel firmware directory, following qcom's
+	 * android kernel.  But linux-firmware preferred they be
+	 * placed in a 'qcom' subdirectory.
+	 *
+	 * For backwards compatibility, we try first to load from
+	 * the new path, using request_firmware_direct() to avoid
+	 * any potential timeout waiting for usermode helper, then
+	 * fall back to the old path (with direct load).  And
+	 * finally fall back to request_firmware() with the new
+	 * path to allow the usermode helper.
+	 */
+	enum {
+		FW_LOCATION_UNKNOWN = 0,
+		FW_LOCATION_NEW,       /* /lib/firmware/qcom/$fwfile */
+		FW_LOCATION_LEGACY,    /* /lib/firmware/$fwfile */
+		FW_LOCATION_HELPER,
+	} fwloc;
+
 	/* firmware: */
-	const struct firmware *pm4, *pfp;
+	const struct firmware *fw[ADRENO_FW_MAX];
 
 	/*
 	 * Register offsets are different between some GPUs.
@@ -216,21 +219,20 @@ static inline int adreno_is_a530(struct adreno_gpu *gpu)
 	return gpu->revn == 530;
 }
 
-static inline int adreno_is_a540(struct adreno_gpu *gpu)
-{
-	return gpu->revn == 540;
-}
-
 int adreno_get_param(struct msm_gpu *gpu, uint32_t param, uint64_t *value);
+const struct firmware *adreno_request_fw(struct adreno_gpu *adreno_gpu,
+		const char *fwname);
+struct drm_gem_object *adreno_fw_create_bo(struct msm_gpu *gpu,
+		const struct firmware *fw, u64 *iova);
 int adreno_hw_init(struct msm_gpu *gpu);
-uint32_t adreno_submitted_fence(struct msm_gpu *gpu,
-		struct msm_ringbuffer *ring);
 void adreno_recover(struct msm_gpu *gpu);
-void adreno_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit);
+void adreno_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit,
+		struct msm_file_private *ctx);
 void adreno_flush(struct msm_gpu *gpu, struct msm_ringbuffer *ring);
 bool adreno_idle(struct msm_gpu *gpu, struct msm_ringbuffer *ring);
-#ifdef CONFIG_DEBUG_FS
-void adreno_show(struct msm_gpu *gpu, struct seq_file *m);
+#if defined(CONFIG_DEBUG_FS) || defined(CONFIG_DEV_COREDUMP)
+void adreno_show(struct msm_gpu *gpu, struct msm_gpu_state *state,
+		struct drm_printer *p);
 #endif
 void adreno_dump_info(struct msm_gpu *gpu);
 void adreno_dump(struct msm_gpu *gpu);
@@ -239,15 +241,14 @@ struct msm_ringbuffer *adreno_active_ring(struct msm_gpu *gpu);
 
 int adreno_gpu_init(struct drm_device *drm, struct platform_device *pdev,
 		struct adreno_gpu *gpu, const struct adreno_gpu_funcs *funcs,
-		struct msm_gpu_config *config);
+		int nr_rings);
 void adreno_gpu_cleanup(struct adreno_gpu *gpu);
+int adreno_load_fw(struct adreno_gpu *adreno_gpu);
 
-void adreno_snapshot(struct msm_gpu *gpu, struct msm_snapshot *snapshot);
+void adreno_gpu_state_destroy(struct msm_gpu_state *state);
 
-int adreno_get_counter(struct msm_gpu *gpu, u32 groupid, u32 countable,
-		u32 *lo, u32 *hi);
-u64 adreno_read_counter(struct msm_gpu *gpu, u32 groupid, int counterid);
-void adreno_put_counter(struct msm_gpu *gpu, u32 groupid, int counterid);
+int adreno_gpu_state_get(struct msm_gpu *gpu, struct msm_gpu_state *state);
+int adreno_gpu_state_put(struct msm_gpu_state *state);
 
 /* ringbuffer helpers (the parts that are adreno specific) */
 
@@ -345,6 +346,11 @@ static inline void adreno_gpu_write(struct adreno_gpu *gpu,
 	if(adreno_reg_check(gpu, offset_name))
 		gpu_write(&gpu->base, reg - 1, data);
 }
+
+struct msm_gpu *a3xx_gpu_init(struct drm_device *dev);
+struct msm_gpu *a4xx_gpu_init(struct drm_device *dev);
+struct msm_gpu *a5xx_gpu_init(struct drm_device *dev);
+struct msm_gpu *a6xx_gpu_init(struct drm_device *dev);
 
 static inline void adreno_gpu_write64(struct adreno_gpu *gpu,
 		enum adreno_regs lo, enum adreno_regs hi, u64 data)

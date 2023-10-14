@@ -1,13 +1,6 @@
-/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -38,6 +31,7 @@ int ipa_rm_prod_index(enum ipa_rm_resource_name resource_name)
 	case IPA_RM_RESOURCE_WLAN_PROD:
 	case IPA_RM_RESOURCE_ODU_ADAPT_PROD:
 	case IPA_RM_RESOURCE_MHI_PROD:
+	case IPA_RM_RESOURCE_ETHERNET_PROD:
 		break;
 	default:
 		result = IPA_RM_INDEX_INVALID;
@@ -69,6 +63,7 @@ int ipa_rm_cons_index(enum ipa_rm_resource_name resource_name)
 	case IPA_RM_RESOURCE_ODU_ADAPT_CONS:
 	case IPA_RM_RESOURCE_MHI_CONS:
 	case IPA_RM_RESOURCE_USB_DPL_CONS:
+	case IPA_RM_RESOURCE_ETHERNET_CONS:
 		break;
 	default:
 		result = IPA_RM_INDEX_INVALID;
@@ -310,7 +305,6 @@ static int ipa_rm_resource_producer_create(struct ipa_rm_resource **resource,
 
 	*producer = kzalloc(sizeof(**producer), GFP_ATOMIC);
 	if (*producer == NULL) {
-		IPA_RM_ERR("no mem\n");
 		result = -ENOMEM;
 		goto bail;
 	}
@@ -326,7 +320,7 @@ static int ipa_rm_resource_producer_create(struct ipa_rm_resource **resource,
 
 	(*resource) = (struct ipa_rm_resource *) (*producer);
 	(*resource)->type = IPA_RM_PRODUCER;
-	*max_peers = IPA_RM_RESOURCE_CONS_MAX;
+	*max_peers = IPA_RM_RESOURCE_MAX;
 	goto bail;
 register_fail:
 	kfree(*producer);
@@ -359,7 +353,6 @@ static int ipa_rm_resource_consumer_create(struct ipa_rm_resource **resource,
 
 	*consumer = kzalloc(sizeof(**consumer), GFP_ATOMIC);
 	if (*consumer == NULL) {
-		IPA_RM_ERR("no mem\n");
 		result = -ENOMEM;
 		goto bail;
 	}
@@ -369,7 +362,7 @@ static int ipa_rm_resource_consumer_create(struct ipa_rm_resource **resource,
 	(*resource) = (struct ipa_rm_resource *) (*consumer);
 	(*resource)->type = IPA_RM_CONSUMER;
 	init_completion(&((*consumer)->request_consumer_in_progress));
-	*max_peers = IPA_RM_RESOURCE_PROD_MAX;
+	*max_peers = IPA_RM_RESOURCE_MAX;
 bail:
 	return result;
 }
@@ -415,7 +408,7 @@ int ipa_rm_resource_create(
 			goto bail;
 		}
 	} else {
-		IPA_RM_ERR("invalied resource\n");
+		IPA_RM_ERR("invalid resource\n");
 		result = -EPERM;
 		goto bail;
 	}
@@ -458,8 +451,7 @@ int ipa_rm_resource_delete(struct ipa_rm_resource *resource)
 		return -EINVAL;
 	}
 
-	IPA_RM_DBG("ipa_rm_resource_delete ENTER with resource %d\n",
-					resource->name);
+	IPA_RM_DBG("ENTER with resource %d\n", resource->name);
 	if (resource->type == IPA_RM_PRODUCER) {
 		if (resource->peers_list) {
 			list_size = ipa_rm_peers_list_get_size(
@@ -553,7 +545,6 @@ int ipa_rm_resource_producer_register(struct ipa_rm_resource_prod *producer,
 
 	reg_info = kzalloc(sizeof(*reg_info), GFP_ATOMIC);
 	if (reg_info == NULL) {
-		IPA_RM_ERR("no mem\n");
 		result = -ENOMEM;
 		goto bail;
 	}
@@ -744,8 +735,8 @@ int ipa_rm_resource_delete_dependency(struct ipa_rm_resource *resource,
 	case IPA_RM_RELEASE_IN_PROGRESS:
 		if (((struct ipa_rm_resource_prod *)
 			resource)->pending_release > 0)
-				((struct ipa_rm_resource_prod *)
-					resource)->pending_release--;
+			((struct ipa_rm_resource_prod *)
+				resource)->pending_release--;
 		if (depends_on->state == IPA_RM_RELEASE_IN_PROGRESS &&
 			((struct ipa_rm_resource_prod *)
 			resource)->pending_release == 0) {
@@ -759,8 +750,8 @@ int ipa_rm_resource_delete_dependency(struct ipa_rm_resource *resource,
 		release_consumer = true;
 		if (((struct ipa_rm_resource_prod *)
 			resource)->pending_request > 0)
-				((struct ipa_rm_resource_prod *)
-					resource)->pending_request--;
+			((struct ipa_rm_resource_prod *)
+				resource)->pending_request--;
 		if (depends_on->state == IPA_RM_REQUEST_IN_PROGRESS &&
 			((struct ipa_rm_resource_prod *)
 				resource)->pending_request == 0) {
@@ -1125,7 +1116,8 @@ int ipa_rm_resource_set_perf_profile(struct ipa_rm_resource *resource,
 int ipa_rm_resource_producer_print_stat(
 				struct ipa_rm_resource *resource,
 				char *buf,
-				int size){
+				int size)
+{
 
 	int i;
 	int nbytes;

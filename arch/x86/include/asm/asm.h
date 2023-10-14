@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ASM_X86_ASM_H
 #define _ASM_X86_ASM_H
 
@@ -104,21 +105,39 @@
 
 #endif
 
+/*
+ * Macros to generate condition code outputs from inline assembly,
+ * The output operand must be type "bool".
+ */
+#ifdef __GCC_ASM_FLAG_OUTPUTS__
+# define CC_SET(c) "\n\t/* output condition code " #c "*/\n"
+# define CC_OUT(c) "=@cc" #c
+#else
+# define CC_SET(c) "\n\tset" #c " %[_cc_" #c "]\n"
+# define CC_OUT(c) [_cc_ ## c] "=qm"
+#endif
+
 /* Exception table entry */
 #ifdef __ASSEMBLY__
-# define _ASM_EXTABLE(from,to)					\
+# define _ASM_EXTABLE_HANDLE(from, to, handler)			\
 	.pushsection "__ex_table","a" ;				\
-	.balign 8 ;						\
+	.balign 4 ;						\
 	.long (from) - . ;					\
 	.long (to) - . ;					\
+	.long (handler) - . ;					\
 	.popsection
 
-# define _ASM_EXTABLE_EX(from,to)				\
-	.pushsection "__ex_table","a" ;				\
-	.balign 8 ;						\
-	.long (from) - . ;					\
-	.long (to) - . + 0x7ffffff0 ;				\
-	.popsection
+# define _ASM_EXTABLE(from, to)					\
+	_ASM_EXTABLE_HANDLE(from, to, ex_handler_default)
+
+# define _ASM_EXTABLE_FAULT(from, to)				\
+	_ASM_EXTABLE_HANDLE(from, to, ex_handler_fault)
+
+# define _ASM_EXTABLE_EX(from, to)				\
+	_ASM_EXTABLE_HANDLE(from, to, ex_handler_ext)
+
+# define _ASM_EXTABLE_REFCOUNT(from, to)			\
+	_ASM_EXTABLE_HANDLE(from, to, ex_handler_refcount)
 
 # define _ASM_NOKPROBE(entry)					\
 	.pushsection "_kprobe_blacklist","aw" ;			\
@@ -151,19 +170,27 @@
 	.endm
 
 #else
-# define _ASM_EXTABLE(from,to)					\
+# define _EXPAND_EXTABLE_HANDLE(x) #x
+# define _ASM_EXTABLE_HANDLE(from, to, handler)			\
 	" .pushsection \"__ex_table\",\"a\"\n"			\
-	" .balign 8\n"						\
+	" .balign 4\n"						\
 	" .long (" #from ") - .\n"				\
 	" .long (" #to ") - .\n"				\
+	" .long (" _EXPAND_EXTABLE_HANDLE(handler) ") - .\n"	\
 	" .popsection\n"
 
-# define _ASM_EXTABLE_EX(from,to)				\
-	" .pushsection \"__ex_table\",\"a\"\n"			\
-	" .balign 8\n"						\
-	" .long (" #from ") - .\n"				\
-	" .long (" #to ") - . + 0x7ffffff0\n"			\
-	" .popsection\n"
+# define _ASM_EXTABLE(from, to)					\
+	_ASM_EXTABLE_HANDLE(from, to, ex_handler_default)
+
+# define _ASM_EXTABLE_FAULT(from, to)				\
+	_ASM_EXTABLE_HANDLE(from, to, ex_handler_fault)
+
+# define _ASM_EXTABLE_EX(from, to)				\
+	_ASM_EXTABLE_HANDLE(from, to, ex_handler_ext)
+
+# define _ASM_EXTABLE_REFCOUNT(from, to)			\
+	_ASM_EXTABLE_HANDLE(from, to, ex_handler_refcount)
+
 /* For C file, we already have NOKPROBE_SYMBOL macro */
 #endif
 

@@ -1,4 +1,5 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -84,7 +85,7 @@ struct msm_fd_setings {
  * @crop: V4l2 crop structure.
  * @bytesperline: Bytes per line of input image buffer.
  * @sizeimage: Size of input image buffer.
- * @pixelformat: Pixel format of input image buffer.
+ * @pixeformat: Pix format of input image buffer.
  */
 struct msm_fd_format {
 	struct msm_fd_size *size;
@@ -116,7 +117,7 @@ struct msm_fd_buf_handle {
 	int fd;
 	struct msm_fd_mem_pool *pool;
 	size_t size;
-	ion_phys_addr_t addr;
+	dma_addr_t addr;
 };
 
 /*
@@ -135,7 +136,7 @@ struct msm_fd_buffer {
 	struct completion completion;
 	struct msm_fd_format format;
 	struct msm_fd_setings settings;
-	ion_phys_addr_t work_addr;
+	dma_addr_t work_addr;
 	struct list_head list;
 };
 

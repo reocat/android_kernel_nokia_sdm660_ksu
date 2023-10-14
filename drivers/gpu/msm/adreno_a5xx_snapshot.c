@@ -1,23 +1,11 @@
-/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  */
 
-#include <linux/io.h>
-#include "kgsl.h"
 #include "adreno.h"
-#include "kgsl_snapshot.h"
-#include "adreno_snapshot.h"
-#include "a5xx_reg.h"
 #include "adreno_a5xx.h"
+#include "adreno_snapshot.h"
 
 enum a5xx_rbbm_debbus_id {
 	A5XX_RBBM_DBGBUS_CP          = 0x1,
@@ -138,7 +126,8 @@ static size_t a5xx_snapshot_cp_pm4(struct kgsl_device *device, u8 *buf,
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 	struct kgsl_snapshot_debug *header = (struct kgsl_snapshot_debug *)buf;
 	unsigned int *data = (unsigned int *)(buf + sizeof(*header));
-	size_t size = adreno_dev->pm4_fw_size;
+	struct adreno_firmware *fw = ADRENO_FW(adreno_dev, ADRENO_FW_PM4);
+	size_t size = fw->size;
 
 	if (remain < DEBUG_SECTION_SZ(size)) {
 		SNAPSHOT_ERR_NOMEM(device, "CP PM4 RAM DEBUG");
@@ -148,7 +137,7 @@ static size_t a5xx_snapshot_cp_pm4(struct kgsl_device *device, u8 *buf,
 	header->type = SNAPSHOT_DEBUG_CP_PM4_RAM;
 	header->size = size;
 
-	memcpy(data, adreno_dev->pm4.hostptr, size * sizeof(uint32_t));
+	memcpy(data, fw->memdesc.hostptr, size * sizeof(uint32_t));
 
 	return DEBUG_SECTION_SZ(size);
 }
@@ -160,7 +149,8 @@ static size_t a5xx_snapshot_cp_pfp(struct kgsl_device *device, u8 *buf,
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 	struct kgsl_snapshot_debug *header = (struct kgsl_snapshot_debug *)buf;
 	unsigned int *data = (unsigned int *)(buf + sizeof(*header));
-	int size = adreno_dev->pfp_fw_size;
+	struct adreno_firmware *fw = ADRENO_FW(adreno_dev, ADRENO_FW_PFP);
+	int size = fw->size;
 
 	if (remain < DEBUG_SECTION_SZ(size)) {
 		SNAPSHOT_ERR_NOMEM(device, "CP PFP RAM DEBUG");
@@ -170,7 +160,7 @@ static size_t a5xx_snapshot_cp_pfp(struct kgsl_device *device, u8 *buf,
 	header->type = SNAPSHOT_DEBUG_CP_PFP_RAM;
 	header->size = size;
 
-	memcpy(data, adreno_dev->pfp.hostptr, size * sizeof(uint32_t));
+	memcpy(data, fw->memdesc.hostptr, size * sizeof(uint32_t));
 
 	return DEBUG_SECTION_SZ(size);
 }
@@ -316,7 +306,7 @@ static void a5xx_snapshot_debugbus(struct kgsl_device *device,
 		0xf << A5XX_RBBM_CFG_DEBBUS_CTLTM_ENABLE_SHIFT);
 
 	for (i = 0; i < ARRAY_SIZE(a5xx_debugbus_blocks); i++) {
-		if (A5XX_RBBM_DBGBUS_VBIF == a5xx_debugbus_blocks[i].block_id)
+		if (a5xx_debugbus_blocks[i].block_id == A5XX_RBBM_DBGBUS_VBIF)
 			kgsl_snapshot_add_section(device,
 				KGSL_SNAPSHOT_SECTION_DEBUGBUS,
 				snapshot, a5xx_snapshot_vbif_debugbus,
@@ -361,9 +351,9 @@ static const unsigned int a5xx_registers[] = {
 	0x04E0, 0x04F4, 0X04F8, 0x0529, 0x0531, 0x0533, 0x0540, 0x0555,
 	0xF400, 0xF400, 0xF800, 0xF807,
 	/* CP */
-	0x0800, 0x081A, 0x081F, 0x0841, 0x0860, 0x0860, 0x0880, 0x08A0,
-	0x0B00, 0x0B12, 0x0B15, 0X0B1C, 0X0B1E, 0x0B28, 0x0B78, 0x0B7F,
-	0x0BB0, 0x0BBD,
+	0x0800, 0x0803, 0x0806, 0x081A, 0x081F, 0x0841, 0x0860, 0x0860,
+	0x0880, 0x08A0, 0x0B00, 0x0B12, 0x0B15, 0X0B1C, 0X0B1E, 0x0B28,
+	0x0B78, 0x0B7F, 0x0BB0, 0x0BBD,
 	/* VSC */
 	0x0BC0, 0x0BC6, 0x0BD0, 0x0C53, 0x0C60, 0x0C61,
 	/* GRAS */
@@ -641,7 +631,7 @@ static void a5xx_snapshot_shader(struct kgsl_device *device,
 	struct a5xx_shader_block_info info;
 
 	/* Shader blocks can only be read by the crash dumper */
-	if (crash_dump_valid == false)
+	if (!crash_dump_valid)
 		return;
 
 	for (i = 0; i < ARRAY_SIZE(a5xx_shader_blocks); i++) {
@@ -701,7 +691,7 @@ static size_t a5xx_snapshot_registers(struct kgsl_device *device, u8 *buf,
 	unsigned int j, k;
 	unsigned int count = 0;
 
-	if (crash_dump_valid == false)
+	if (!crash_dump_valid)
 		return a5xx_legacy_snapshot_registers(device, buf, remain,
 				regs->regs, regs->size);
 
@@ -802,7 +792,7 @@ static void _a5xx_do_crashdump(struct kgsl_device *device)
 	kgsl_regwrite(device, A5XX_CP_CNTL, 0);
 
 	if (!(reg & 0x4)) {
-		KGSL_CORE_ERR("Crash dump timed out: 0x%X\n", reg);
+		dev_err(device->dev, "Crash dump timed out: 0x%X\n", reg);
 		return;
 	}
 
@@ -863,7 +853,7 @@ void a5xx_snapshot(struct adreno_device *adreno_dev,
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 	struct adreno_gpudev *gpudev = ADRENO_GPU_DEVICE(adreno_dev);
 	struct adreno_snapshot_data *snap_data = gpudev->snapshot_data;
-	unsigned int reg, i;
+	unsigned int i;
 	struct adreno_ringbuffer *rb;
 	struct registers regs;
 
@@ -906,33 +896,23 @@ void a5xx_snapshot(struct adreno_device *adreno_dev,
 		A5XX_CP_PFP_STAT_ADDR, A5XX_CP_PFP_STAT_DATA,
 		0, snap_data->sect_sizes->cp_pfp);
 
-	 /* CP_ME indexed registers */
-	 kgsl_snapshot_indexed_registers(device, snapshot,
+	/* CP_ME indexed registers */
+	kgsl_snapshot_indexed_registers(device, snapshot,
 		A5XX_CP_ME_STAT_ADDR, A5XX_CP_ME_STAT_DATA,
 		0, snap_data->sect_sizes->cp_me);
 
-	 /* CP_DRAW_STATE */
-	 kgsl_snapshot_indexed_registers(device, snapshot,
+	/* CP_DRAW_STATE */
+	kgsl_snapshot_indexed_registers(device, snapshot,
 		A5XX_CP_DRAW_STATE_ADDR, A5XX_CP_DRAW_STATE_DATA,
 		0, 1 << A5XX_CP_DRAW_STATE_ADDR_WIDTH);
 
-	 /*
-	  * CP needs to be halted on a530v1 before reading CP_PFP_UCODE_DBG_DATA
-	  * and CP_PM4_UCODE_DBG_DATA registers
-	  */
-	 if (adreno_is_a530v1(adreno_dev)) {
-		adreno_readreg(adreno_dev, ADRENO_REG_CP_ME_CNTL, &reg);
-		reg |= (1 << 27) | (1 << 28);
-		adreno_writereg(adreno_dev, ADRENO_REG_CP_ME_CNTL, reg);
-	 }
-
-	 /* ME_UCODE Cache */
-	 kgsl_snapshot_indexed_registers(device, snapshot,
+	/* ME_UCODE Cache */
+	kgsl_snapshot_indexed_registers(device, snapshot,
 		A5XX_CP_ME_UCODE_DBG_ADDR, A5XX_CP_ME_UCODE_DBG_DATA,
 		0, 0x53F);
 
-	 /* PFP_UCODE Cache */
-	 kgsl_snapshot_indexed_registers(device, snapshot,
+	/* PFP_UCODE Cache */
+	kgsl_snapshot_indexed_registers(device, snapshot,
 		A5XX_CP_PFP_UCODE_DBG_ADDR, A5XX_CP_PFP_UCODE_DBG_DATA,
 		0, 0x53F);
 

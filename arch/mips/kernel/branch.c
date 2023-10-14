@@ -7,7 +7,7 @@
  * Copyright (C) 2001 MIPS Technologies, Inc.
  */
 #include <linux/kernel.h>
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <linux/signal.h>
 #include <linux/export.h>
 #include <asm/branch.h>
@@ -18,7 +18,7 @@
 #include <asm/inst.h>
 #include <asm/mips-r2-to-r6-emul.h>
 #include <asm/ptrace.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 /*
  * Calculate and return exception PC in case of branch delay slot
@@ -399,7 +399,7 @@ int __MIPS16e_compute_return_epc(struct pt_regs *regs)
  *
  * @regs:	Pointer to pt_regs
  * @insn:	branch instruction to decode
- * @returns:	-EFAULT on error and forces SIGILL, and on success
+ * Return:	-EFAULT on error and forces SIGILL, and on success
  *		returns 0 or BRANCH_LIKELY_TAKEN as appropriate after
  *		evaluating the branch.
  *
@@ -771,35 +771,27 @@ int __compute_return_epc_for_insn(struct pt_regs *regs,
 #else
 	case bc6_op:
 		/* Only valid for MIPS R6 */
-		if (!cpu_has_mips_r6) {
-			ret = -SIGILL;
-			break;
-		}
+		if (!cpu_has_mips_r6)
+			goto sigill_r6;
 		regs->cp0_epc += 8;
 		break;
 	case balc6_op:
-		if (!cpu_has_mips_r6) {
-			ret = -SIGILL;
-			break;
-		}
+		if (!cpu_has_mips_r6)
+			goto sigill_r6;
 		/* Compact branch: BALC */
 		regs->regs[31] = epc + 4;
 		epc += 4 + (insn.i_format.simmediate << 2);
 		regs->cp0_epc = epc;
 		break;
 	case pop66_op:
-		if (!cpu_has_mips_r6) {
-			ret = -SIGILL;
-			break;
-		}
+		if (!cpu_has_mips_r6)
+			goto sigill_r6;
 		/* Compact branch: BEQZC || JIC */
 		regs->cp0_epc += 8;
 		break;
 	case pop76_op:
-		if (!cpu_has_mips_r6) {
-			ret = -SIGILL;
-			break;
-		}
+		if (!cpu_has_mips_r6)
+			goto sigill_r6;
 		/* Compact branch: BNEZC || JIALC */
 		if (!insn.i_format.rs) {
 			/* JIALC: set $31/ra */
@@ -811,10 +803,8 @@ int __compute_return_epc_for_insn(struct pt_regs *regs,
 	case pop10_op:
 	case pop30_op:
 		/* Only valid for MIPS R6 */
-		if (!cpu_has_mips_r6) {
-			ret = -SIGILL;
-			break;
-		}
+		if (!cpu_has_mips_r6)
+			goto sigill_r6;
 		/*
 		 * Compact branches:
 		 * bovc, beqc, beqzalc, bnvc, bnec, bnezlac
@@ -828,13 +818,18 @@ int __compute_return_epc_for_insn(struct pt_regs *regs,
 	return ret;
 
 sigill_dsp:
-	pr_info("%s: DSP branch but not DSP ASE - sending SIGILL.\n",
-		current->comm);
+	pr_debug("%s: DSP branch but not DSP ASE - sending SIGILL.\n",
+		 current->comm);
 	force_sig(SIGILL, current);
 	return -EFAULT;
 sigill_r2r6:
-	pr_info("%s: R2 branch but r2-to-r6 emulator is not present - sending SIGILL.\n",
-		current->comm);
+	pr_debug("%s: R2 branch but r2-to-r6 emulator is not present - sending SIGILL.\n",
+		 current->comm);
+	force_sig(SIGILL, current);
+	return -EFAULT;
+sigill_r6:
+	pr_debug("%s: R6 branch but no MIPSr6 ISA support - sending SIGILL.\n",
+		 current->comm);
 	force_sig(SIGILL, current);
 	return -EFAULT;
 }
@@ -866,3 +861,37 @@ unaligned:
 	force_sig(SIGBUS, current);
 	return -EFAULT;
 }
+
+#if (defined CONFIG_KPROBES) || (defined CONFIG_UPROBES)
+
+int __insn_is_compact_branch(union mips_instruction insn)
+{
+	if (!cpu_has_mips_r6)
+		return 0;
+
+	switch (insn.i_format.opcode) {
+	case blezl_op:
+	case bgtzl_op:
+	case blez_op:
+	case bgtz_op:
+		/*
+		 * blez[l] and bgtz[l] opcodes with non-zero rt
+		 * are MIPS R6 compact branches
+		 */
+		if (insn.i_format.rt)
+			return 1;
+		break;
+	case bc6_op:
+	case balc6_op:
+	case pop10_op:
+	case pop30_op:
+	case pop66_op:
+	case pop76_op:
+		return 1;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(__insn_is_compact_branch);
+
+#endif  /* CONFIG_KPROBES || CONFIG_UPROBES */

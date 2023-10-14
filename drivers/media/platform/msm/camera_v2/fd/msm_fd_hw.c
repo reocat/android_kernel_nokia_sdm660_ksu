@@ -1,4 +1,5 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2014-2016, 2018, 2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -331,9 +332,9 @@ static int msm_fd_hw_misc_irq_is_halt(struct msm_fd_device *fd)
 }
 
 /*
-* msm_fd_hw_misc_clear_all_irq - Clear all misc irq statuses.
-* @fd: Pointer to fd device.
-*/
+ * msm_fd_hw_misc_clear_all_irq - Clear all misc irq statuses.
+ * @fd: Pointer to fd device.
+ */
 static void msm_fd_hw_misc_clear_all_irq(struct msm_fd_device *fd)
 {
 	msm_fd_hw_write_reg(fd, MSM_FD_IOMEM_MISC, MSM_FD_MISC_IRQ_CLEAR,
@@ -341,9 +342,9 @@ static void msm_fd_hw_misc_clear_all_irq(struct msm_fd_device *fd)
 }
 
 /*
-* msm_fd_hw_misc_irq_enable - Enable fd misc core and halt irq.
-* @fd: Pointer to fd device.
-*/
+ * msm_fd_hw_misc_irq_enable - Enable fd misc core and halt irq.
+ * @fd: Pointer to fd device.
+ */
 static void msm_fd_hw_misc_irq_enable(struct msm_fd_device *fd)
 {
 	msm_fd_hw_reg_set(fd, MSM_FD_IOMEM_MISC, MSM_FD_MISC_IRQ_MASK,
@@ -351,9 +352,9 @@ static void msm_fd_hw_misc_irq_enable(struct msm_fd_device *fd)
 }
 
 /*
-* msm_fd_hw_misc_irq_disable - Disable fd misc core and halt irq.
-* @fd: Pointer to fd device.
-*/
+ * msm_fd_hw_misc_irq_disable - Disable fd misc core and halt irq.
+ * @fd: Pointer to fd device.
+ */
 static void msm_fd_hw_misc_irq_disable(struct msm_fd_device *fd)
 {
 	msm_fd_hw_reg_clr(fd, MSM_FD_IOMEM_MISC, MSM_FD_MISC_IRQ_MASK,
@@ -622,12 +623,12 @@ void msm_fd_hw_release_irq(struct msm_fd_device *fd)
  *
  * Return: 0 on success and negative error on failure.
  */
-int32_t msm_fd_hw_set_dt_parms_by_name(struct msm_fd_device *fd,
+static int32_t msm_fd_hw_set_dt_parms_by_name(struct msm_fd_device *fd,
 			const char *dt_prop_name,
 			enum msm_fd_mem_resources base_idx)
 {
 	struct device_node *of_node;
-	int32_t i = 0 , rc = 0;
+	int32_t i = 0, rc = 0;
 	uint32_t *dt_reg_settings = NULL;
 	uint32_t dt_count = 0;
 
@@ -689,7 +690,7 @@ int32_t msm_fd_hw_set_dt_parms_by_name(struct msm_fd_device *fd,
  *
  * Return: 0 on success and negative error on failure.
  */
-int msm_fd_hw_set_dt_parms(struct msm_fd_device *fd)
+static int msm_fd_hw_set_dt_parms(struct msm_fd_device *fd)
 {
 	int rc = 0;
 	uint8_t dt_prop_cnt = MSM_FD_IOMEM_LAST;
@@ -939,7 +940,8 @@ error:
 void msm_fd_hw_put(struct msm_fd_device *fd)
 {
 	mutex_lock(&fd->lock);
-	BUG_ON(fd->ref_count == 0);
+	if (WARN_ON(fd->ref_count == 0))
+		goto err;
 
 	if (--fd->ref_count == 0) {
 		msm_fd_hw_halt(fd);
@@ -953,6 +955,7 @@ void msm_fd_hw_put(struct msm_fd_device *fd)
 				fd->clk, fd->clk_num, false);
 		msm_camera_regulator_enable(fd->vdd_info, fd->num_reg, false);
 	}
+err:
 	mutex_unlock(&fd->lock);
 }
 
@@ -1214,8 +1217,6 @@ void msm_fd_hw_remove_buffers_from_queue(struct msm_fd_device *fd,
 		fd->state = MSM_FD_DEVICE_IDLE;
 		MSM_FD_SPIN_UNLOCK(fd->slock, 1);
 	}
-
-	return;
 }
 
 /*
@@ -1227,7 +1228,6 @@ int msm_fd_hw_buffer_done(struct msm_fd_device *fd,
 	struct msm_fd_buffer *buffer, u8 lock_flag)
 {
 	int ret = 0;
-	MSM_FD_SPIN_LOCK(fd->slock, lock_flag);
 
 	if (atomic_read(&buffer->active)) {
 		atomic_set(&buffer->active, 0);
@@ -1235,8 +1235,6 @@ int msm_fd_hw_buffer_done(struct msm_fd_device *fd,
 	} else {
 		ret = -1;
 	}
-
-	MSM_FD_SPIN_UNLOCK(fd->slock, lock_flag);
 	return ret;
 }
 
@@ -1249,13 +1247,11 @@ struct msm_fd_buffer *msm_fd_hw_get_active_buffer(struct msm_fd_device *fd,
 {
 	struct msm_fd_buffer *buffer = NULL;
 
-	MSM_FD_SPIN_LOCK(fd->slock, lock_flag);
 	if (!list_empty(&fd->buf_queue)) {
 		buffer = list_first_entry(&fd->buf_queue,
 			struct msm_fd_buffer, list);
 		list_del(&buffer->list);
 	}
-	MSM_FD_SPIN_UNLOCK(fd->slock, lock_flag);
 
 	return buffer;
 }
@@ -1294,29 +1290,52 @@ int msm_fd_hw_schedule_next_buffer(struct msm_fd_device *fd, u8 lock_flag)
 	struct msm_fd_buffer *buf;
 	int ret;
 
-	MSM_FD_SPIN_LOCK(fd->slock, lock_flag);
+	if (lock_flag) {
+		MSM_FD_SPIN_LOCK(fd->slock, 1);
 
-	/* We can schedule next buffer only in running state */
-	if (fd->state != MSM_FD_DEVICE_RUNNING) {
-		dev_err(fd->dev, "Can not schedule next buffer\n");
-		MSM_FD_SPIN_UNLOCK(fd->slock, lock_flag);
-		return -EBUSY;
-	}
-
-	buf = msm_fd_hw_get_next_buffer(fd);
-	if (buf) {
-		ret = msm_fd_hw_try_enable(fd, buf, MSM_FD_DEVICE_RUNNING);
-		if (0 == ret) {
-			dev_err(fd->dev, "Can not process next buffer\n");
-			MSM_FD_SPIN_UNLOCK(fd->slock, lock_flag);
+		/* We can schedule next buffer only in running state */
+		if (fd->state != MSM_FD_DEVICE_RUNNING) {
+			dev_err(fd->dev, "Can not schedule next buffer\n");
+			MSM_FD_SPIN_UNLOCK(fd->slock, 1);
 			return -EBUSY;
 		}
+
+		buf = msm_fd_hw_get_next_buffer(fd);
+		if (buf) {
+			ret = msm_fd_hw_try_enable(fd, buf,
+				MSM_FD_DEVICE_RUNNING);
+			if (ret == 0) {
+				dev_err(fd->dev, "Can not process next buffer\n");
+				MSM_FD_SPIN_UNLOCK(fd->slock, 1);
+				return -EBUSY;
+			}
+		} else {
+			fd->state = MSM_FD_DEVICE_IDLE;
+			if (fd->recovery_mode)
+				dev_err(fd->dev, "No Buffer in recovery mode.Device Idle\n");
+		}
+		MSM_FD_SPIN_UNLOCK(fd->slock, 1);
 	} else {
-		fd->state = MSM_FD_DEVICE_IDLE;
-		if (fd->recovery_mode)
-			dev_err(fd->dev, "No Buffer in recovery mode.Device Idle\n");
+		/* We can schedule next buffer only in running state */
+		if (fd->state != MSM_FD_DEVICE_RUNNING) {
+			dev_err(fd->dev, "Can not schedule next buffer\n");
+			return -EBUSY;
+		}
+
+		buf = msm_fd_hw_get_next_buffer(fd);
+		if (buf) {
+			ret = msm_fd_hw_try_enable(fd, buf,
+				MSM_FD_DEVICE_RUNNING);
+			if (ret == 0) {
+				dev_err(fd->dev, "Can not process next buffer\n");
+				return -EBUSY;
+			}
+		} else {
+			fd->state = MSM_FD_DEVICE_IDLE;
+			if (fd->recovery_mode)
+				dev_err(fd->dev, "No Buffer in recovery mode.Device Idle\n");
+		}
 	}
-	MSM_FD_SPIN_UNLOCK(fd->slock, lock_flag);
 
 	msm_fd_hw_update_settings(fd, buf);
 

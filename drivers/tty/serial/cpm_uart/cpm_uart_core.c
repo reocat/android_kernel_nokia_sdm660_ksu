@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  *  Driver for CPM (SCC/SMC) serial ports; core driver
  *
@@ -12,21 +13,6 @@
  *            (C) 2004 Intracom, S.A.
  *            (C) 2005-2006 MontaVista Software, Inc.
  *		Vitaly Bordug <vbordug@ru.mvista.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- *
  */
 
 #include <linux/module.h>
@@ -1132,7 +1118,7 @@ static void cpm_put_poll_char(struct uart_port *port,
 }
 #endif /* CONFIG_CONSOLE_POLL */
 
-static struct uart_ops cpm_uart_pops = {
+static const struct uart_ops cpm_uart_pops = {
 	.tx_empty	= cpm_uart_tx_empty,
 	.set_mctrl	= cpm_uart_set_mctrl,
 	.get_mctrl	= cpm_uart_get_mctrl,
@@ -1283,19 +1269,14 @@ static void cpm_uart_console_write(struct console *co, const char *s,
 {
 	struct uart_cpm_port *pinfo = &cpm_uart_ports[co->index];
 	unsigned long flags;
-	int nolock = oops_in_progress;
 
-	if (unlikely(nolock)) {
+	if (unlikely(oops_in_progress)) {
 		local_irq_save(flags);
-	} else {
-		spin_lock_irqsave(&pinfo->port.lock, flags);
-	}
-
-	cpm_uart_early_write(pinfo, s, count, true);
-
-	if (unlikely(nolock)) {
+		cpm_uart_early_write(pinfo, s, count, true);
 		local_irq_restore(flags);
 	} else {
+		spin_lock_irqsave(&pinfo->port.lock, flags);
+		cpm_uart_early_write(pinfo, s, count, true);
 		spin_unlock_irqrestore(&pinfo->port.lock, flags);
 	}
 }
@@ -1311,7 +1292,7 @@ static int __init cpm_uart_console_setup(struct console *co, char *options)
 	struct uart_cpm_port *pinfo;
 	struct uart_port *port;
 
-	struct device_node *np = NULL;
+	struct device_node *np;
 	int i = 0;
 
 	if (co->index >= UART_NR) {
@@ -1320,17 +1301,19 @@ static int __init cpm_uart_console_setup(struct console *co, char *options)
 		return -ENODEV;
 	}
 
-	do {
-		np = of_find_node_by_type(np, "serial");
-		if (!np)
-			return -ENODEV;
-
+	for_each_node_by_type(np, "serial") {
 		if (!of_device_is_compatible(np, "fsl,cpm1-smc-uart") &&
 		    !of_device_is_compatible(np, "fsl,cpm1-scc-uart") &&
 		    !of_device_is_compatible(np, "fsl,cpm2-smc-uart") &&
 		    !of_device_is_compatible(np, "fsl,cpm2-scc-uart"))
-			i--;
-	} while (i++ != co->index);
+			continue;
+
+		if (i++ == co->index)
+			break;
+	}
+
+	if (!np)
+		return -ENODEV;
 
 	pinfo = &cpm_uart_ports[co->index];
 

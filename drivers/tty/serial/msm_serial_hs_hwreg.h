@@ -1,21 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /* drivers/serial/msm_serial_hs_hwreg.h
  *
- * Copyright (c) 2007-2009, 2012-2014,The Linux Foundation. All rights reserved.
- * 
- * All source code in this file is licensed under the following license
- * except where indicated.
- * 
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * version 2 as published by the Free Software Foundation.
- * 
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See the GNU General Public License for more details.
- * 
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, you can find it at http://www.fsf.org
+ * Copyright (c) 2007-2009, 2012-2018, 2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef MSM_SERIAL_HS_HWREG_H
@@ -87,7 +73,7 @@ enum msm_hs_regs {
 #define UARTDM_MR1_ADDR 0x0
 #define UARTDM_MR2_ADDR 0x4
 
-/* Backward Compatability Register for UARTDM Core v1.4 */
+/* Backward Compatibility Register for UARTDM Core v1.4 */
 #define UARTDM_BCR_ADDR	0xc8
 
 /*

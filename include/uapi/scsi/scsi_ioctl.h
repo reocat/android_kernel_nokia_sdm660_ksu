@@ -1,5 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 #ifndef _SCSI_IOCTL_H
-#define _SCSI_IOCTL_H 
+#define _SCSI_IOCTL_H
+
+#include <linux/types.h>
 
 #include <linux/types.h>
 
@@ -59,6 +62,7 @@ typedef struct scsi_fctargaddress {
 } Scsi_FCTargAddress;
 
 #ifdef __KERNEL__
+
 struct scsi_device;
 
 int scsi_ioctl_block_when_processing_errors(struct scsi_device *sdev,

@@ -246,7 +246,7 @@ static int ath9k_htc_set_channel(struct ath9k_htc_priv *priv,
 	struct ieee80211_conf *conf = &common->hw->conf;
 	bool fastcc;
 	struct ieee80211_channel *channel = hw->conf.chandef.chan;
-	struct ath9k_hw_cal_data *caldata = NULL;
+	struct ath9k_hw_cal_data *caldata;
 	enum htc_phymode mode;
 	__be16 htc_mode;
 	u8 cmd_rsp;
@@ -274,10 +274,7 @@ static int ath9k_htc_set_channel(struct ath9k_htc_priv *priv,
 		priv->ah->curchan->channel,
 		channel->center_freq, conf_is_ht(conf), conf_is_ht40(conf),
 		fastcc);
-
-	if (!fastcc)
-		caldata = &priv->caldata;
-
+	caldata = fastcc ? NULL : &priv->caldata;
 	ret = ath9k_hw_reset(ah, hchan, caldata, fastcc);
 	if (ret) {
 		ath_err(common,
@@ -834,7 +831,7 @@ void ath9k_htc_ani_work(struct work_struct *work)
 		if (longcal || shortcal)
 			common->ani.caldone =
 				ath9k_hw_calibrate(ah, ah->curchan,
-						   ah->rxchainmask, longcal);
+						ah->rxchainmask, longcal) > 0;
 
 		ath9k_htc_ps_restore(priv);
 	}
@@ -1486,7 +1483,7 @@ static void ath9k_htc_set_bssid(struct ath9k_htc_priv *priv)
 
 static void ath9k_htc_bss_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
 {
-	struct ath9k_htc_priv *priv = (struct ath9k_htc_priv *)data;
+	struct ath9k_htc_priv *priv = data;
 	struct ath_common *common = ath9k_hw_common(priv->ah);
 	struct ieee80211_bss_conf *bss_conf = &vif->bss_conf;
 
@@ -1686,6 +1683,10 @@ static int ath9k_htc_ampdu_action(struct ieee80211_hw *hw,
 		ieee80211_stop_tx_ba_cb_irqsafe(vif, sta->addr, tid);
 		break;
 	case IEEE80211_AMPDU_TX_OPERATIONAL:
+		if (tid >= ATH9K_HTC_MAX_TID) {
+			ret = -EINVAL;
+			break;
+		}
 		ista = (struct ath9k_htc_sta *) sta->drv_priv;
 		spin_lock_bh(&priv->tx.tx_lock);
 		ista->tid_state[tid] = AGGR_OPERATIONAL;

@@ -1,13 +1,6 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
+/*
+ * Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _RMNET_IPA_FD_IOCTL_H
@@ -33,12 +26,15 @@
 #define WAN_IOCTL_QUERY_DL_FILTER_STATS  8
 #define WAN_IOCTL_ADD_FLT_RULE_EX        9
 #define WAN_IOCTL_QUERY_TETHER_STATS_ALL  10
-#define WAN_IOCTL_ADD_UL_FLT_RULE          11
-#define WAN_IOCTL_ENABLE_PER_CLIENT_STATS    12
-#define WAN_IOCTL_QUERY_PER_CLIENT_STATS     13
-#define WAN_IOCTL_SET_LAN_CLIENT_INFO        14
-#define WAN_IOCTL_CLEAR_LAN_CLIENT_INFO      15
-#define WAN_IOCTL_SEND_LAN_CLIENT_MSG        16
+#define WAN_IOCTL_NOTIFY_WAN_STATE  11
+#define WAN_IOCTL_ADD_UL_FLT_RULE          12
+#define WAN_IOCTL_ENABLE_PER_CLIENT_STATS    13
+#define WAN_IOCTL_QUERY_PER_CLIENT_STATS     14
+#define WAN_IOCTL_SET_LAN_CLIENT_INFO        15
+#define WAN_IOCTL_CLEAR_LAN_CLIENT_INFO      16
+#define WAN_IOCTL_SEND_LAN_CLIENT_MSG        17
+#define WAN_IOCTL_ADD_OFFLOAD_CONNECTION     18
+#define WAN_IOCTL_RMV_OFFLOAD_CONNECTION     19
 
 /* User space may not have this defined. */
 #ifndef IFNAMSIZ
@@ -132,6 +128,9 @@ struct wan_ioctl_query_dl_filter_stats {
 	uint32_t index;
 };
 
+struct wan_ioctl_notify_wan_state {
+	uint8_t up;
+};
 struct wan_ioctl_send_lan_client_msg {
 	/* Lan client info. */
 	struct ipa_lan_client_msg lan_client;
@@ -227,6 +226,10 @@ struct wan_ioctl_query_per_client_stats {
 		WAN_IOCTL_QUERY_TETHER_STATS_ALL, \
 		struct wan_ioctl_query_tether_stats_all *)
 
+#define WAN_IOC_NOTIFY_WAN_STATE _IOWR(WAN_IOC_MAGIC, \
+		WAN_IOCTL_NOTIFY_WAN_STATE, \
+		struct wan_ioctl_notify_wan_state *)
+
 #define WAN_IOC_ADD_UL_FLT_RULE _IOWR(WAN_IOC_MAGIC, \
 		WAN_IOCTL_ADD_UL_FLT_RULE, \
 		struct ipa_configure_ul_firewall_rules_req_msg_v01 *)
@@ -250,4 +253,12 @@ struct wan_ioctl_query_per_client_stats {
 #define WAN_IOC_CLEAR_LAN_CLIENT_INFO _IOWR(WAN_IOC_MAGIC, \
 			WAN_IOCTL_CLEAR_LAN_CLIENT_INFO, \
 			struct wan_ioctl_lan_client_info *)
+
+#define WAN_IOC_ADD_OFFLOAD_CONNECTION _IOWR(WAN_IOC_MAGIC, \
+		WAN_IOCTL_ADD_OFFLOAD_CONNECTION, \
+		struct ipa_add_offload_connection_req_msg_v01 *)
+
+#define WAN_IOC_RMV_OFFLOAD_CONNECTION _IOWR(WAN_IOC_MAGIC, \
+		WAN_IOCTL_RMV_OFFLOAD_CONNECTION, \
+		struct ipa_remove_offload_connection_req_msg_v01 *)
 #endif /* _RMNET_IPA_FD_IOCTL_H */

@@ -1,13 +1,6 @@
-/* Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 #ifndef _ICNSS_WLAN_H_
 #define _ICNSS_WLAN_H_
@@ -25,12 +18,16 @@
 enum icnss_uevent {
 	ICNSS_UEVENT_FW_CRASHED,
 	ICNSS_UEVENT_FW_DOWN,
+	ICNSS_UEVENT_HANG_DATA,
 };
 
-enum cnss_cc_src {
-	CNSS_SOURCE_CORE,
-	CNSS_SOURCE_11D,
-	CNSS_SOURCE_USER
+enum icnss_device_config {
+	ICNSS_IPA_DISABLED,
+};
+
+struct icnss_uevent_hang_data {
+	void *hang_event_data;
+	uint16_t hang_event_data_len;
 };
 
 struct icnss_uevent_fw_down_data {
@@ -144,23 +141,20 @@ extern int icnss_get_irq(struct device *dev, int ce_id);
 extern int icnss_power_on(struct device *dev);
 extern int icnss_power_off(struct device *dev);
 extern struct dma_iommu_mapping *icnss_smmu_get_mapping(struct device *dev);
+extern struct iommu_domain *icnss_smmu_get_domain(struct device *dev);
 extern int icnss_smmu_map(struct device *dev, phys_addr_t paddr,
 			  uint32_t *iova_addr, size_t size);
+extern int icnss_smmu_unmap(struct device *dev,
+			    uint32_t iova_addr, size_t size);
 extern unsigned int icnss_socinfo_get_serial_number(struct device *dev);
-extern int icnss_set_wlan_unsafe_channel(u16 *unsafe_ch_list, u16 ch_count);
-extern int icnss_get_wlan_unsafe_channel(u16 *unsafe_ch_list, u16 *ch_count,
-					 u16 buf_len);
-extern int icnss_wlan_set_dfs_nol(const void *info, u16 info_len);
-extern int icnss_wlan_get_dfs_nol(void *info, u16 info_len);
 extern bool icnss_is_qmi_disable(struct device *dev);
 extern bool icnss_is_fw_ready(void);
 extern bool icnss_is_fw_down(void);
 extern bool icnss_is_rejuvenate(void);
-extern int icnss_set_wlan_mac_address(const u8 *in, const uint32_t len);
-extern u8 *icnss_get_wlan_mac_address(struct device *dev, uint32_t *num);
 extern int icnss_trigger_recovery(struct device *dev);
 extern void icnss_block_shutdown(bool status);
 extern bool icnss_is_pdr(void);
 extern int icnss_idle_restart(struct device *dev);
 extern int icnss_idle_shutdown(struct device *dev);
+extern unsigned long icnss_get_device_config(void);
 #endif /* _ICNSS_WLAN_H_ */

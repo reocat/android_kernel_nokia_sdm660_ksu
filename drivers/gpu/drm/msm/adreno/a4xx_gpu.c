@@ -27,6 +27,7 @@
 	 A4XX_INT0_CP_RB_INT |             \
 	 A4XX_INT0_CP_REG_PROTECT_FAULT |  \
 	 A4XX_INT0_CP_AHB_ERROR_HALT |     \
+	 A4XX_INT0_CACHE_FLUSH_TS |        \
 	 A4XX_INT0_UCHE_OOB_ACCESS)
 
 extern bool hang_debug;
@@ -274,16 +275,16 @@ static int a4xx_hw_init(struct msm_gpu *gpu)
 		return ret;
 
 	/* Load PM4: */
-	ptr = (uint32_t *)(adreno_gpu->pm4->data);
-	len = adreno_gpu->pm4->size / 4;
+	ptr = (uint32_t *)(adreno_gpu->fw[ADRENO_FW_PM4]->data);
+	len = adreno_gpu->fw[ADRENO_FW_PM4]->size / 4;
 	DBG("loading PM4 ucode version: %u", ptr[0]);
 	gpu_write(gpu, REG_A4XX_CP_ME_RAM_WADDR, 0);
 	for (i = 1; i < len; i++)
 		gpu_write(gpu, REG_A4XX_CP_ME_RAM_DATA, ptr[i]);
 
 	/* Load PFP: */
-	ptr = (uint32_t *)(adreno_gpu->pfp->data);
-	len = adreno_gpu->pfp->size / 4;
+	ptr = (uint32_t *)(adreno_gpu->fw[ADRENO_FW_PFP]->data);
+	len = adreno_gpu->fw[ADRENO_FW_PFP]->size / 4;
 	DBG("loading PFP ucode version: %u", ptr[0]);
 
 	gpu_write(gpu, REG_A4XX_CP_PFP_UCODE_ADDR, 0);
@@ -298,7 +299,14 @@ static int a4xx_hw_init(struct msm_gpu *gpu)
 
 static void a4xx_recover(struct msm_gpu *gpu)
 {
+	int i;
+
 	adreno_dump_info(gpu);
+
+	for (i = 0; i < 8; i++) {
+		printk("CP_SCRATCH_REG%d: %u\n", i,
+			gpu_read(gpu, REG_AXXX_CP_SCRATCH_REG0 + i));
+	}
 
 	/* dump registers before resetting gpu, if enabled: */
 	if (hang_debug)
@@ -350,6 +358,13 @@ static irqreturn_t a4xx_irq(struct msm_gpu *gpu)
 
 	status = gpu_read(gpu, REG_A4XX_RBBM_INT_0_STATUS);
 	DBG("%s: Int status %08x", gpu->name, status);
+
+	if (status & A4XX_INT0_CP_REG_PROTECT_FAULT) {
+		uint32_t reg = gpu_read(gpu, REG_A4XX_CP_PROTECT_STATUS);
+		printk("CP | Protected mode error| %s | addr=%x\n",
+			reg & (1 << 24) ? "WRITE" : "READ",
+			(reg & 0xFFFFF) >> 2);
+	}
 
 	gpu_write(gpu, REG_A4XX_RBBM_INT_CLEAR_CMD, status);
 
@@ -440,15 +455,19 @@ static const unsigned int a4xx_registers[] = {
 	~0 /* sentinel */
 };
 
-#ifdef CONFIG_DEBUG_FS
-static void a4xx_show(struct msm_gpu *gpu, struct seq_file *m)
+static struct msm_gpu_state *a4xx_gpu_state_get(struct msm_gpu *gpu)
 {
-	seq_printf(m, "status:   %08x\n",
-			gpu_read(gpu, REG_A4XX_RBBM_STATUS));
-	adreno_show(gpu, m);
+	struct msm_gpu_state *state = kzalloc(sizeof(*state), GFP_KERNEL);
 
+	if (!state)
+		return ERR_PTR(-ENOMEM);
+
+	adreno_gpu_state_get(gpu, state);
+
+	state->rbbm_status = gpu_read(gpu, REG_A4XX_RBBM_STATUS);
+
+	return state;
 }
-#endif
 
 /* Register offset defines for A4XX, in order of enum adreno_regs */
 static const unsigned int a4xx_register_offsets[REG_ADRENO_REGISTER_MAX] = {
@@ -518,15 +537,16 @@ static const struct adreno_gpu_funcs funcs = {
 		.pm_suspend = a4xx_pm_suspend,
 		.pm_resume = a4xx_pm_resume,
 		.recover = a4xx_recover,
-		.submitted_fence = adreno_submitted_fence,
 		.submit = adreno_submit,
 		.flush = adreno_flush,
 		.active_ring = adreno_active_ring,
 		.irq = a4xx_irq,
 		.destroy = a4xx_destroy,
-#ifdef CONFIG_DEBUG_FS
-		.show = a4xx_show,
+#if defined(CONFIG_DEBUG_FS) || defined(CONFIG_DEV_COREDUMP)
+		.show = adreno_show,
 #endif
+		.gpu_state_get = a4xx_gpu_state_get,
+		.gpu_state_put = adreno_gpu_state_put,
 	},
 	.get_timestamp = a4xx_get_timestamp,
 };
@@ -556,21 +576,13 @@ struct msm_gpu *a4xx_gpu_init(struct drm_device *dev)
 	adreno_gpu = &a4xx_gpu->base;
 	gpu = &adreno_gpu->base;
 
-	a4xx_gpu->pdev = pdev;
-
 	gpu->perfcntrs = NULL;
 	gpu->num_perfcntrs = 0;
 
 	adreno_gpu->registers = a4xx_registers;
 	adreno_gpu->reg_offsets = a4xx_register_offsets;
 
-	a4xx_config.ioname = MSM_GPU_DEFAULT_IONAME;
-	a4xx_config.irqname = MSM_GPU_DEFAULT_IRQNAME;
-	a4xx_config.nr_rings = 1;
-	a4xx_config.va_start = 0x300000;
-	a4xx_config.va_end = 0xffffffff;
-
-	ret = adreno_gpu_init(dev, pdev, adreno_gpu, &funcs, &a4xx_config);
+	ret = adreno_gpu_init(dev, pdev, adreno_gpu, &funcs, 1);
 	if (ret)
 		goto fail;
 

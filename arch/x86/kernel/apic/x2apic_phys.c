@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/threads.h>
 #include <linux/cpumask.h>
 #include <linux/string.h>
@@ -6,13 +7,20 @@
 #include <linux/dmar.h>
 
 #include <asm/smp.h>
-#include <asm/x2apic.h>
+#include <asm/ipi.h>
+#include "x2apic.h"
 
 int x2apic_phys;
 
 static struct apic apic_x2apic_phys;
+static u32 x2apic_max_apicid __ro_after_init;
 
-static int set_x2apic_phys_mode(char *arg)
+void __init x2apic_set_max_apicid(u32 apicid)
+{
+	x2apic_max_apicid = apicid;
+}
+
+static int __init set_x2apic_phys_mode(char *arg)
 {
 	x2apic_phys = 1;
 	return 0;
@@ -34,6 +42,15 @@ static bool x2apic_fadt_phys(void)
 static int x2apic_acpi_madt_oem_check(char *oem_id, char *oem_table_id)
 {
 	return x2apic_enabled() && (x2apic_phys || x2apic_fadt_phys());
+}
+
+static void x2apic_send_IPI(int cpu, int vector)
+{
+	u32 dest = per_cpu(x86_cpu_to_apicid, cpu);
+
+	/* x2apic MSRs are special and need a special fence: */
+	weak_wrmsr_fence();
+	__x2apic_send_IPI_dest(dest, vector, APIC_DEST_PHYSICAL);
 }
 
 static void
@@ -85,13 +102,56 @@ static void init_x2apic_ldr(void)
 
 static int x2apic_phys_probe(void)
 {
-	if (x2apic_mode && (x2apic_phys || x2apic_fadt_phys()))
+	if (!x2apic_mode)
+		return 0;
+
+	if (x2apic_phys || x2apic_fadt_phys())
 		return 1;
 
 	return apic == &apic_x2apic_phys;
 }
 
-static struct apic apic_x2apic_phys = {
+/* Common x2apic functions, also used by x2apic_cluster */
+int x2apic_apic_id_valid(u32 apicid)
+{
+	if (x2apic_max_apicid && apicid > x2apic_max_apicid)
+		return 0;
+
+	return 1;
+}
+
+int x2apic_apic_id_registered(void)
+{
+	return 1;
+}
+
+void __x2apic_send_IPI_dest(unsigned int apicid, int vector, unsigned int dest)
+{
+	unsigned long cfg = __prepare_ICR(0, vector, dest);
+	native_x2apic_icr_write(cfg, apicid);
+}
+
+unsigned int x2apic_get_apic_id(unsigned long id)
+{
+	return id;
+}
+
+u32 x2apic_set_apic_id(unsigned int id)
+{
+	return id;
+}
+
+int x2apic_phys_pkg_id(int initial_apicid, int index_msb)
+{
+	return initial_apicid >> index_msb;
+}
+
+void x2apic_send_IPI_self(int vector)
+{
+	apic_write(APIC_SELF_IPI, vector);
+}
+
+static struct apic apic_x2apic_phys __ro_after_init = {
 
 	.name				= "physical x2apic",
 	.probe				= x2apic_phys_probe,
@@ -102,12 +162,10 @@ static struct apic apic_x2apic_phys = {
 	.irq_delivery_mode		= dest_Fixed,
 	.irq_dest_mode			= 0, /* physical */
 
-	.target_cpus			= online_target_cpus,
 	.disable_esr			= 0,
 	.dest_logical			= 0,
 	.check_apicid_used		= NULL,
 
-	.vector_allocation_domain	= default_vector_allocation_domain,
 	.init_apic_ldr			= init_x2apic_ldr,
 
 	.ioapic_phys_id_map		= NULL,
@@ -119,10 +177,10 @@ static struct apic apic_x2apic_phys = {
 
 	.get_apic_id			= x2apic_get_apic_id,
 	.set_apic_id			= x2apic_set_apic_id,
-	.apic_id_mask			= 0xFFFFFFFFu,
 
-	.cpu_mask_to_apicid_and		= default_cpu_mask_to_apicid_and,
+	.calc_dest_apicid		= apic_default_calc_apicid,
 
+	.send_IPI			= x2apic_send_IPI,
 	.send_IPI_mask			= x2apic_send_IPI_mask,
 	.send_IPI_mask_allbutself	= x2apic_send_IPI_mask_allbutself,
 	.send_IPI_allbutself		= x2apic_send_IPI_allbutself,

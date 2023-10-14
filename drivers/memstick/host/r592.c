@@ -47,12 +47,10 @@ static const char *tpc_names[] = {
  * memstick_debug_get_tpc_name - debug helper that returns string for
  * a TPC number
  */
-const char *memstick_debug_get_tpc_name(int tpc)
+static __maybe_unused const char *memstick_debug_get_tpc_name(int tpc)
 {
 	return tpc_names[tpc-1];
 }
-EXPORT_SYMBOL(memstick_debug_get_tpc_name);
-
 
 /* Read a register*/
 static inline u32 r592_read_reg(struct r592_device *dev, int address)
@@ -298,8 +296,7 @@ static int r592_transfer_fifo_dma(struct r592_device *dev)
 	sg_count = dma_map_sg(&dev->pci_dev->dev, &dev->req->sg, 1, is_write ?
 		PCI_DMA_TODEVICE : PCI_DMA_FROMDEVICE);
 
-	if (sg_count != 1 ||
-			(sg_dma_len(&dev->req->sg) < dev->req->sg.length)) {
+	if (sg_count != 1 || sg_dma_len(&dev->req->sg) < R592_LFIFO_SIZE) {
 		message("problem in dma_map_sg");
 		return -EIO;
 	}
@@ -617,9 +614,9 @@ static void r592_update_card_detect(struct r592_device *dev)
 }
 
 /* Timer routine that fires 1 second after last card detection event, */
-static void r592_detect_timer(long unsigned int data)
+static void r592_detect_timer(struct timer_list *t)
 {
-	struct r592_device *dev = (struct r592_device *)data;
+	struct r592_device *dev = from_timer(dev, t, detect_timer);
 	r592_update_card_detect(dev);
 	memstick_detect_change(dev->host);
 }
@@ -773,8 +770,7 @@ static int r592_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	spin_lock_init(&dev->io_thread_lock);
 	init_completion(&dev->dma_done);
 	INIT_KFIFO(dev->pio_fifo);
-	setup_timer(&dev->detect_timer,
-		r592_detect_timer, (long unsigned int)dev);
+	timer_setup(&dev->detect_timer, r592_detect_timer, 0);
 
 	/* Host initialization */
 	host->caps = MEMSTICK_CAP_PAR4;
@@ -833,7 +829,7 @@ static void r592_remove(struct pci_dev *pdev)
 	/* Stop the processing thread.
 	That ensures that we won't take any more requests */
 	kthread_stop(dev->io_thread);
-
+	del_timer_sync(&dev->detect_timer);
 	r592_enable_device(dev, false);
 
 	while (!error && dev->req) {

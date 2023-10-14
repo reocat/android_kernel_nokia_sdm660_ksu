@@ -176,8 +176,8 @@ extern UDItype __udiv_qrnnd(UDItype *, UDItype, UDItype, UDItype);
 #define add_ssaaaa(sh, sl, ah, al, bh, bl) \
 	__asm__ ("adds %1, %4, %5\n" \
 		"adc  %0, %2, %3" \
-	: "=r" ((USItype)(sh)), \
-		"=&r" ((USItype)(sl)) \
+	: "=r" (sh), \
+		"=&r" (sl) \
 	: "%r" ((USItype)(ah)), \
 		"rI" ((USItype)(bh)), \
 		"%r" ((USItype)(al)), \
@@ -185,15 +185,15 @@ extern UDItype __udiv_qrnnd(UDItype *, UDItype, UDItype, UDItype);
 #define sub_ddmmss(sh, sl, ah, al, bh, bl) \
 	__asm__ ("subs %1, %4, %5\n" \
 		"sbc  %0, %2, %3" \
-	: "=r" ((USItype)(sh)), \
-		"=&r" ((USItype)(sl)) \
+	: "=r" (sh), \
+		"=&r" (sl) \
 	: "r" ((USItype)(ah)), \
 		"rI" ((USItype)(bh)), \
 		"r" ((USItype)(al)), \
 		"rI" ((USItype)(bl)))
 #if defined __ARM_ARCH_2__ || defined __ARM_ARCH_3__
 #define umul_ppmm(xh, xl, a, b) \
-	__asm__ ("%@ Inlined umul_ppmm\n" \
+	__asm__ ("@ Inlined umul_ppmm\n" \
 		"mov	%|r0, %2, lsr #16		@ AAAA\n" \
 		"mov	%|r2, %3, lsr #16		@ BBBB\n" \
 		"bic	%|r1, %2, %|r0, lsl #16		@ aaaa\n" \
@@ -206,19 +206,19 @@ extern UDItype __udiv_qrnnd(UDItype *, UDItype, UDItype, UDItype);
 		"addcs	%|r2, %|r2, #65536\n" \
 		"adds	%1, %|r1, %|r0, lsl #16\n" \
 		"adc	%0, %|r2, %|r0, lsr #16" \
-	: "=&r" ((USItype)(xh)), \
-		"=r" ((USItype)(xl)) \
+	: "=&r" (xh), \
+		"=r" (xl) \
 	: "r" ((USItype)(a)), \
 		"r" ((USItype)(b)) \
 	: "r0", "r1", "r2")
 #else
 #define umul_ppmm(xh, xl, a, b) \
-	__asm__ ("%@ Inlined umul_ppmm\n" \
-		"umull %r1, %r0, %r2, %r3" \
-	: "=&r" ((USItype)(xh)), \
-			"=r" ((USItype)(xl)) \
+	__asm__ ("@ Inlined umul_ppmm\n" \
+		"umull %1, %0, %2, %3" \
+	: "=&r" (xh), \
+		"=&r" (xl) \
 	: "r" ((USItype)(a)), \
-			"r" ((USItype)(b)) \
+		"r" ((USItype)(b)) \
 	: "r0", "r1")
 #endif
 #define UMUL_TIME 20
@@ -639,30 +639,12 @@ do { \
 	**************  MIPS  *****************
 	***************************************/
 #if defined(__mips__) && W_TYPE_SIZE == 32
-#if (__GNUC__ >= 5) || (__GNUC__ >= 4 && __GNUC_MINOR__ >= 4)
 #define umul_ppmm(w1, w0, u, v)			\
 do {						\
 	UDItype __ll = (UDItype)(u) * (v);	\
 	w1 = __ll >> 32;			\
 	w0 = __ll;				\
 } while (0)
-#elif __GNUC__ > 2 || __GNUC_MINOR__ >= 7
-#define umul_ppmm(w1, w0, u, v) \
-	__asm__ ("multu %2,%3" \
-	: "=l" ((USItype)(w0)), \
-	     "=h" ((USItype)(w1)) \
-	: "d" ((USItype)(u)), \
-	     "d" ((USItype)(v)))
-#else
-#define umul_ppmm(w1, w0, u, v) \
-	__asm__ ("multu %2,%3\n" \
-	   "mflo %0\n" \
-	   "mfhi %1" \
-	: "=d" ((USItype)(w0)), \
-	     "=d" ((USItype)(w1)) \
-	: "d" ((USItype)(u)), \
-	     "d" ((USItype)(v)))
-#endif
 #define UMUL_TIME 10
 #define UDIV_TIME 100
 #endif /* __mips__ */
@@ -687,7 +669,7 @@ do {									\
 		 : "d" ((UDItype)(u)),					\
 		   "d" ((UDItype)(v)));					\
 } while (0)
-#elif (__GNUC__ >= 5) || (__GNUC__ >= 4 && __GNUC_MINOR__ >= 4)
+#else
 #define umul_ppmm(w1, w0, u, v) \
 do {									\
 	typedef unsigned int __ll_UTItype __attribute__((mode(TI)));	\
@@ -695,22 +677,6 @@ do {									\
 	w1 = __ll >> 64;						\
 	w0 = __ll;							\
 } while (0)
-#elif __GNUC__ > 2 || __GNUC_MINOR__ >= 7
-#define umul_ppmm(w1, w0, u, v) \
-	__asm__ ("dmultu %2,%3" \
-	: "=l" ((UDItype)(w0)), \
-	     "=h" ((UDItype)(w1)) \
-	: "d" ((UDItype)(u)), \
-	     "d" ((UDItype)(v)))
-#else
-#define umul_ppmm(w1, w0, u, v) \
-	__asm__ ("dmultu %2,%3\n" \
-	   "mflo %0\n" \
-	   "mfhi %1" \
-	: "=d" ((UDItype)(w0)), \
-	     "=d" ((UDItype)(w1)) \
-	: "d" ((UDItype)(u)), \
-	     "d" ((UDItype)(v)))
 #endif
 #define UMUL_TIME 20
 #define UDIV_TIME 140

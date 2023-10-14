@@ -22,6 +22,10 @@ static int notifier_chain_register(struct notifier_block **nl,
 		struct notifier_block *n)
 {
 	while ((*nl) != NULL) {
+		if (unlikely((*nl) == n)) {
+			WARN(1, "double register detected");
+			return 0;
+		}
 		if (n->priority > (*nl)->priority)
 			break;
 		nl = &((*nl)->next);
@@ -95,7 +99,7 @@ static int notifier_call_chain(struct notifier_block **nl,
 		if (nr_calls)
 			(*nr_calls)++;
 
-		if ((ret & NOTIFY_STOP_MASK) == NOTIFY_STOP_MASK)
+		if (ret & NOTIFY_STOP_MASK)
 			break;
 		nb = next_nb;
 		nr_to_call--;

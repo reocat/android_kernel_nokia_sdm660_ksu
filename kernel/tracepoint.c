@@ -24,11 +24,15 @@
 #include <linux/tracepoint.h>
 #include <linux/err.h>
 #include <linux/slab.h>
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
+#include <linux/sched/task.h>
 #include <linux/static_key.h>
 
-extern struct tracepoint * const __start___tracepoints_ptrs[];
-extern struct tracepoint * const __stop___tracepoints_ptrs[];
+extern tracepoint_ptr_t __start___tracepoints_ptrs[];
+extern tracepoint_ptr_t __stop___tracepoints_ptrs[];
+
+DEFINE_SRCU(tracepoint_srcu);
+EXPORT_SYMBOL_GPL(tracepoint_srcu);
 
 /* Set to 1 to enable tracepoint debug output */
 static const int tracepoint_debug;
@@ -48,6 +52,9 @@ static LIST_HEAD(tracepoint_module_list);
  * tracepoints_mutex nests inside tracepoint_module_list_mutex.
  */
 static DEFINE_MUTEX(tracepoints_mutex);
+
+static struct rcu_head *early_probes;
+static bool ok_to_free_tracepoints;
 
 /*
  * Note about RCU :
@@ -72,16 +79,56 @@ static inline void *allocate_probes(int count)
 	return p == NULL ? NULL : p->probes;
 }
 
-static void rcu_free_old_probes(struct rcu_head *head)
+static void srcu_free_old_probes(struct rcu_head *head)
 {
 	kfree(container_of(head, struct tp_probes, rcu));
 }
+
+static void rcu_free_old_probes(struct rcu_head *head)
+{
+	call_srcu(&tracepoint_srcu, head, srcu_free_old_probes);
+}
+
+static __init int release_early_probes(void)
+{
+	struct rcu_head *tmp;
+
+	ok_to_free_tracepoints = true;
+
+	while (early_probes) {
+		tmp = early_probes;
+		early_probes = tmp->next;
+		call_rcu_sched(tmp, rcu_free_old_probes);
+	}
+
+	return 0;
+}
+
+/* SRCU is initialized at core_initcall */
+postcore_initcall(release_early_probes);
 
 static inline void release_probes(struct tracepoint_func *old)
 {
 	if (old) {
 		struct tp_probes *tp_probes = container_of(old,
 			struct tp_probes, probes[0]);
+
+		/*
+		 * We can't free probes if SRCU is not initialized yet.
+		 * Postpone the freeing till after SRCU is initialized.
+		 */
+		if (unlikely(!ok_to_free_tracepoints)) {
+			tp_probes->rcu.next = early_probes;
+			early_probes = &tp_probes->rcu;
+			return;
+		}
+
+		/*
+		 * Tracepoint probes are protected by both sched RCU and SRCU,
+		 * by calling the SRCU callback in the sched RCU callback we
+		 * cover both cases. So let us chain the SRCU and sched RCU
+		 * callbacks to wait for both grace periods.
+		 */
 		call_rcu_sched(&tp_probes->rcu, rcu_free_old_probes);
 	}
 }
@@ -237,27 +284,31 @@ static void *func_remove(struct tracepoint_func **funcs,
  * Add the probe function to a tracepoint.
  */
 static int tracepoint_add_func(struct tracepoint *tp,
-			       struct tracepoint_func *func, int prio)
+			       struct tracepoint_func *func, int prio,
+			       bool warn)
 {
 	struct tracepoint_func *old, *tp_funcs;
+	int ret;
 
-	if (tp->regfunc && !static_key_enabled(&tp->key))
-		tp->regfunc();
+	if (tp->regfunc && !static_key_enabled(&tp->key)) {
+		ret = tp->regfunc();
+		if (ret < 0)
+			return ret;
+	}
 
 	tp_funcs = rcu_dereference_protected(tp->funcs,
 			lockdep_is_held(&tracepoints_mutex));
 	old = func_add(&tp_funcs, func, prio);
 	if (IS_ERR(old)) {
-		WARN_ON_ONCE(PTR_ERR(old) != -ENOMEM);
+		WARN_ON_ONCE(warn && PTR_ERR(old) != -ENOMEM);
 		return PTR_ERR(old);
 	}
 
 	/*
-	 * rcu_assign_pointer has a smp_wmb() which makes sure that the new
-	 * probe callbacks array is consistent before setting a pointer to it.
-	 * This array is referenced by __DO_TRACE from
-	 * include/linux/tracepoints.h. A matching smp_read_barrier_depends()
-	 * is used.
+	 * rcu_assign_pointer has as smp_store_release() which makes sure
+	 * that the new probe callbacks array is consistent before setting
+	 * a pointer to it.  This array is referenced by __DO_TRACE from
+	 * include/linux/tracepoint.h using rcu_dereference_sched().
 	 */
 	rcu_assign_pointer(tp->funcs, tp_funcs);
 	if (!static_key_enabled(&tp->key))
@@ -301,7 +352,33 @@ static int tracepoint_remove_func(struct tracepoint *tp,
 }
 
 /**
- * tracepoint_probe_register -  Connect a probe to a tracepoint
+ * tracepoint_probe_register_prio_may_exist -  Connect a probe to a tracepoint with priority
+ * @tp: tracepoint
+ * @probe: probe handler
+ * @data: tracepoint data
+ * @prio: priority of this function over other registered functions
+ *
+ * Same as tracepoint_probe_register_prio() except that it will not warn
+ * if the tracepoint is already registered.
+ */
+int tracepoint_probe_register_prio_may_exist(struct tracepoint *tp, void *probe,
+					     void *data, int prio)
+{
+	struct tracepoint_func tp_func;
+	int ret;
+
+	mutex_lock(&tracepoints_mutex);
+	tp_func.func = probe;
+	tp_func.data = data;
+	tp_func.prio = prio;
+	ret = tracepoint_add_func(tp, &tp_func, prio, false);
+	mutex_unlock(&tracepoints_mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(tracepoint_probe_register_prio_may_exist);
+
+/**
+ * tracepoint_probe_register_prio -  Connect a probe to a tracepoint with priority
  * @tp: tracepoint
  * @probe: probe handler
  * @data: tracepoint data
@@ -323,7 +400,7 @@ int tracepoint_probe_register_prio(struct tracepoint *tp, void *probe,
 	tp_func.func = probe;
 	tp_func.data = data;
 	tp_func.prio = prio;
-	ret = tracepoint_add_func(tp, &tp_func, prio);
+	ret = tracepoint_add_func(tp, &tp_func, prio, true);
 	mutex_unlock(&tracepoints_mutex);
 	return ret;
 }
@@ -334,7 +411,6 @@ EXPORT_SYMBOL_GPL(tracepoint_probe_register_prio);
  * @tp: tracepoint
  * @probe: probe handler
  * @data: tracepoint data
- * @prio: priority of this function over other registered functions
  *
  * Returns 0 if ok, error value on error.
  * Note: if @tp is within a module, the caller is responsible for
@@ -369,6 +445,19 @@ int tracepoint_probe_unregister(struct tracepoint *tp, void *probe, void *data)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(tracepoint_probe_unregister);
+
+static void for_each_tracepoint_range(
+		tracepoint_ptr_t *begin, tracepoint_ptr_t *end,
+		void (*fct)(struct tracepoint *tp, void *priv),
+		void *priv)
+{
+	tracepoint_ptr_t *iter;
+
+	if (!begin)
+		return;
+	for (iter = begin; iter < end; iter++)
+		fct(tracepoint_ptr_deref(iter), priv);
+}
 
 #ifdef CONFIG_MODULES
 bool trace_module_has_bad_taint(struct module *mod)
@@ -434,15 +523,9 @@ EXPORT_SYMBOL_GPL(unregister_tracepoint_module_notifier);
  * Ensure the tracer unregistered the module's probes before the module
  * teardown is performed. Prevents leaks of probe and data pointers.
  */
-static void tp_module_going_check_quiescent(struct tracepoint * const *begin,
-		struct tracepoint * const *end)
+static void tp_module_going_check_quiescent(struct tracepoint *tp, void *priv)
 {
-	struct tracepoint * const *iter;
-
-	if (!begin)
-		return;
-	for (iter = begin; iter < end; iter++)
-		WARN_ON_ONCE((*iter)->funcs);
+	WARN_ON_ONCE(tp->funcs);
 }
 
 static int tracepoint_module_coming(struct module *mod)
@@ -493,8 +576,9 @@ static void tracepoint_module_going(struct module *mod)
 			 * Called the going notifier before checking for
 			 * quiescence.
 			 */
-			tp_module_going_check_quiescent(mod->tracepoints_ptrs,
-				mod->tracepoints_ptrs + mod->num_tracepoints);
+			for_each_tracepoint_range(mod->tracepoints_ptrs,
+				mod->tracepoints_ptrs + mod->num_tracepoints,
+				tp_module_going_check_quiescent, NULL);
 			break;
 		}
 	}
@@ -539,25 +623,12 @@ static __init int init_tracepoints(void)
 
 	ret = register_module_notifier(&tracepoint_module_nb);
 	if (ret)
-		pr_warning("Failed to register tracepoint module enter notifier\n");
+		pr_warn("Failed to register tracepoint module enter notifier\n");
 
 	return ret;
 }
 __initcall(init_tracepoints);
 #endif /* CONFIG_MODULES */
-
-static void for_each_tracepoint_range(struct tracepoint * const *begin,
-		struct tracepoint * const *end,
-		void (*fct)(struct tracepoint *tp, void *priv),
-		void *priv)
-{
-	struct tracepoint * const *iter;
-
-	if (!begin)
-		return;
-	for (iter = begin; iter < end; iter++)
-		fct(*iter, priv);
-}
 
 /**
  * for_each_kernel_tracepoint - iteration on all kernel tracepoints
@@ -577,7 +648,7 @@ EXPORT_SYMBOL_GPL(for_each_kernel_tracepoint);
 /* NB: reg/unreg are called while guarded with the tracepoints_mutex */
 static int sys_tracepoint_refcount;
 
-void syscall_regfunc(void)
+int syscall_regfunc(void)
 {
 	struct task_struct *p, *t;
 
@@ -589,6 +660,8 @@ void syscall_regfunc(void)
 		read_unlock(&tasklist_lock);
 	}
 	sys_tracepoint_refcount++;
+
+	return 0;
 }
 
 void syscall_unregfunc(void)

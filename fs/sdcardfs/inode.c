@@ -21,6 +21,7 @@
 #include "sdcardfs.h"
 #include <linux/fs_struct.h>
 #include <linux/ratelimit.h>
+#include <linux/sched/task.h>
 
 const struct cred *override_fsids(struct sdcardfs_sb_info *sbi,
 		struct sdcardfs_inode_data *data)
@@ -85,6 +86,9 @@ static int sdcardfs_create(struct inode *dir, struct dentry *dentry,
 	lower_dentry = lower_path.dentry;
 	lower_dentry_mnt = lower_path.mnt;
 	lower_parent_dentry = lock_parent(lower_dentry);
+
+	if (d_is_positive(lower_dentry))
+		return -EEXIST;
 
 	/* set last 16bytes of mode field to 0664 */
 	mode = (mode & S_IFMT) | 00664;
@@ -392,7 +396,8 @@ out_eacces:
  * superblock-level name-space lock for renames and copy-ups.
  */
 static int sdcardfs_rename(struct inode *old_dir, struct dentry *old_dentry,
-			 struct inode *new_dir, struct dentry *new_dentry)
+			 struct inode *new_dir, struct dentry *new_dentry,
+			 unsigned int flags)
 {
 	int err = 0;
 	struct dentry *lower_old_dentry = NULL;
@@ -403,6 +408,9 @@ static int sdcardfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	struct dentry *trap = NULL;
 	struct path lower_old_path, lower_new_path;
 	const struct cred *saved_cred = NULL;
+
+	if (flags)
+		return -EINVAL;
 
 	if (!check_caller_access_to_name(old_dir, &old_dentry->d_name) ||
 		!check_caller_access_to_name(new_dir, &new_dentry->d_name)) {
@@ -525,7 +533,7 @@ static const char *sdcardfs_follow_link(struct dentry *dentry, void **cookie)
 
 static int sdcardfs_permission_wrn(struct inode *inode, int mask)
 {
-	pr_debug("sdcardfs does not support permission. Use permission2.\n");
+	WARN_RATELIMIT(1, "sdcardfs does not support permission. Use permission2.\n");
 	return -EINVAL;
 }
 
@@ -556,6 +564,7 @@ static int sdcardfs_permission(struct vfsmount *mnt, struct inode *inode, int ma
 
 	if (IS_ERR(mnt))
 		return PTR_ERR(mnt);
+
 	if (!top)
 		return -EINVAL;
 
@@ -579,7 +588,6 @@ static int sdcardfs_permission(struct vfsmount *mnt, struct inode *inode, int ma
 	tmp.i_sb = inode->i_sb;
 	if (IS_POSIXACL(inode))
 		pr_warn("%s: This may be undefined behavior...\n", __func__);
-
 	err = generic_permission(&tmp, mask);
 	return err;
 }
@@ -601,7 +609,9 @@ static int sdcardfs_setattr(struct vfsmount *mnt, struct dentry *dentry, struct 
 	struct iattr lower_ia;
 	struct dentry *parent;
 	struct inode tmp;
+	struct dentry tmp_d;
 	struct sdcardfs_inode_data *top;
+
 	const struct cred *saved_cred = NULL;
 
 	inode = d_inode(dentry);
@@ -630,9 +640,10 @@ static int sdcardfs_setattr(struct vfsmount *mnt, struct dentry *dentry, struct 
 	tmp.i_size = i_size_read(inode);
 	data_put(top);
 	tmp.i_sb = inode->i_sb;
+	tmp_d.d_inode = &tmp;
 
 	/*
-	 * Check if user has permission to change inode.  We don't check if
+	 * Check if user has permission to change dentry.  We don't check if
 	 * this user can change the lower inode: that should happen when
 	 * calling notify_change on the lower inode.
 	 */
@@ -642,7 +653,7 @@ static int sdcardfs_setattr(struct vfsmount *mnt, struct dentry *dentry, struct 
 	 * we have write access. Changes to mode, owner, and group are ignored
 	 */
 	ia->ia_valid |= ATTR_FORCE;
-	err = inode_change_ok(&tmp, ia);
+	err = setattr_prepare(&tmp_d, ia);
 
 	if (!err) {
 		/* check the Android group ID */
@@ -700,10 +711,10 @@ static int sdcardfs_setattr(struct vfsmount *mnt, struct dentry *dentry, struct 
 	 * unlinked (no inode->i_sb and i_ino==0.  This happens if someone
 	 * tries to open(), unlink(), then ftruncate() a file.
 	 */
-	mutex_lock(&d_inode(lower_dentry)->i_mutex);
+	inode_lock(d_inode(lower_dentry));
 	err = notify_change2(lower_mnt, lower_dentry, &lower_ia, /* note: lower_ia */
 			NULL);
-	mutex_unlock(&d_inode(lower_dentry)->i_mutex);
+	inode_unlock(d_inode(lower_dentry));
 	if (err)
 		goto out;
 
@@ -749,10 +760,11 @@ static int sdcardfs_fillattr(struct vfsmount *mnt, struct inode *inode,
 	data_put(top);
 	return 0;
 }
-
-static int sdcardfs_getattr(struct vfsmount *mnt, struct dentry *dentry,
-		 struct kstat *stat)
+static int sdcardfs_getattr(const struct path *path, struct kstat *stat,
+				u32 request_mask, unsigned int flags)
 {
+	struct vfsmount *mnt = path->mnt;
+	struct dentry *dentry = path->dentry;
 	struct kstat lower_stat;
 	struct path lower_path;
 	struct dentry *parent;
@@ -766,7 +778,7 @@ static int sdcardfs_getattr(struct vfsmount *mnt, struct dentry *dentry,
 	dput(parent);
 
 	sdcardfs_get_lower_path(dentry, &lower_path);
-	err = vfs_getattr(&lower_path, &lower_stat);
+	err = vfs_getattr(&lower_path, &lower_stat, request_mask, flags);
 	if (err)
 		goto out;
 	sdcardfs_copy_and_fix_attrs(d_inode(dentry),

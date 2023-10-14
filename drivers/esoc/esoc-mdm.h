@@ -1,13 +1,6 @@
-/* Copyright (c) 2014-2015, 2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2014-2015, 2017-2019, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __ESOC_MDM_H__
@@ -27,18 +20,12 @@
 #define MDM_PBLRDY_CNT			20
 #define INVALID_GPIO			(-1)
 #define MDM_GPIO(mdm, i)		(mdm->gpios[i])
-#define MDM9x25_LABEL			"MDM9x25"
-#define MDM9x25_HSIC			"HSIC"
-#define MDM9x35_LABEL			"MDM9x35"
-#define MDM9x35_PCIE			"PCIe"
-#define MDM9x35_DUAL_LINK		"HSIC+PCIe"
-#define MDM9x35_HSIC			"HSIC"
-#define MDM9x45_LABEL			"MDM9x45"
-#define MDM9x45_PCIE			"PCIe"
 #define MDM9x55_LABEL			"MDM9x55"
 #define MDM9x55_PCIE			"PCIe"
-#define APQ8096_LABEL			"APQ8096"
-#define APQ8096_PCIE			"PCIe"
+#define SDX50M_LABEL			"SDX50M"
+#define SDX50M_PCIE			"PCIe"
+#define SDX55M_LABEL			"SDX55M"
+#define SDX55M_PCIE			"PCIe"
 #define MDM2AP_STATUS_TIMEOUT_MS	120000L
 #define MDM_MODEM_TIMEOUT		3000
 #define DEF_RAMDUMP_TIMEOUT		120000
@@ -75,7 +62,7 @@ enum mdm_gpio {
 struct mdm_pon_ops;
 
 struct mdm_ctrl {
-	unsigned gpios[NUM_GPIOS];
+	unsigned int gpios[NUM_GPIOS];
 	spinlock_t status_lock;
 	struct workqueue_struct *mdm_queue;
 	struct delayed_work mdm2ap_status_check_work;
@@ -111,6 +98,7 @@ struct mdm_ctrl {
 	struct coresight_cti *cti;
 	int trig_cnt;
 	const struct mdm_pon_ops *pon_ops;
+	bool skip_restart_for_mdm_crash;
 };
 
 struct mdm_pon_ops {
@@ -130,34 +118,47 @@ struct mdm_ops {
 					struct platform_device *pdev);
 };
 
+void mdm_disable_irqs(struct mdm_ctrl *mdm);
+void mdm_wait_for_status_low(struct mdm_ctrl *mdm, bool atomic);
+
 static inline int mdm_toggle_soft_reset(struct mdm_ctrl *mdm, bool atomic)
 {
-	return mdm->pon_ops->soft_reset(mdm, atomic);
+	if (mdm->pon_ops->soft_reset)
+		return mdm->pon_ops->soft_reset(mdm, atomic);
+	return -ENOENT;
 }
 static inline int mdm_do_first_power_on(struct mdm_ctrl *mdm)
 {
-	return mdm->pon_ops->pon(mdm);
+	if (mdm->pon_ops->pon)
+		return mdm->pon_ops->pon(mdm);
+	return -ENOENT;
 }
 static inline int mdm_power_down(struct mdm_ctrl *mdm)
 {
-	return mdm->pon_ops->poff_force(mdm);
+	if (mdm->pon_ops->poff_force)
+		return mdm->pon_ops->poff_force(mdm);
+	return -ENOENT;
 }
 static inline void mdm_cold_reset(struct mdm_ctrl *mdm)
 {
-	mdm->pon_ops->cold_reset(mdm);
+	if (mdm->pon_ops->cold_reset)
+		mdm->pon_ops->cold_reset(mdm);
+	return;
 }
 static inline int mdm_pon_dt_init(struct mdm_ctrl *mdm)
 {
-	return mdm->pon_ops->dt_init(mdm);
+	if (mdm->pon_ops->dt_init)
+		return mdm->pon_ops->dt_init(mdm);
+	return -ENOENT;
 }
 static inline int mdm_pon_setup(struct mdm_ctrl *mdm)
 {
-	return mdm->pon_ops->setup(mdm);
+	if (mdm->pon_ops->setup)
+		return mdm->pon_ops->setup(mdm);
+	return -ENOENT;
 }
 
-extern struct mdm_pon_ops mdm9x25_pon_ops;
-extern struct mdm_pon_ops mdm9x35_pon_ops;
-extern struct mdm_pon_ops mdm9x45_pon_ops;
 extern struct mdm_pon_ops mdm9x55_pon_ops;
-extern struct mdm_pon_ops apq8096_pon_ops;
+extern struct mdm_pon_ops sdx50m_pon_ops;
+extern struct mdm_pon_ops sdx55m_pon_ops;
 #endif

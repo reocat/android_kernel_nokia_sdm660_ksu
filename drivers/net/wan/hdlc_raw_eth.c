@@ -57,7 +57,8 @@ static int raw_eth_ioctl(struct net_device *dev, struct ifreq *ifr)
 	const size_t size = sizeof(raw_hdlc_proto);
 	raw_hdlc_proto new_settings;
 	hdlc_device *hdlc = dev_to_hdlc(dev);
-	int result, old_qlen;
+	unsigned int old_qlen;
+	int result;
 
 	switch (ifr->ifr_settings.type) {
 	case IF_GET_PROTO:
@@ -103,6 +104,7 @@ static int raw_eth_ioctl(struct net_device *dev, struct ifreq *ifr)
 		dev->tx_queue_len = old_qlen;
 		dev->priv_flags &= ~IFF_TX_SKB_SHARING;
 		eth_hw_addr_random(dev);
+		call_netdevice_notifiers(NETDEV_POST_TYPE_CHANGE, dev);
 		netif_dormant_off(dev);
 		return 0;
 	}

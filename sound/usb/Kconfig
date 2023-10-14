@@ -91,7 +91,7 @@ config SND_USB_CAIAQ_INPUT
 
 config SND_USB_US122L
 	tristate "Tascam US-122L USB driver"
-	depends on X86
+	depends on X86 || COMPILE_TEST
 	select SND_HWDEP
 	select SND_RAWMIDI
 	help
@@ -164,11 +164,12 @@ source "sound/usb/line6/Kconfig"
 
 config SND_USB_AUDIO_QMI
 	tristate "USB Audio QMI Service driver"
-	depends on MSM_QMI_INTERFACE
+	depends on QCOM_QMI_HELPERS
 	help
 	  Starts USB Audio QMI server to communicate with remote entity
 	  to perform operations like enable or disable particular audio
-	  stream on a connected USB device.
+	  stream on a connected USB device, subsystem restart and
+	  device disconnect.
 
 endif	# SND_USB
 

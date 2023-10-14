@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 
 # LED Core
 obj-$(CONFIG_NEW_LEDS)			+= led-core.o
@@ -8,9 +9,13 @@ obj-$(CONFIG_LEDS_TRIGGERS)		+= led-triggers.o
 # LED Platform Drivers
 obj-$(CONFIG_LEDS_88PM860X)		+= leds-88pm860x.o
 obj-$(CONFIG_LEDS_AAT1290)		+= leds-aat1290.o
+obj-$(CONFIG_LEDS_APU)			+= leds-apu.o
+obj-$(CONFIG_LEDS_AS3645A)		+= leds-as3645a.o
+obj-$(CONFIG_LEDS_AW2016)		+= leds-aw2016.o
 obj-$(CONFIG_LEDS_BCM6328)		+= leds-bcm6328.o
 obj-$(CONFIG_LEDS_BCM6358)		+= leds-bcm6358.o
 obj-$(CONFIG_LEDS_BD2802)		+= leds-bd2802.o
+obj-$(CONFIG_LEDS_CPCAP)		+= leds-cpcap.o
 obj-$(CONFIG_LEDS_LOCOMO)		+= leds-locomo.o
 obj-$(CONFIG_LEDS_LM3530)		+= leds-lm3530.o
 obj-$(CONFIG_LEDS_LM3533)		+= leds-lm3533.o
@@ -18,6 +23,7 @@ obj-$(CONFIG_LEDS_LM3642)		+= leds-lm3642.o
 obj-$(CONFIG_LEDS_MIKROTIK_RB532)	+= leds-rb532.o
 obj-$(CONFIG_LEDS_S3C24XX)		+= leds-s3c24xx.o
 obj-$(CONFIG_LEDS_NET48XX)		+= leds-net48xx.o
+obj-$(CONFIG_LEDS_QTI_FLASH)		+= leds-qti-flash.o leds-qpnp-flash-common.o
 obj-$(CONFIG_LEDS_WRAP)			+= leds-wrap.o
 obj-$(CONFIG_LEDS_COBALT_QUBE)		+= leds-cobalt-qube.o
 obj-$(CONFIG_LEDS_COBALT_RAQ)		+= leds-cobalt-raq.o
@@ -26,6 +32,7 @@ obj-$(CONFIG_LEDS_PCA9532)		+= leds-pca9532.o
 obj-$(CONFIG_LEDS_GPIO_REGISTER)	+= leds-gpio-register.o
 obj-$(CONFIG_LEDS_GPIO)			+= leds-gpio.o
 obj-$(CONFIG_LEDS_LP3944)		+= leds-lp3944.o
+obj-$(CONFIG_LEDS_LP3952)		+= leds-lp3952.o
 obj-$(CONFIG_LEDS_LP55XX_COMMON)	+= leds-lp55xx-common.o
 obj-$(CONFIG_LEDS_LP5521)		+= leds-lp5521.o
 obj-$(CONFIG_LEDS_LP5523)		+= leds-lp5523.o
@@ -51,7 +58,6 @@ obj-$(CONFIG_LEDS_REGULATOR)		+= leds-regulator.o
 obj-$(CONFIG_LEDS_INTEL_SS4200)		+= leds-ss4200.o
 obj-$(CONFIG_LEDS_LT3593)		+= leds-lt3593.o
 obj-$(CONFIG_LEDS_ADP5520)		+= leds-adp5520.o
-obj-$(CONFIG_LEDS_DELL_NETBOOKS)	+= dell-led.o
 obj-$(CONFIG_LEDS_MC13783)		+= leds-mc13783.o
 obj-$(CONFIG_LEDS_NS2)			+= leds-ns2.o
 obj-$(CONFIG_LEDS_NETXBIG)		+= leds-netxbig.o
@@ -65,18 +71,30 @@ obj-$(CONFIG_LEDS_QPNP_FLASH)		+= leds-qpnp-flash.o leds-qpnp-flash-common.o
 obj-$(CONFIG_LEDS_QPNP_FLASH_V2)	+= leds-qpnp-flash-v2.o leds-qpnp-flash-common.o
 obj-$(CONFIG_LEDS_QPNP_WLED)		+= leds-qpnp-wled.o
 obj-$(CONFIG_LEDS_SYSCON)		+= leds-syscon.o
-obj-$(CONFIG_LEDS_VERSATILE)		+= leds-versatile.o
 obj-$(CONFIG_LEDS_MENF21BMC)		+= leds-menf21bmc.o
 obj-$(CONFIG_LEDS_KTD2692)		+= leds-ktd2692.o
 obj-$(CONFIG_LEDS_POWERNV)		+= leds-powernv.o
-obj-$(CONFIG_LEDS_SEAD3)		+= leds-sead3.o
-obj-$(CONFIG_LEDS_QPNP_HAPTICS)	+= leds-qpnp-haptics.o
+obj-$(CONFIG_LEDS_IS31FL319X)		+= leds-is31fl319x.o
+obj-$(CONFIG_LEDS_IS31FL32XX)		+= leds-is31fl32xx.o
+obj-$(CONFIG_LEDS_PM8058)		+= leds-pm8058.o
+obj-$(CONFIG_LEDS_MLXCPLD)		+= leds-mlxcpld.o
+obj-$(CONFIG_LEDS_MLXREG)		+= leds-mlxreg.o
+obj-$(CONFIG_LEDS_NIC78BX)		+= leds-nic78bx.o
+obj-$(CONFIG_LEDS_MT6323)		+= leds-mt6323.o
+obj-$(CONFIG_LEDS_LM3692X)		+= leds-lm3692x.o
+obj-$(CONFIG_LEDS_SC27XX_BLTC)		+= leds-sc27xx-bltc.o
+obj-$(CONFIG_LEDS_LM3601X)		+= leds-lm3601x.o
+obj-$(CONFIG_LEDS_QTI_TRI_LED)		+= leds-qti-tri-led.o
+obj-$(CONFIG_LEDS_QPNP_FLASH_V2)        += leds-qpnp-flash-v2.o leds-qpnp-flash-common.o
+obj-$(CONFIG_LEDS_QPNP_VIBRATOR_LDO)	+= leds-qpnp-vibrator-ldo.o
+obj-$(CONFIG_LEDS_QPNP_VIBRATOR)	+= leds-qpnp-vibrator.o
 
 # LED SPI Drivers
+obj-$(CONFIG_LEDS_CR0014114)		+= leds-cr0014114.o
 obj-$(CONFIG_LEDS_DAC124S085)		+= leds-dac124s085.o
 
-#for AW2015 LED Driver
-obj-$(CONFIG_LEDS_AW2015) += leds-aw2015.o
+# LED Userspace Drivers
+obj-$(CONFIG_LEDS_USER)			+= uleds.o
 
 # LED Triggers
 obj-$(CONFIG_LEDS_TRIGGERS)		+= trigger/

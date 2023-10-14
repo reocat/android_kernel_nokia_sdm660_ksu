@@ -1,17 +1,11 @@
-/* Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/fs.h>
 #include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include "ipa_i.h"
 #include <linux/msm_ipa.h>
 
@@ -82,44 +76,41 @@ int ipa3_register_intf_ext(const char *name, const struct ipa_tx_intf *tx,
 	u32 len;
 
 	if (name == NULL || (tx == NULL && rx == NULL && ext == NULL)) {
-		IPAERR("invalid params name=%p tx=%p rx=%p ext=%p\n", name,
-				tx, rx, ext);
+		IPAERR_RL("invalid params name=%pK tx=%pK rx=%pK ext=%pK\n",
+				name, tx, rx, ext);
 		return -EINVAL;
 	}
 
 	if (tx && tx->num_props > IPA_NUM_PROPS_MAX) {
-		IPAERR("invalid tx num_props=%d max=%d\n", tx->num_props,
+		IPAERR_RL("invalid tx num_props=%d max=%d\n", tx->num_props,
 				IPA_NUM_PROPS_MAX);
 		return -EINVAL;
 	}
 
 	if (rx && rx->num_props > IPA_NUM_PROPS_MAX) {
-		IPAERR("invalid rx num_props=%d max=%d\n", rx->num_props,
+		IPAERR_RL("invalid rx num_props=%d max=%d\n", rx->num_props,
 				IPA_NUM_PROPS_MAX);
 		return -EINVAL;
 	}
 
 	if (ext && ext->num_props > IPA_NUM_PROPS_MAX) {
-		IPAERR("invalid ext num_props=%d max=%d\n", ext->num_props,
+		IPAERR_RL("invalid ext num_props=%d max=%d\n", ext->num_props,
 				IPA_NUM_PROPS_MAX);
 		return -EINVAL;
 	}
 
 	len = sizeof(struct ipa3_intf);
 	intf = kzalloc(len, GFP_KERNEL);
-	if (intf == NULL) {
-		IPAERR("fail to alloc 0x%x bytes\n", len);
+	if (intf == NULL)
 		return -ENOMEM;
-	}
 
 	strlcpy(intf->name, name, IPA_RESOURCE_NAME_MAX);
 
 	if (tx) {
 		intf->num_tx_props = tx->num_props;
 		len = tx->num_props * sizeof(struct ipa_ioc_tx_intf_prop);
-		intf->tx = kzalloc(len, GFP_KERNEL);
+		intf->tx = kmemdup(tx->prop, len, GFP_KERNEL);
 		if (intf->tx == NULL) {
-			IPAERR("fail to alloc 0x%x bytes\n", len);
 			kfree(intf);
 			return -ENOMEM;
 		}
@@ -129,9 +120,8 @@ int ipa3_register_intf_ext(const char *name, const struct ipa_tx_intf *tx,
 	if (rx) {
 		intf->num_rx_props = rx->num_props;
 		len = rx->num_props * sizeof(struct ipa_ioc_rx_intf_prop);
-		intf->rx = kzalloc(len, GFP_KERNEL);
+		intf->rx = kmemdup(rx->prop, len, GFP_KERNEL);
 		if (intf->rx == NULL) {
-			IPAERR("fail to alloc 0x%x bytes\n", len);
 			kfree(intf->tx);
 			kfree(intf);
 			return -ENOMEM;
@@ -142,9 +132,8 @@ int ipa3_register_intf_ext(const char *name, const struct ipa_tx_intf *tx,
 	if (ext) {
 		intf->num_ext_props = ext->num_props;
 		len = ext->num_props * sizeof(struct ipa_ioc_ext_intf_prop);
-		intf->ext = kzalloc(len, GFP_KERNEL);
+		intf->ext = kmemdup(ext->prop, len, GFP_KERNEL);
 		if (intf->ext == NULL) {
-			IPAERR("fail to alloc 0x%x bytes\n", len);
 			kfree(intf->rx);
 			kfree(intf->tx);
 			kfree(intf);
@@ -183,7 +172,7 @@ int ipa3_deregister_intf(const char *name)
 
 	if ((name == NULL) ||
 	    (strnlen(name, IPA_RESOURCE_NAME_MAX) == IPA_RESOURCE_NAME_MAX)) {
-		IPAERR("invalid param name=%s\n", name);
+		IPAERR_RL("invalid param name=%s\n", name);
 		return result;
 	}
 
@@ -222,10 +211,11 @@ int ipa3_query_intf(struct ipa_ioc_query_intf *lookup)
 	int result = -EINVAL;
 
 	if (lookup == NULL) {
-		IPAERR_RL("invalid param lookup is NULL\n");
+		IPAERR_RL("invalid param lookup=%pK\n", lookup);
 		return result;
 	}
 
+	lookup->name[IPA_RESOURCE_NAME_MAX-1] = '\0';
 	if (strnlen(lookup->name, IPA_RESOURCE_NAME_MAX) ==
 			IPA_RESOURCE_NAME_MAX) {
 		IPAERR_RL("Interface name too long. (%s)\n", lookup->name);
@@ -264,10 +254,11 @@ int ipa3_query_intf_tx_props(struct ipa_ioc_query_intf_tx_props *tx)
 	int result = -EINVAL;
 
 	if (tx == NULL) {
-		IPAERR("invalid param tx=%p\n", tx);
+		IPAERR_RL("null args: tx\n");
 		return result;
 	}
 
+	tx->name[IPA_RESOURCE_NAME_MAX-1] = '\0';
 	if (strnlen(tx->name, IPA_RESOURCE_NAME_MAX) == IPA_RESOURCE_NAME_MAX) {
 		IPAERR_RL("Interface name too long. (%s)\n", tx->name);
 		return result;
@@ -278,7 +269,7 @@ int ipa3_query_intf_tx_props(struct ipa_ioc_query_intf_tx_props *tx)
 		if (!strcmp(entry->name, tx->name)) {
 			/* add the entry check */
 			if (entry->num_tx_props != tx->num_tx_props) {
-				IPAERR_RL("invalid entry number(%u %u)\n",
+				IPAERR("invalid entry number(%u %u)\n",
 					entry->num_tx_props,
 						tx->num_tx_props);
 				mutex_unlock(&ipa3_ctx->lock);
@@ -311,10 +302,11 @@ int ipa3_query_intf_rx_props(struct ipa_ioc_query_intf_rx_props *rx)
 	int result = -EINVAL;
 
 	if (rx == NULL) {
-		IPAERR("invalid param rx=%p\n", rx);
+		IPAERR_RL("null args: rx\n");
 		return result;
 	}
 
+	rx->name[IPA_RESOURCE_NAME_MAX-1] = '\0';
 	if (strnlen(rx->name, IPA_RESOURCE_NAME_MAX) == IPA_RESOURCE_NAME_MAX) {
 		IPAERR_RL("Interface name too long. (%s)\n", rx->name);
 		return result;
@@ -325,7 +317,7 @@ int ipa3_query_intf_rx_props(struct ipa_ioc_query_intf_rx_props *rx)
 		if (!strcmp(entry->name, rx->name)) {
 			/* add the entry check */
 			if (entry->num_rx_props != rx->num_rx_props) {
-				IPAERR_RL("invalid entry number(%u %u)\n",
+				IPAERR("invalid entry number(%u %u)\n",
 					entry->num_rx_props,
 						rx->num_rx_props);
 				mutex_unlock(&ipa3_ctx->lock);
@@ -358,7 +350,7 @@ int ipa3_query_intf_ext_props(struct ipa_ioc_query_intf_ext_props *ext)
 	int result = -EINVAL;
 
 	if (ext == NULL) {
-		IPAERR("invalid param ext=%p\n", ext);
+		IPAERR_RL("invalid param ext=%pK\n", ext);
 		return result;
 	}
 
@@ -367,7 +359,7 @@ int ipa3_query_intf_ext_props(struct ipa_ioc_query_intf_ext_props *ext)
 		if (!strcmp(entry->name, ext->name)) {
 			/* add the entry check */
 			if (entry->num_ext_props != ext->num_ext_props) {
-				IPAERR_RL("invalid entry number(%u %u)\n",
+				IPAERR("invalid entry number(%u %u)\n",
 					entry->num_ext_props,
 						ext->num_ext_props);
 				mutex_unlock(&ipa3_ctx->lock);
@@ -401,6 +393,8 @@ static int wlan_msg_process(struct ipa_msg_meta *meta, void *buff)
 	uint8_t mac[IPA_MAC_ADDR_SIZE];
 	uint8_t mac2[IPA_MAC_ADDR_SIZE];
 
+	if (!buff)
+		return -EINVAL;
 	if (meta->msg_type == WLAN_CLIENT_CONNECT_EX) {
 		/* debug print */
 		event_ex_cur_con = buff;
@@ -419,22 +413,27 @@ static int wlan_msg_process(struct ipa_msg_meta *meta, void *buff)
 		}
 
 		mutex_lock(&ipa3_ctx->msg_wlan_client_lock);
-		msg_dup = kzalloc(sizeof(struct ipa3_push_msg), GFP_KERNEL);
+		msg_dup = kzalloc(sizeof(*msg_dup), GFP_KERNEL);
 		if (msg_dup == NULL) {
-			IPAERR("fail to alloc ipa_msg container\n");
+			mutex_unlock(&ipa3_ctx->msg_wlan_client_lock);
 			return -ENOMEM;
 		}
 		msg_dup->meta = *meta;
 		if (meta->msg_len > 0 && buff) {
-			data_dup = kmalloc(meta->msg_len, GFP_KERNEL);
+			data_dup = kmemdup(buff, meta->msg_len, GFP_KERNEL);
 			if (data_dup == NULL) {
-				IPAERR("fail to alloc data_dup container\n");
 				kfree(msg_dup);
+				mutex_unlock(&ipa3_ctx->msg_wlan_client_lock);
 				return -ENOMEM;
 			}
 			memcpy(data_dup, buff, meta->msg_len);
 			msg_dup->buff = data_dup;
 			msg_dup->callback = ipa3_send_msg_free;
+		} else {
+			IPAERR("msg_len %d\n", meta->msg_len);
+			kfree(msg_dup);
+			mutex_unlock(&ipa3_ctx->msg_wlan_client_lock);
+			return -ENOMEM;
 		}
 		list_add_tail(&msg_dup->link, &ipa3_ctx->msg_wlan_client_list);
 		mutex_unlock(&ipa3_ctx->msg_wlan_client_lock);
@@ -444,13 +443,8 @@ static int wlan_msg_process(struct ipa_msg_meta *meta, void *buff)
 	if (meta->msg_type == WLAN_CLIENT_DISCONNECT) {
 		/* debug print */
 		event_ex_cur_discon = buff;
-		IPADBG("Mac %02x:%02x:%02x:%02x:%02x:%02x,msg %d\n",
-		event_ex_cur_discon->mac_addr[0],
-		event_ex_cur_discon->mac_addr[1],
-		event_ex_cur_discon->mac_addr[2],
-		event_ex_cur_discon->mac_addr[3],
-		event_ex_cur_discon->mac_addr[4],
-		event_ex_cur_discon->mac_addr[5],
+		IPADBG("Mac %pM, msg %d\n",
+		event_ex_cur_discon->mac_addr,
 		meta->msg_type);
 		memcpy(mac2,
 			event_ex_cur_discon->mac_addr,
@@ -468,13 +462,10 @@ static int wlan_msg_process(struct ipa_msg_meta *meta, void *buff)
 					sizeof(mac));
 				if (event_ex_list->attribs[cnt].attrib_type ==
 					WLAN_HDR_ATTRIB_MAC_ADDR) {
-					pr_debug("%02x:%02x:%02x:%02x:%02x:%02x\n",
-					mac[0],	mac[1],	mac[2],
-					mac[3],	mac[4], mac[5]);
+					pr_debug("%pM\n", mac);
 
 					/* compare to delete one*/
-					if (memcmp(mac2,
-						mac,
+					if (memcmp(mac2, mac,
 						sizeof(mac)) == 0) {
 						IPADBG("clean %d\n", total);
 						list_del(&entry->link);
@@ -512,8 +503,8 @@ int ipa3_send_msg(struct ipa_msg_meta *meta, void *buff,
 	void *data = NULL;
 
 	if (meta == NULL || (buff == NULL && callback != NULL) ||
-	    (buff != NULL && callback == NULL) || buff == NULL) {
-		IPAERR_RL("invalid param meta=%p buff=%p, callback=%p\n",
+	    (buff != NULL && callback == NULL)) {
+		IPAERR_RL("invalid param meta=%pK buff=%pK, callback=%pK\n",
 		       meta, buff, callback);
 		return -EINVAL;
 	}
@@ -524,20 +515,16 @@ int ipa3_send_msg(struct ipa_msg_meta *meta, void *buff,
 	}
 
 	msg = kzalloc(sizeof(struct ipa3_push_msg), GFP_KERNEL);
-	if (msg == NULL) {
-		IPAERR("fail to alloc ipa_msg container\n");
+	if (msg == NULL)
 		return -ENOMEM;
-	}
 
 	msg->meta = *meta;
 	if (meta->msg_len > 0 && buff) {
-		data = kmalloc(meta->msg_len, GFP_KERNEL);
+		data = kmemdup(buff, meta->msg_len, GFP_KERNEL);
 		if (data == NULL) {
-			IPAERR("fail to alloc data container\n");
 			kfree(msg);
 			return -ENOMEM;
 		}
-		memcpy(data, buff, meta->msg_len);
 		msg->buff = data;
 		msg->callback = ipa3_send_msg_free;
 	}
@@ -545,8 +532,8 @@ int ipa3_send_msg(struct ipa_msg_meta *meta, void *buff,
 	mutex_lock(&ipa3_ctx->msg_lock);
 	list_add_tail(&msg->link, &ipa3_ctx->msg_list);
 	/* support for softap client event cache */
-	if (wlan_msg_process(meta, buff))
-		IPAERR("wlan_msg_process failed\n");
+	if (buff != NULL && wlan_msg_process(meta, buff))
+		IPAERR_RL("wlan_msg_process failed\n");
 
 	/* unlock only after process */
 	mutex_unlock(&ipa3_ctx->msg_lock);
@@ -587,32 +574,23 @@ int ipa3_resend_wlan_msg(void)
 		for (cnt = 0; cnt < event_ex_list->num_of_attribs; cnt++) {
 			if (event_ex_list->attribs[cnt].attrib_type ==
 				WLAN_HDR_ATTRIB_MAC_ADDR) {
-				IPADBG("%d-Mac %02x:%02x:%02x:%02x:%02x:%02x\n",
-				total,
-				event_ex_list->attribs[cnt].u.mac_addr[0],
-				event_ex_list->attribs[cnt].u.mac_addr[1],
-				event_ex_list->attribs[cnt].u.mac_addr[2],
-				event_ex_list->attribs[cnt].u.mac_addr[3],
-				event_ex_list->attribs[cnt].u.mac_addr[4],
-				event_ex_list->attribs[cnt].u.mac_addr[5]);
+				IPADBG("%d-Mac %pM\n", total,
+				event_ex_list->attribs[cnt].u.mac_addr);
 			}
 		}
 
-		msg = kzalloc(sizeof(struct ipa3_push_msg), GFP_KERNEL);
+		msg = kzalloc(sizeof(*msg), GFP_KERNEL);
 		if (msg == NULL) {
-			IPAERR("fail to alloc ipa_msg container\n");
 			mutex_unlock(&ipa3_ctx->msg_wlan_client_lock);
 			return -ENOMEM;
 		}
 		msg->meta = entry->meta;
-		data = kmalloc(entry->meta.msg_len, GFP_KERNEL);
+		data = kmemdup(entry->buff, entry->meta.msg_len, GFP_KERNEL);
 		if (data == NULL) {
-			IPAERR("fail to alloc data container\n");
 			kfree(msg);
 			mutex_unlock(&ipa3_ctx->msg_wlan_client_lock);
 			return -ENOMEM;
 		}
-		memcpy(data, entry->buff, entry->meta.msg_len);
 		msg->buff = data;
 		msg->callback = ipa3_send_msg_free;
 		mutex_lock(&ipa3_ctx->msg_lock);
@@ -643,15 +621,14 @@ int ipa3_register_pull_msg(struct ipa_msg_meta *meta, ipa_msg_pull_fn callback)
 	struct ipa3_pull_msg *msg;
 
 	if (meta == NULL || callback == NULL) {
-		IPAERR("invalid param meta=%p callback=%p\n", meta, callback);
+		IPAERR_RL("invalid param meta=%pK callback=%pK\n",
+				meta, callback);
 		return -EINVAL;
 	}
 
 	msg = kzalloc(sizeof(struct ipa3_pull_msg), GFP_KERNEL);
-	if (msg == NULL) {
-		IPAERR("fail to alloc ipa_msg container\n");
+	if (msg == NULL)
 		return -ENOMEM;
-	}
 
 	msg->meta = *meta;
 	msg->callback = callback;
@@ -680,7 +657,7 @@ int ipa3_deregister_pull_msg(struct ipa_msg_meta *meta)
 	int result = -EINVAL;
 
 	if (meta == NULL) {
-		IPAERR("invalid param name=%p\n", meta);
+		IPAERR_RL("null arg: meta\n");
 		return result;
 	}
 
@@ -737,17 +714,11 @@ ssize_t ipa3_read(struct file *filp, char __user *buf, size_t count,
 			list_del(&msg->link);
 		}
 
-		IPADBG_LOW("msg=%p\n", msg);
+		IPADBG_LOW("msg=%pK\n", msg);
 
 		if (msg) {
 			locked = 0;
 			mutex_unlock(&ipa3_ctx->msg_lock);
-			if (count < sizeof(struct ipa_msg_meta)) {
-				kfree(msg);
-				msg = NULL;
-				ret = -EFAULT;
-				break;
-			}
 			if (copy_to_user(buf, &msg->meta,
 					  sizeof(struct ipa_msg_meta))) {
 				ret = -EFAULT;
@@ -758,15 +729,8 @@ ssize_t ipa3_read(struct file *filp, char __user *buf, size_t count,
 			buf += sizeof(struct ipa_msg_meta);
 			count -= sizeof(struct ipa_msg_meta);
 			if (msg->buff) {
-				if (count >= msg->meta.msg_len) {
-					if (copy_to_user(buf, msg->buff,
-							msg->meta.msg_len)) {
-						ret = -EFAULT;
-						kfree(msg);
-						msg = NULL;
-						break;
-					}
-				} else {
+				if (copy_to_user(buf, msg->buff,
+						  msg->meta.msg_len)) {
 					ret = -EFAULT;
 					kfree(msg);
 					msg = NULL;
@@ -780,6 +744,7 @@ ssize_t ipa3_read(struct file *filp, char __user *buf, size_t count,
 			IPA_STATS_INC_CNT(
 				ipa3_ctx->stats.msg_r[msg->meta.msg_type]);
 			kfree(msg);
+			msg = NULL;
 		}
 
 		ret = -EAGAIN;
@@ -828,7 +793,7 @@ int ipa3_pull_msg(struct ipa_msg_meta *meta, char *buff, size_t count)
 	int result = -EINVAL;
 
 	if (meta == NULL || buff == NULL || !count) {
-		IPAERR_RL("invalid param name=%p buff=%p count=%zu\n",
+		IPAERR_RL("invalid param name=%pK buff=%pK count=%zu\n",
 				meta, buff, count);
 		return result;
 	}

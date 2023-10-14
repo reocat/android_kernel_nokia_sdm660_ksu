@@ -1,13 +1,6 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DRIVERS_CRYPTO_MSM_QCRYPTOHW_50_H_
@@ -392,6 +385,8 @@
 #define CRYPTO_AUTH_SIZE_MASK			(0x1F << CRYPTO_AUTH_SIZE)
 #define CRYPTO_AUTH_SIZE_SHA1		0
 #define CRYPTO_AUTH_SIZE_SHA256		1
+#define CRYPTO_AUTH_SIZE_SHA384		2
+#define CRYPTO_AUTH_SIZE_SHA512		3
 #define CRYPTO_AUTH_SIZE_ENUM_1_BYTES	0
 #define CRYPTO_AUTH_SIZE_ENUM_2_BYTES	1
 #define CRYPTO_AUTH_SIZE_ENUM_3_BYTES	2

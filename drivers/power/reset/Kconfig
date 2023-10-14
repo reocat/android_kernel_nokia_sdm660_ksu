@@ -30,6 +30,14 @@ config POWER_RESET_AT91_RESET
 	  This driver supports restart for Atmel AT91SAM9 and SAMA5
 	  SoCs
 
+config POWER_RESET_AT91_SAMA5D2_SHDWC
+	tristate "Atmel AT91 SAMA5D2-Compatible shutdown controller driver"
+	depends on ARCH_AT91
+	default SOC_SAMA5
+	help
+	  This driver supports the alternate shutdown controller for some Atmel
+	  SAMA5 SoCs. It is present for example on SAMA5D2 SoC.
+
 config POWER_RESET_AXXIA
 	bool "LSI Axxia reset driver"
 	depends on ARCH_AXXIA
@@ -38,16 +46,35 @@ config POWER_RESET_AXXIA
 
 	  Say Y if you have an Axxia family SoC.
 
+config POWER_RESET_BRCMKONA
+	bool "Broadcom Kona reset driver"
+	depends on ARM || COMPILE_TEST
+	default ARCH_BCM_MOBILE
+	help
+	  This driver provides restart support for Broadcom Kona chips.
+
+	  Say Y here if you have a Broadcom Kona-based board and you wish
+	  to have restart support.
+
 config POWER_RESET_BRCMSTB
 	bool "Broadcom STB reset driver"
-	depends on ARM || MIPS || COMPILE_TEST
+	depends on ARM || ARM64 || MIPS || COMPILE_TEST
 	depends on MFD_SYSCON
-	default ARCH_BRCMSTB
+	default ARCH_BRCMSTB || BMIPS_GENERIC
 	help
 	  This driver provides restart support for Broadcom STB boards.
 
 	  Say Y here if you have a Broadcom STB board and you wish
 	  to have restart support.
+
+config POWER_RESET_GEMINI_POWEROFF
+	bool "Cortina Gemini power-off driver"
+	depends on ARCH_GEMINI || COMPILE_TEST
+	depends on OF && HAS_IOMEM
+	default ARCH_GEMINI
+	help
+	  This driver supports turning off the Cortina Gemini SoC.
+	  Select this if you're building a kernel with Gemini SoC support.
 
 config POWER_RESET_GPIO
 	bool "GPIO power-off driver"
@@ -71,14 +98,39 @@ config POWER_RESET_HISI
 	help
 	  Reboot support for Hisilicon boards.
 
-config POWER_RESET_IMX
-	bool "IMX6 power-off driver"
-	depends on POWER_RESET && SOC_IMX6
+config POWER_RESET_MSM
+	bool "Qualcomm MSM power-off driver"
+	depends on ARCH_QCOM
 	help
-	  This driver support power off external PMIC by PMIC_ON_REQ on i.mx6
-	  boards.If you want to use other pin to control external power,please
-	  say N here or disable in dts to make sure pm_power_off never be
-	  overwrote wrongly by this driver.
+	  Power off and restart support for Qualcomm boards.
+
+config POWER_RESET_QCOM_PON
+	tristate "Qualcomm power-on driver"
+	depends on ARCH_QCOM
+	depends on MFD_SPMI_PMIC
+	select REBOOT_MODE
+	help
+	  Power On support for Qualcomm boards.
+	  If you have a Qualcomm platform and need support for
+	  power-on and reboot reason, Say Y.
+	  If unsure, Say N.
+
+config POWER_RESET_OCELOT_RESET
+	bool "Microsemi Ocelot reset driver"
+	depends on MSCC_OCELOT || COMPILE_TEST
+	select MFD_SYSCON
+	help
+	  This driver supports restart for Microsemi Ocelot SoC.
+
+config POWER_RESET_PIIX4_POWEROFF
+	tristate "Intel PIIX4 power-off driver"
+	depends on PCI
+	depends on MIPS || COMPILE_TEST
+	help
+	  This driver supports powering off a system using the Intel PIIX4
+	  southbridge, for example the MIPS Malta development board. The
+	  southbridge SOff state is entered in response to a request to
+	  power off the system.
 
 config POWER_RESET_LTC2952
 	bool "LTC2952 PowerPath power-off driver"
@@ -88,29 +140,14 @@ config POWER_RESET_LTC2952
 	  down via the LTC2952. Bindings are made in the device tree.
 
 config POWER_RESET_QCOM
-	bool "Qualcomm MSM power-off driver"
+	bool "Qualcomm Technologies, Inc. MSM power-off driver"
 	depends on ARCH_MSM || ARCH_QCOM
 	depends on POWER_RESET
 	help
-	  Power off and restart support for Qualcomm boards.
-
-config QCOM_DLOAD_MODE
-	bool "Qualcomm download mode"
-	depends on POWER_RESET_QCOM
-	help
-		This makes the SoC enter download mode when it resets
-		due to a kernel panic. Note that this doesn't by itself
-		make the kernel reboot on a kernel panic - that must be
-		enabled via another mechanism.
-
-config QCOM_PRESERVE_MEM
-	bool "Always preserve memory on restart"
-	depends on POWER_RESET_QCOM
-	help
-	  If crash to download mode is disabled and restart reason is null
-	  the system will always perform a hard reset, which wipes out
-	  persistent memory contents. Select this option to always perform
-	  a soft reset that preserves memory contents.
+	  Power off and restart support for Qualcomm Technologies, Inc. boards.
+	  This driver supports board power down and restart using PMIC PS_HOLD.
+	  Say Y here if you have a Qualcomm Tecnologies, Inc. board and wish to
+	  enable restart driver.
 
 config POWER_RESET_QNAP
 	bool "QNAP power-off driver"
@@ -159,7 +196,8 @@ config POWER_RESET_XGENE
 
 config POWER_RESET_KEYSTONE
 	bool "Keystone reset driver"
-	depends on ARCH_KEYSTONE
+	depends on ARCH_KEYSTONE || COMPILE_TEST
+	depends on HAS_IOMEM
 	select MFD_SYSCON
 	help
 	  Reboot support for the KEYSTONE SoCs.
@@ -167,6 +205,7 @@ config POWER_RESET_KEYSTONE
 config POWER_RESET_SYSCON
 	bool "Generic SYSCON regmap reset driver"
 	depends on OF
+	depends on HAS_IOMEM
 	select MFD_SYSCON
 	help
 	  Reboot support for generic SYSCON mapped register reset.
@@ -174,6 +213,7 @@ config POWER_RESET_SYSCON
 config POWER_RESET_SYSCON_POWEROFF
 	bool "Generic SYSCON regmap poweroff driver"
 	depends on OF
+	depends on HAS_IOMEM
 	select MFD_SYSCON
 	help
 	  Poweroff support for generic SYSCON mapped register poweroff.
@@ -198,13 +238,22 @@ config REBOOT_MODE
 config SYSCON_REBOOT_MODE
 	tristate "Generic SYSCON regmap reboot mode driver"
 	depends on OF
+	depends on MFD_SYSCON
 	select REBOOT_MODE
-	select MFD_SYSCON
 	help
 	  Say y here will enable reboot mode driver. This will
 	  get reboot mode arguments and store it in SYSCON mapped
 	  register, then the bootloader can read it to take different
 	  action according to the mode.
+
+config POWER_RESET_SC27XX
+	bool "Spreadtrum SC27xx PMIC power-off driver"
+	depends on MFD_SC27XX_PMIC || COMPILE_TEST
+	help
+	  This driver supports powering off a system through
+	  Spreadtrum SC27xx series PMICs. The SC27xx series
+	  PMICs includes the SC2720, SC2721, SC2723, SC2730
+	  and SC2731 chips.
 
 endif
 

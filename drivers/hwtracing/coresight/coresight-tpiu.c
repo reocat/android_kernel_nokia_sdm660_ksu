@@ -1,17 +1,12 @@
-/* Copyright (c) 2011-2012, 2016 The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Description: CoreSight Trace Port Interface Unit driver
  */
 
+#include <linux/atomic.h>
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/device.h>
 #include <linux/io.h>
@@ -74,14 +69,13 @@ static void tpiu_enable_hw(struct tpiu_drvdata *drvdata)
 	CS_LOCK(drvdata->base);
 }
 
-static int tpiu_enable(struct coresight_device *csdev)
+static int tpiu_enable(struct coresight_device *csdev, u32 mode, void *__unused)
 {
 	struct tpiu_drvdata *drvdata = dev_get_drvdata(csdev->dev.parent);
 
-	pm_runtime_get_sync(csdev->dev.parent);
 	tpiu_enable_hw(drvdata);
-
-	dev_info(drvdata->dev, "TPIU enabled\n");
+	atomic_inc(csdev->refcnt);
+	dev_dbg(drvdata->dev, "TPIU enabled\n");
 	return 0;
 }
 
@@ -101,14 +95,17 @@ static void tpiu_disable_hw(struct tpiu_drvdata *drvdata)
 	CS_LOCK(drvdata->base);
 }
 
-static void tpiu_disable(struct coresight_device *csdev)
+static int tpiu_disable(struct coresight_device *csdev)
 {
 	struct tpiu_drvdata *drvdata = dev_get_drvdata(csdev->dev.parent);
 
-	tpiu_disable_hw(drvdata);
-	pm_runtime_put(csdev->dev.parent);
+	if (atomic_dec_return(csdev->refcnt))
+		return -EBUSY;
 
-	dev_info(drvdata->dev, "TPIU disabled\n");
+	tpiu_disable_hw(drvdata);
+
+	dev_dbg(drvdata->dev, "TPIU disabled\n");
+	return 0;
 }
 
 static void tpiu_abort(struct coresight_device *csdev)
@@ -138,7 +135,7 @@ static int tpiu_probe(struct amba_device *adev, const struct amba_id *id)
 	struct coresight_platform_data *pdata = NULL;
 	struct tpiu_drvdata *drvdata;
 	struct resource *res = &adev->res;
-	struct coresight_desc *desc;
+	struct coresight_desc desc = { 0 };
 	struct device_node *np = adev->dev.of_node;
 
 	if (np) {
@@ -176,21 +173,14 @@ static int tpiu_probe(struct amba_device *adev, const struct amba_id *id)
 
 	pm_runtime_put(&adev->dev);
 
-	desc = devm_kzalloc(dev, sizeof(*desc), GFP_KERNEL);
-	if (!desc)
-		return -ENOMEM;
+	desc.type = CORESIGHT_DEV_TYPE_SINK;
+	desc.subtype.sink_subtype = CORESIGHT_DEV_SUBTYPE_SINK_PORT;
+	desc.ops = &tpiu_cs_ops;
+	desc.pdata = pdata;
+	desc.dev = dev;
+	drvdata->csdev = coresight_register(&desc);
 
-	desc->type = CORESIGHT_DEV_TYPE_SINK;
-	desc->subtype.sink_subtype = CORESIGHT_DEV_SUBTYPE_SINK_PORT;
-	desc->ops = &tpiu_cs_ops;
-	desc->pdata = pdata;
-	desc->dev = dev;
-	drvdata->csdev = coresight_register(desc);
-	if (IS_ERR(drvdata->csdev))
-		return PTR_ERR(drvdata->csdev);
-
-	dev_info(dev, "TPIU initialized\n");
-	return 0;
+	return PTR_ERR_OR_ZERO(drvdata->csdev);
 }
 
 #ifdef CONFIG_PM
@@ -219,14 +209,19 @@ static const struct dev_pm_ops tpiu_dev_pm_ops = {
 	SET_RUNTIME_PM_OPS(tpiu_runtime_suspend, tpiu_runtime_resume, NULL)
 };
 
-static struct amba_id tpiu_ids[] = {
+static const struct amba_id tpiu_ids[] = {
 	{
-		.id	= 0x0003b912,
-		.mask	= 0x0003ffff,
+		.id	= 0x000bb912,
+		.mask	= 0x000fffff,
 	},
 	{
 		.id	= 0x0004b912,
 		.mask	= 0x0007ffff,
+	},
+	{
+		/* Coresight SoC-600 */
+		.id	= 0x000bb9e7,
+		.mask	= 0x000fffff,
 	},
 	{ 0, 0},
 };
@@ -241,8 +236,4 @@ static struct amba_driver tpiu_driver = {
 	.probe		= tpiu_probe,
 	.id_table	= tpiu_ids,
 };
-
-module_amba_driver(tpiu_driver);
-
-MODULE_LICENSE("GPL v2");
-MODULE_DESCRIPTION("CoreSight Trace Port Interface Unit driver");
+builtin_amba_driver(tpiu_driver);

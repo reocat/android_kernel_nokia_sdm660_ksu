@@ -1,4 +1,5 @@
-/* Copyright (c) 2009-2017, The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2009-2021, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,12 +12,13 @@
  *
  */
 
-#define pr_fmt(fmt) "%s:%d " fmt, __func__, __LINE__
+#define pr_fmt(fmt) "%s:%d\n" fmt, __func__, __LINE__
 
 #include <linux/module.h>
 #include <linux/of_gpio.h>
 #include <linux/leds-qpnp-flash.h>
 #include "msm_flash.h"
+#include "msm_camera_io_util.h"
 #include "msm_camera_dt_util.h"
 #include "msm_cci.h"
 
@@ -55,7 +57,7 @@ static struct msm_camera_i2c_fn_t msm_sensor_cci_func_tbl = {
 	.i2c_poll =  msm_camera_cci_i2c_poll,
 };
 
-void msm_torch_brightness_set(struct led_classdev *led_cdev,
+static void msm_torch_brightness_set(struct led_classdev *led_cdev,
 				enum led_brightness value)
 {
 	if (!torch_trigger) {
@@ -125,6 +127,7 @@ static int32_t msm_flash_get_subdev_id(
 	struct msm_flash_ctrl_t *flash_ctrl, void *arg)
 {
 	uint32_t *subdev_id = (uint32_t *)arg;
+
 	CDBG("Enter\n");
 	if (!subdev_id) {
 		pr_err("failed\n");
@@ -154,7 +157,7 @@ static int32_t msm_flash_i2c_write_table(
 
 	/* Validate the settings size */
 	if ((!conf_array.size) || (conf_array.size > MAX_I2C_REG_SET)) {
-		pr_err("failed: invalid size %d", conf_array.size);
+		pr_err("failed: invalid size %d\n", conf_array.size);
 		return -EINVAL;
 	}
 
@@ -197,32 +200,16 @@ static int32_t msm_flash_i2c_init(
 
 #ifdef CONFIG_COMPAT
 	if (is_compat_task()) {
-		power_setting_array32 = kzalloc(
-			sizeof(struct msm_sensor_power_setting_array32),
-			GFP_KERNEL);
-		if (!power_setting_array32) {
-			pr_err("%s mem allocation failed %d\n",
-				__func__, __LINE__);
-			return -ENOMEM;
-		}
-
-		if (copy_from_user(power_setting_array32,
-			(void *)flash_init_info->power_setting_array,
-			sizeof(struct msm_sensor_power_setting_array32))) {
-			pr_err("%s copy_from_user failed %d\n",
-				__func__, __LINE__);
-			kfree(power_setting_array32);
-			return -EFAULT;
-		}
+		power_setting_array32 = memdup_user(
+			(void __user *)flash_init_info->power_setting_array,
+			sizeof(struct msm_sensor_power_setting_array32));
+		if (IS_ERR(power_setting_array32))
+			return PTR_ERR(power_setting_array32);
 
 		flash_ctrl->power_setting_array.size =
 			power_setting_array32->size;
 		flash_ctrl->power_setting_array.size_down =
 			power_setting_array32->size_down;
-		flash_ctrl->power_setting_array.power_down_setting =
-			compat_ptr(power_setting_array32->power_down_setting);
-		flash_ctrl->power_setting_array.power_setting =
-			compat_ptr(power_setting_array32->power_setting);
 
 		/* Validate power_up array size and power_down array size */
 		if ((!flash_ctrl->power_setting_array.size) ||
@@ -232,7 +219,49 @@ static int32_t msm_flash_i2c_init(
 			(flash_ctrl->power_setting_array.size_down >
 			MAX_POWER_CONFIG)) {
 
-			pr_err("failed: invalid size %d, size_down %d",
+			pr_err("failed: invalid size %d, size_down %d\n",
+				flash_ctrl->power_setting_array.size,
+				flash_ctrl->power_setting_array.size_down);
+			kfree(power_setting_array32);
+			power_setting_array32 = NULL;
+			return -EINVAL;
+		}
+
+		flash_ctrl->power_setting_array.power_down_setting =
+			kcalloc(flash_ctrl->power_setting_array.size_down,
+			sizeof(struct msm_sensor_power_setting), GFP_KERNEL);
+		if (!flash_ctrl->power_setting_array.power_down_setting) {
+			kfree(power_setting_array32);
+			return -ENOMEM;
+		}
+		if (copy_from_user(
+			flash_ctrl->power_setting_array.power_down_setting,
+			(void __user *)
+			compat_ptr(power_setting_array32->power_down_setting),
+			sizeof(struct msm_sensor_power_setting)*
+			flash_ctrl->power_setting_array.size_down)) {
+			pr_err("%s:%d failed\n", __func__, __LINE__);
+			kfree(power_setting_array32);
+			return -EFAULT;
+		}
+		flash_ctrl->power_setting_array.power_setting = memdup_user(
+			(void __user *)
+			compat_ptr(power_setting_array32->power_setting),
+			sizeof(struct msm_sensor_power_setting)*
+			flash_ctrl->power_setting_array.size
+			);
+		if (IS_ERR(flash_ctrl->power_setting_array.power_setting))
+			return PTR_ERR(flash_ctrl->power_setting_array
+				.power_setting);
+		/* Validate power_up array size and power_down array size */
+		if ((!flash_ctrl->power_setting_array.size) ||
+			(flash_ctrl->power_setting_array.size >
+			MAX_POWER_CONFIG) ||
+			(!flash_ctrl->power_setting_array.size_down) ||
+			(flash_ctrl->power_setting_array.size_down >
+			MAX_POWER_CONFIG)) {
+
+			pr_err("failed: invalid size %d, size_down %d\n",
 				flash_ctrl->power_setting_array.size,
 				flash_ctrl->power_setting_array.size_down);
 			kfree(power_setting_array32);
@@ -249,10 +278,11 @@ static int32_t msm_flash_i2c_init(
 			flash_ctrl->power_setting_array.power_down_setting_a,
 			power_setting_array32->power_down_setting_a,
 			flash_ctrl->power_setting_array.size_down);
-	} else
+		kfree(power_setting_array32);
+	}
 #endif
 	if (copy_from_user(&flash_ctrl->power_setting_array,
-		(void *)flash_init_info->power_setting_array,
+		(void __user *)flash_init_info->power_setting_array,
 		sizeof(struct msm_sensor_power_setting_array))) {
 		pr_err("%s copy_from_user failed %d\n", __func__, __LINE__);
 		return -EFAULT;
@@ -295,22 +325,11 @@ static int32_t msm_flash_i2c_init(
 	}
 
 	if (flash_data->cfg.flash_init_info->settings) {
-		settings = kzalloc(sizeof(
-			struct msm_camera_i2c_reg_setting_array), GFP_KERNEL);
-		if (!settings) {
-			pr_err("%s mem allocation failed %d\n",
-				__func__, __LINE__);
-			return -ENOMEM;
-		}
-
-		if (copy_from_user(settings, (void *)flash_init_info->settings,
-			sizeof(struct msm_camera_i2c_reg_setting_array))) {
-			kfree(settings);
-			pr_err("%s copy_from_user failed %d\n",
-				__func__, __LINE__);
-			return -EFAULT;
-		}
-
+		settings = memdup_user((void __user *)
+				flash_init_info->settings, sizeof(
+				struct msm_camera_i2c_reg_setting_array));
+		if (IS_ERR(settings)) {
+			return PTR_ERR(settings);
 		rc = msm_flash_i2c_write_table(flash_ctrl, settings);
 		kfree(settings);
 
@@ -319,13 +338,12 @@ static int32_t msm_flash_i2c_init(
 				__func__, __LINE__, rc);
 		}
 	}
-
+	}
 	return 0;
 
 msm_flash_i2c_init_fail:
 	return rc;
 }
-
 static int32_t msm_flash_gpio_init(
 	struct msm_flash_ctrl_t *flash_ctrl,
 	struct msm_flash_cfg_data_t *flash_data)
@@ -362,13 +380,6 @@ static int32_t msm_flash_i2c_release(
 	struct msm_flash_ctrl_t *flash_ctrl)
 {
 	int32_t rc = 0;
-
-	if (!(&flash_ctrl->power_info) || !(&flash_ctrl->flash_i2c_client)) {
-		pr_err("%s:%d failed: %pK %pK\n",
-			__func__, __LINE__, &flash_ctrl->power_info,
-			&flash_ctrl->flash_i2c_client);
-		return -EINVAL;
-	}
 
 	rc = msm_camera_power_down(&flash_ctrl->power_info,
 		flash_ctrl->flash_device_type,
@@ -413,21 +424,11 @@ static int32_t msm_flash_i2c_write_setting_array(
 		pr_err("%s:%d failed: Null pointer\n", __func__, __LINE__);
 		return -EFAULT;
 	}
-
-	settings = kzalloc(sizeof(struct msm_camera_i2c_reg_setting_array),
-		GFP_KERNEL);
-	if (!settings) {
-		pr_err("%s mem allocation failed %d\n", __func__, __LINE__);
-		return -ENOMEM;
-	}
-
-	if (copy_from_user(settings, (void *)flash_data->cfg.settings,
-		sizeof(struct msm_camera_i2c_reg_setting_array))) {
-		kfree(settings);
-		pr_err("%s copy_from_user failed %d\n", __func__, __LINE__);
-		return -EFAULT;
-	}
-
+	settings = memdup_user((void __user *)
+			flash_data->cfg.settings, sizeof(
+				struct msm_camera_i2c_reg_setting_array));
+	if (IS_ERR(settings))
+		return PTR_ERR(settings);
 	rc = msm_flash_i2c_write_table(flash_ctrl, settings);
 	kfree(settings);
 
@@ -449,7 +450,7 @@ static int32_t msm_flash_init(
 	CDBG("Enter");
 
 	if (flash_ctrl->flash_state == MSM_CAMERA_FLASH_INIT) {
-		pr_err("%s:%d Invalid flash state = %d",
+		pr_err("%s:%d Invalid flash state = %d\n",
 			__func__, __LINE__, flash_ctrl->flash_state);
 		return 0;
 	}
@@ -475,7 +476,7 @@ static int32_t msm_flash_init(
 	}
 
 	if (flash_driver_type == FLASH_DRIVER_DEFAULT) {
-		pr_err("%s:%d invalid flash_driver_type", __func__, __LINE__);
+		pr_err("%s:%d invalid flash_driver_type\n", __func__, __LINE__);
 		return -EINVAL;
 	}
 
@@ -491,12 +492,14 @@ static int32_t msm_flash_init(
 			__func__, __LINE__,
 			flash_data->cfg.flash_init_info->flash_driver_type);
 	}
+	if (flash_ctrl->platform_flash_init)
+		flash_ctrl->platform_flash_init(flash_ctrl, flash_data);
 
 	if (flash_ctrl->func_tbl->camera_flash_init) {
 		rc = flash_ctrl->func_tbl->camera_flash_init(
 				flash_ctrl, flash_data);
 		if (rc < 0) {
-			pr_err("%s:%d camera_flash_init failed rc = %d",
+			pr_err("%s:%d camera_flash_init failed rc = %d\n",
 				__func__, __LINE__, rc);
 			return rc;
 		}
@@ -577,6 +580,8 @@ static int32_t msm_flash_prepare(
 		__func__, __LINE__, flash_ctrl->flash_state);
 
 	if (flash_ctrl->switch_trigger == NULL) {
+		if (flash_ctrl->platform_flash_init)
+			return ret;
 		pr_err("%s:%d Invalid argument\n",
 				__func__, __LINE__);
 		return -EINVAL;
@@ -689,7 +694,7 @@ static int32_t msm_flash_query_current(
 
 	if (flash_ctrl->switch_trigger) {
 		ret = qpnp_flash_led_prepare(flash_ctrl->switch_trigger,
-					QUERY_MAX_CURRENT, &max_current);
+					QUERY_MAX_AVAIL_CURRENT, &max_current);
 		if (ret < 0) {
 			pr_err("%s:%d Query max_avail_curr failed ret = %d\n",
 				__func__, __LINE__, ret);
@@ -710,7 +715,7 @@ static int32_t msm_flash_release(
 
 	rc = flash_ctrl->func_tbl->camera_flash_off(flash_ctrl, NULL);
 	if (rc < 0) {
-		pr_err("%s:%d camera_flash_init failed rc = %d",
+		pr_err("%s:%d camera_flash_init failed rc = %d\n",
 			__func__, __LINE__, rc);
 		return rc;
 	}
@@ -719,7 +724,7 @@ static int32_t msm_flash_release(
 }
 
 static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
-	void __user *argp)
+	void *argp)
 {
 	int32_t rc = 0;
 	struct msm_flash_cfg_data_t *flash_data =
@@ -787,7 +792,7 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 
 	rc = msm_flash_prepare(flash_ctrl);
 	if (rc < 0) {
-		pr_err("%s:%d Enable/Disable Regulator failed ret = %d",
+		pr_err("%s:%d Enable/Disable Regulator failed ret = %d\n",
 			__func__, __LINE__, rc);
 		return rc;
 	}
@@ -798,7 +803,7 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 }
 
 static int32_t msm_flash_query_data(struct msm_flash_ctrl_t *flash_ctrl,
-	void __user *argp)
+	void *argp)
 {
 	int32_t rc = -EINVAL, i = 0;
 	struct msm_flash_query_data_t *flash_query =
@@ -808,10 +813,10 @@ static int32_t msm_flash_query_data(struct msm_flash_ctrl_t *flash_ctrl,
 
 	switch (flash_query->query_type) {
 	case FLASH_QUERY_CURRENT:
-		if (flash_ctrl->func_tbl && flash_ctrl->func_tbl->
-				camera_flash_query_current != NULL)
-			rc = flash_ctrl->func_tbl->
-				camera_flash_query_current(
+		if (flash_ctrl->func_tbl &&
+			flash_ctrl->func_tbl->camera_flash_query_current !=
+			NULL)
+			rc = flash_ctrl->func_tbl->camera_flash_query_current(
 				flash_ctrl, flash_query);
 		else {
 			flash_query->max_avail_curr = 0;
@@ -838,7 +843,7 @@ static long msm_flash_subdev_ioctl(struct v4l2_subdev *sd,
 	unsigned int cmd, void *arg)
 {
 	struct msm_flash_ctrl_t *fctrl = NULL;
-	void __user *argp = (void __user *)arg;
+	void *argp = (void *)arg;
 
 	CDBG("Enter\n");
 
@@ -863,11 +868,11 @@ static long msm_flash_subdev_ioctl(struct v4l2_subdev *sd,
 	case MSM_SD_SHUTDOWN:
 		if (!fctrl->func_tbl) {
 			pr_err("fctrl->func_tbl NULL\n");
-			return -EINVAL;
 		} else {
 			fctrl->func_tbl->camera_flash_release(fctrl);
 			return msm_flash_prepare(fctrl);
 		}
+		return -EINVAL;
 	case VIDIOC_MSM_FLASH_QUERY_DATA:
 		return msm_flash_query_data(fctrl, argp);
 	default:
@@ -1191,7 +1196,8 @@ static long msm_flash_subdev_do_ioctl(
 		case CFG_FLASH_INIT:
 			flash_data.cfg.flash_init_info = &flash_init_info;
 			if (copy_from_user(&flash_init_info32,
-				(void *)compat_ptr(u32->cfg.flash_init_info),
+				(void __user *)
+				compat_ptr(u32->cfg.flash_init_info),
 				sizeof(struct msm_flash_init_info_t32))) {
 				pr_err("%s copy_from_user failed %d\n",
 					__func__, __LINE__);
@@ -1248,10 +1254,8 @@ static int32_t msm_flash_platform_probe(struct platform_device *pdev)
 	}
 
 	flash_ctrl = kzalloc(sizeof(struct msm_flash_ctrl_t), GFP_KERNEL);
-	if (!flash_ctrl) {
-		pr_err("%s:%d failed no memory\n", __func__, __LINE__);
+	if (!flash_ctrl)
 		return -ENOMEM;
-	}
 
 	memset(flash_ctrl, 0, sizeof(struct msm_flash_ctrl_t));
 
@@ -1264,6 +1268,8 @@ static int32_t msm_flash_platform_probe(struct platform_device *pdev)
 		kfree(flash_ctrl);
 		return -EINVAL;
 	}
+	if (flash_ctrl->flash_driver_type == FLASH_DRIVER_GPIO)
+		platform_set_drvdata(pdev, flash_ctrl);
 
 	flash_ctrl->flash_state = MSM_CAMERA_FLASH_RELEASE;
 	flash_ctrl->power_info.dev = &flash_ctrl->pdev->dev;
@@ -1273,6 +1279,7 @@ static int32_t msm_flash_platform_probe(struct platform_device *pdev)
 	flash_ctrl->flash_i2c_client.cci_client = kzalloc(
 		sizeof(struct msm_camera_cci_client), GFP_KERNEL);
 	if (!flash_ctrl->flash_i2c_client.cci_client) {
+		kfree(flash_ctrl->power_info.gpio_conf);
 		kfree(flash_ctrl);
 		pr_err("failed no memory\n");
 		return -ENOMEM;
@@ -1291,9 +1298,8 @@ static int32_t msm_flash_platform_probe(struct platform_device *pdev)
 	snprintf(flash_ctrl->msm_sd.sd.name,
 		ARRAY_SIZE(flash_ctrl->msm_sd.sd.name),
 		"msm_camera_flash");
-	media_entity_init(&flash_ctrl->msm_sd.sd.entity, 0, NULL, 0);
-	flash_ctrl->msm_sd.sd.entity.type = MEDIA_ENT_T_V4L2_SUBDEV;
-	flash_ctrl->msm_sd.sd.entity.group_id = MSM_CAMERA_SUBDEV_FLASH;
+	media_entity_pads_init(&flash_ctrl->msm_sd.sd.entity, 0, NULL);
+	flash_ctrl->msm_sd.sd.entity.function = MSM_CAMERA_SUBDEV_FLASH;
 	flash_ctrl->msm_sd.close_seq = MSM_SD_CLOSE_2ND_CATEGORY | 0x1;
 	msm_sd_register(&flash_ctrl->msm_sd);
 
@@ -1313,13 +1319,17 @@ static int32_t msm_flash_platform_probe(struct platform_device *pdev)
 	return rc;
 }
 
+int32_t camera_flash_platform_probe(struct platform_device *pdev)
+{
+	return msm_flash_platform_probe(pdev);
+}
+
 MODULE_DEVICE_TABLE(of, msm_flash_dt_match);
 
 static struct platform_driver msm_flash_platform_driver = {
 	.probe = msm_flash_platform_probe,
 	.driver = {
 		.name = "qcom,camera-flash",
-		.owner = THIS_MODULE,
 		.of_match_table = msm_flash_dt_match,
 	},
 };
@@ -1327,10 +1337,11 @@ static struct platform_driver msm_flash_platform_driver = {
 static int __init msm_flash_init_module(void)
 {
 	int32_t rc = 0;
+
 	CDBG("Enter\n");
 	rc = platform_driver_register(&msm_flash_platform_driver);
 	if (rc)
-		pr_err("platform probe for flash failed");
+		pr_err("platform probe for flash failed\n");
 
 	return rc;
 }
@@ -1338,7 +1349,6 @@ static int __init msm_flash_init_module(void)
 static void __exit msm_flash_exit_module(void)
 {
 	platform_driver_unregister(&msm_flash_platform_driver);
-	return;
 }
 
 static struct msm_flash_table msm_pmic_flash_table = {

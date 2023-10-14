@@ -36,7 +36,7 @@
 #define _X2KEY(x) ((x) == XFRM_INF ? 0 : (x))
 #define _KEY2X(x) ((x) == 0 ? XFRM_INF : (x))
 
-static int pfkey_net_id __read_mostly;
+static unsigned int pfkey_net_id __read_mostly;
 struct netns_pfkey {
 	/* List of all pfkey sockets. */
 	struct hlist_head table;
@@ -109,7 +109,7 @@ static void pfkey_sock_destruct(struct sock *sk)
 	}
 
 	WARN_ON(atomic_read(&sk->sk_rmem_alloc));
-	WARN_ON(atomic_read(&sk->sk_wmem_alloc));
+	WARN_ON(refcount_read(&sk->sk_wmem_alloc));
 
 	atomic_dec(&net_pfkey->socks_nr);
 }
@@ -339,7 +339,7 @@ static int pfkey_error(const struct sadb_msg *orig, int err, struct sock *sk)
 		err = EINVAL;
 	BUG_ON(err <= 0 || err >= 256);
 
-	hdr = (struct sadb_msg *) skb_put(skb, sizeof(struct sadb_msg));
+	hdr = skb_put(skb, sizeof(struct sadb_msg));
 	pfkey_hdr_dup(hdr, orig);
 	hdr->sadb_msg_errno = (uint8_t) err;
 	hdr->sadb_msg_len = (sizeof(struct sadb_msg) /
@@ -835,12 +835,12 @@ static struct sk_buff *__pfkey_xfrm_state2msg(const struct xfrm_state *x,
 		return ERR_PTR(-ENOBUFS);
 
 	/* call should fill header later */
-	hdr = (struct sadb_msg *) skb_put(skb, sizeof(struct sadb_msg));
+	hdr = skb_put(skb, sizeof(struct sadb_msg));
 	memset(hdr, 0, size);	/* XXX do we need this ? */
 	hdr->sadb_msg_len = size / sizeof(uint64_t);
 
 	/* sa */
-	sa = (struct sadb_sa *)  skb_put(skb, sizeof(struct sadb_sa));
+	sa = skb_put(skb, sizeof(struct sadb_sa));
 	sa->sadb_sa_len = sizeof(struct sadb_sa)/sizeof(uint64_t);
 	sa->sadb_sa_exttype = SADB_EXT_SA;
 	sa->sadb_sa_spi = x->id.spi;
@@ -887,8 +887,7 @@ static struct sk_buff *__pfkey_xfrm_state2msg(const struct xfrm_state *x,
 
 	/* hard time */
 	if (hsc & 2) {
-		lifetime = (struct sadb_lifetime *)  skb_put(skb,
-							     sizeof(struct sadb_lifetime));
+		lifetime = skb_put(skb, sizeof(struct sadb_lifetime));
 		lifetime->sadb_lifetime_len =
 			sizeof(struct sadb_lifetime)/sizeof(uint64_t);
 		lifetime->sadb_lifetime_exttype = SADB_EXT_LIFETIME_HARD;
@@ -899,8 +898,7 @@ static struct sk_buff *__pfkey_xfrm_state2msg(const struct xfrm_state *x,
 	}
 	/* soft time */
 	if (hsc & 1) {
-		lifetime = (struct sadb_lifetime *)  skb_put(skb,
-							     sizeof(struct sadb_lifetime));
+		lifetime = skb_put(skb, sizeof(struct sadb_lifetime));
 		lifetime->sadb_lifetime_len =
 			sizeof(struct sadb_lifetime)/sizeof(uint64_t);
 		lifetime->sadb_lifetime_exttype = SADB_EXT_LIFETIME_SOFT;
@@ -910,8 +908,7 @@ static struct sk_buff *__pfkey_xfrm_state2msg(const struct xfrm_state *x,
 		lifetime->sadb_lifetime_usetime = x->lft.soft_use_expires_seconds;
 	}
 	/* current time */
-	lifetime = (struct sadb_lifetime *)  skb_put(skb,
-						     sizeof(struct sadb_lifetime));
+	lifetime = skb_put(skb, sizeof(struct sadb_lifetime));
 	lifetime->sadb_lifetime_len =
 		sizeof(struct sadb_lifetime)/sizeof(uint64_t);
 	lifetime->sadb_lifetime_exttype = SADB_EXT_LIFETIME_CURRENT;
@@ -920,8 +917,7 @@ static struct sk_buff *__pfkey_xfrm_state2msg(const struct xfrm_state *x,
 	lifetime->sadb_lifetime_addtime = x->curlft.add_time;
 	lifetime->sadb_lifetime_usetime = x->curlft.use_time;
 	/* src address */
-	addr = (struct sadb_address*) skb_put(skb,
-					      sizeof(struct sadb_address)+sockaddr_size);
+	addr = skb_put(skb, sizeof(struct sadb_address) + sockaddr_size);
 	addr->sadb_address_len =
 		(sizeof(struct sadb_address)+sockaddr_size)/
 			sizeof(uint64_t);
@@ -940,8 +936,7 @@ static struct sk_buff *__pfkey_xfrm_state2msg(const struct xfrm_state *x,
 		BUG();
 
 	/* dst address */
-	addr = (struct sadb_address*) skb_put(skb,
-					      sizeof(struct sadb_address)+sockaddr_size);
+	addr = skb_put(skb, sizeof(struct sadb_address) + sockaddr_size);
 	addr->sadb_address_len =
 		(sizeof(struct sadb_address)+sockaddr_size)/
 			sizeof(uint64_t);
@@ -958,8 +953,8 @@ static struct sk_buff *__pfkey_xfrm_state2msg(const struct xfrm_state *x,
 
 	if (!xfrm_addr_equal(&x->sel.saddr, &x->props.saddr,
 			     x->props.family)) {
-		addr = (struct sadb_address*) skb_put(skb,
-			sizeof(struct sadb_address)+sockaddr_size);
+		addr = skb_put(skb,
+			       sizeof(struct sadb_address) + sockaddr_size);
 		addr->sadb_address_len =
 			(sizeof(struct sadb_address)+sockaddr_size)/
 			sizeof(uint64_t);
@@ -976,8 +971,7 @@ static struct sk_buff *__pfkey_xfrm_state2msg(const struct xfrm_state *x,
 
 	/* auth key */
 	if (add_keys && auth_key_size) {
-		key = (struct sadb_key *) skb_put(skb,
-						  sizeof(struct sadb_key)+auth_key_size);
+		key = skb_put(skb, sizeof(struct sadb_key) + auth_key_size);
 		key->sadb_key_len = (sizeof(struct sadb_key) + auth_key_size) /
 			sizeof(uint64_t);
 		key->sadb_key_exttype = SADB_EXT_KEY_AUTH;
@@ -987,8 +981,7 @@ static struct sk_buff *__pfkey_xfrm_state2msg(const struct xfrm_state *x,
 	}
 	/* encrypt key */
 	if (add_keys && encrypt_key_size) {
-		key = (struct sadb_key *) skb_put(skb,
-						  sizeof(struct sadb_key)+encrypt_key_size);
+		key = skb_put(skb, sizeof(struct sadb_key) + encrypt_key_size);
 		key->sadb_key_len = (sizeof(struct sadb_key) +
 				     encrypt_key_size) / sizeof(uint64_t);
 		key->sadb_key_exttype = SADB_EXT_KEY_ENCRYPT;
@@ -999,7 +992,7 @@ static struct sk_buff *__pfkey_xfrm_state2msg(const struct xfrm_state *x,
 	}
 
 	/* sa */
-	sa2 = (struct sadb_x_sa2 *)  skb_put(skb, sizeof(struct sadb_x_sa2));
+	sa2 = skb_put(skb, sizeof(struct sadb_x_sa2));
 	sa2->sadb_x_sa2_len = sizeof(struct sadb_x_sa2)/sizeof(uint64_t);
 	sa2->sadb_x_sa2_exttype = SADB_X_EXT_SA2;
 	if ((mode = pfkey_mode_from_xfrm(x->props.mode)) < 0) {
@@ -1017,7 +1010,7 @@ static struct sk_buff *__pfkey_xfrm_state2msg(const struct xfrm_state *x,
 		struct sadb_x_nat_t_port *n_port;
 
 		/* type */
-		n_type = (struct sadb_x_nat_t_type*) skb_put(skb, sizeof(*n_type));
+		n_type = skb_put(skb, sizeof(*n_type));
 		n_type->sadb_x_nat_t_type_len = sizeof(*n_type)/sizeof(uint64_t);
 		n_type->sadb_x_nat_t_type_exttype = SADB_X_EXT_NAT_T_TYPE;
 		n_type->sadb_x_nat_t_type_type = natt->encap_type;
@@ -1026,14 +1019,14 @@ static struct sk_buff *__pfkey_xfrm_state2msg(const struct xfrm_state *x,
 		n_type->sadb_x_nat_t_type_reserved[2] = 0;
 
 		/* source port */
-		n_port = (struct sadb_x_nat_t_port*) skb_put(skb, sizeof (*n_port));
+		n_port = skb_put(skb, sizeof(*n_port));
 		n_port->sadb_x_nat_t_port_len = sizeof(*n_port)/sizeof(uint64_t);
 		n_port->sadb_x_nat_t_port_exttype = SADB_X_EXT_NAT_T_SPORT;
 		n_port->sadb_x_nat_t_port_port = natt->encap_sport;
 		n_port->sadb_x_nat_t_port_reserved = 0;
 
 		/* dest port */
-		n_port = (struct sadb_x_nat_t_port*) skb_put(skb, sizeof (*n_port));
+		n_port = skb_put(skb, sizeof(*n_port));
 		n_port->sadb_x_nat_t_port_len = sizeof(*n_port)/sizeof(uint64_t);
 		n_port->sadb_x_nat_t_port_exttype = SADB_X_EXT_NAT_T_DPORT;
 		n_port->sadb_x_nat_t_port_port = natt->encap_dport;
@@ -1042,8 +1035,8 @@ static struct sk_buff *__pfkey_xfrm_state2msg(const struct xfrm_state *x,
 
 	/* security context */
 	if (xfrm_ctx) {
-		sec_ctx = (struct sadb_x_sec_ctx *) skb_put(skb,
-				sizeof(struct sadb_x_sec_ctx) + ctx_size);
+		sec_ctx = skb_put(skb,
+				  sizeof(struct sadb_x_sec_ctx) + ctx_size);
 		sec_ctx->sadb_x_sec_len =
 		  (sizeof(struct sadb_x_sec_ctx) + ctx_size) / sizeof(uint64_t);
 		sec_ctx->sadb_x_sec_exttype = SADB_X_EXT_SEC_CTX;
@@ -1380,7 +1373,7 @@ static int pfkey_getspi(struct sock *sk, struct sk_buff *skb, const struct sadb_
 	}
 
 	if (!x)
-		x = xfrm_find_acq(net, &dummy_mark, mode, reqid, proto, xdaddr, xsaddr, 1, family);
+		x = xfrm_find_acq(net, &dummy_mark, mode, reqid, 0, proto, xdaddr, xsaddr, 1, family);
 
 	if (x == NULL)
 		return -ENOENT;
@@ -1649,7 +1642,7 @@ static struct sk_buff *compose_sadb_supported(const struct sadb_msg *orig,
 	if (!skb)
 		goto out_put_algs;
 
-	hdr = (struct sadb_msg *) skb_put(skb, sizeof(*hdr));
+	hdr = skb_put(skb, sizeof(*hdr));
 	pfkey_hdr_dup(hdr, orig);
 	hdr->sadb_msg_errno = 0;
 	hdr->sadb_msg_len = len / sizeof(uint64_t);
@@ -1658,7 +1651,7 @@ static struct sk_buff *compose_sadb_supported(const struct sadb_msg *orig,
 		struct sadb_supported *sp;
 		struct sadb_alg *ap;
 
-		sp = (struct sadb_supported *) skb_put(skb, auth_len);
+		sp = skb_put(skb, auth_len);
 		ap = (struct sadb_alg *) (sp + 1);
 
 		sp->sadb_supported_len = auth_len / sizeof(uint64_t);
@@ -1679,7 +1672,7 @@ static struct sk_buff *compose_sadb_supported(const struct sadb_msg *orig,
 		struct sadb_supported *sp;
 		struct sadb_alg *ap;
 
-		sp = (struct sadb_supported *) skb_put(skb, enc_len);
+		sp = skb_put(skb, enc_len);
 		ap = (struct sadb_alg *) (sp + 1);
 
 		sp->sadb_supported_len = enc_len / sizeof(uint64_t);
@@ -1714,9 +1707,12 @@ static int pfkey_register(struct sock *sk, struct sk_buff *skb, const struct sad
 		pfk->registered |= (1<<hdr->sadb_msg_satype);
 	}
 
+	mutex_lock(&pfkey_mutex);
 	xfrm_probe_algs();
 
-	supp_skb = compose_sadb_supported(hdr, GFP_KERNEL);
+	supp_skb = compose_sadb_supported(hdr, GFP_KERNEL | __GFP_ZERO);
+	mutex_unlock(&pfkey_mutex);
+
 	if (!supp_skb) {
 		if (hdr->sadb_msg_satype != SADB_SATYPE_UNSPEC)
 			pfk->registered &= ~(1<<hdr->sadb_msg_satype);
@@ -1738,8 +1734,7 @@ static int unicast_flush_resp(struct sock *sk, const struct sadb_msg *ihdr)
 	if (!skb)
 		return -ENOBUFS;
 
-	hdr = (struct sadb_msg *) skb_put(skb, sizeof(struct sadb_msg));
-	memcpy(hdr, ihdr, sizeof(struct sadb_msg));
+	hdr = skb_put_data(skb, ihdr, sizeof(struct sadb_msg));
 	hdr->sadb_msg_errno = (uint8_t) 0;
 	hdr->sadb_msg_len = (sizeof(struct sadb_msg) / sizeof(uint64_t));
 
@@ -1755,7 +1750,7 @@ static int key_notify_sa_flush(const struct km_event *c)
 	skb = alloc_skb(sizeof(struct sadb_msg) + 16, GFP_ATOMIC);
 	if (!skb)
 		return -ENOBUFS;
-	hdr = (struct sadb_msg *) skb_put(skb, sizeof(struct sadb_msg));
+	hdr = skb_put(skb, sizeof(struct sadb_msg));
 	hdr->sadb_msg_satype = pfkey_proto2satype(c->data.proto);
 	hdr->sadb_msg_type = SADB_FLUSH;
 	hdr->sadb_msg_seq = c->seq;
@@ -1781,7 +1776,7 @@ static int pfkey_flush(struct sock *sk, struct sk_buff *skb, const struct sadb_m
 	if (proto == 0)
 		return -EINVAL;
 
-	err = xfrm_state_flush(net, proto, true);
+	err = xfrm_state_flush(net, proto, true, false);
 	err2 = unicast_flush_resp(sk, hdr);
 	if (err || err2) {
 		if (err == -ESRCH) /* empty table - go quietly */
@@ -1863,9 +1858,9 @@ static int pfkey_dump(struct sock *sk, struct sk_buff *skb, const struct sadb_ms
 	if (ext_hdrs[SADB_X_EXT_FILTER - 1]) {
 		struct sadb_x_filter *xfilter = ext_hdrs[SADB_X_EXT_FILTER - 1];
 
-		if ((xfilter->sadb_x_filter_splen >=
+		if ((xfilter->sadb_x_filter_splen >
 			(sizeof(xfrm_address_t) << 3)) ||
-		    (xfilter->sadb_x_filter_dplen >=
+		    (xfilter->sadb_x_filter_dplen >
 			(sizeof(xfrm_address_t) << 3))) {
 			mutex_unlock(&pfk->dump_lock);
 			return -EINVAL;
@@ -1955,7 +1950,8 @@ static u32 gen_reqid(struct net *net)
 }
 
 static int
-parse_ipsecrequest(struct xfrm_policy *xp, struct sadb_x_ipsecrequest *rq)
+parse_ipsecrequest(struct xfrm_policy *xp, struct sadb_x_policy *pol,
+		   struct sadb_x_ipsecrequest *rq)
 {
 	struct net *net = xp_net(xp);
 	struct xfrm_tmpl *t = xp->xfrm_vec + xp->xfrm_nr;
@@ -1973,9 +1969,12 @@ parse_ipsecrequest(struct xfrm_policy *xp, struct sadb_x_ipsecrequest *rq)
 	if ((mode = pfkey_mode_to_xfrm(rq->sadb_x_ipsecrequest_mode)) < 0)
 		return -EINVAL;
 	t->mode = mode;
-	if (rq->sadb_x_ipsecrequest_level == IPSEC_LEVEL_USE)
+	if (rq->sadb_x_ipsecrequest_level == IPSEC_LEVEL_USE) {
+		if ((mode == XFRM_MODE_TUNNEL || mode == XFRM_MODE_BEET) &&
+		    pol->sadb_x_policy_dir == IPSEC_DIR_OUTBOUND)
+			return -EINVAL;
 		t->optional = 1;
-	else if (rq->sadb_x_ipsecrequest_level == IPSEC_LEVEL_UNIQUE) {
+	} else if (rq->sadb_x_ipsecrequest_level == IPSEC_LEVEL_UNIQUE) {
 		t->reqid = rq->sadb_x_ipsecrequest_reqid;
 		if (t->reqid > IPSEC_MANUAL_REQID_MAX)
 			t->reqid = 0;
@@ -2017,7 +2016,7 @@ parse_ipsecrequests(struct xfrm_policy *xp, struct sadb_x_policy *pol)
 		    rq->sadb_x_ipsecrequest_len < sizeof(*rq))
 			return -EINVAL;
 
-		if ((err = parse_ipsecrequest(xp, rq)) < 0)
+		if ((err = parse_ipsecrequest(xp, pol, rq)) < 0)
 			return err;
 		len -= rq->sadb_x_ipsecrequest_len;
 		rq = (void*)((u8*)rq + rq->sadb_x_ipsecrequest_len);
@@ -2089,12 +2088,11 @@ static int pfkey_xfrm_policy2msg(struct sk_buff *skb, const struct xfrm_policy *
 	size = pfkey_xfrm_policy2msg_size(xp);
 
 	/* call should fill header later */
-	hdr = (struct sadb_msg *) skb_put(skb, sizeof(struct sadb_msg));
+	hdr = skb_put(skb, sizeof(struct sadb_msg));
 	memset(hdr, 0, size);	/* XXX do we need this ? */
 
 	/* src address */
-	addr = (struct sadb_address*) skb_put(skb,
-					      sizeof(struct sadb_address)+sockaddr_size);
+	addr = skb_put(skb, sizeof(struct sadb_address) + sockaddr_size);
 	addr->sadb_address_len =
 		(sizeof(struct sadb_address)+sockaddr_size)/
 			sizeof(uint64_t);
@@ -2109,8 +2107,7 @@ static int pfkey_xfrm_policy2msg(struct sk_buff *skb, const struct xfrm_policy *
 		BUG();
 
 	/* dst address */
-	addr = (struct sadb_address*) skb_put(skb,
-					      sizeof(struct sadb_address)+sockaddr_size);
+	addr = skb_put(skb, sizeof(struct sadb_address) + sockaddr_size);
 	addr->sadb_address_len =
 		(sizeof(struct sadb_address)+sockaddr_size)/
 			sizeof(uint64_t);
@@ -2124,8 +2121,7 @@ static int pfkey_xfrm_policy2msg(struct sk_buff *skb, const struct xfrm_policy *
 			    xp->family);
 
 	/* hard time */
-	lifetime = (struct sadb_lifetime *)  skb_put(skb,
-						     sizeof(struct sadb_lifetime));
+	lifetime = skb_put(skb, sizeof(struct sadb_lifetime));
 	lifetime->sadb_lifetime_len =
 		sizeof(struct sadb_lifetime)/sizeof(uint64_t);
 	lifetime->sadb_lifetime_exttype = SADB_EXT_LIFETIME_HARD;
@@ -2134,8 +2130,7 @@ static int pfkey_xfrm_policy2msg(struct sk_buff *skb, const struct xfrm_policy *
 	lifetime->sadb_lifetime_addtime = xp->lft.hard_add_expires_seconds;
 	lifetime->sadb_lifetime_usetime = xp->lft.hard_use_expires_seconds;
 	/* soft time */
-	lifetime = (struct sadb_lifetime *)  skb_put(skb,
-						     sizeof(struct sadb_lifetime));
+	lifetime = skb_put(skb, sizeof(struct sadb_lifetime));
 	lifetime->sadb_lifetime_len =
 		sizeof(struct sadb_lifetime)/sizeof(uint64_t);
 	lifetime->sadb_lifetime_exttype = SADB_EXT_LIFETIME_SOFT;
@@ -2144,8 +2139,7 @@ static int pfkey_xfrm_policy2msg(struct sk_buff *skb, const struct xfrm_policy *
 	lifetime->sadb_lifetime_addtime = xp->lft.soft_add_expires_seconds;
 	lifetime->sadb_lifetime_usetime = xp->lft.soft_use_expires_seconds;
 	/* current time */
-	lifetime = (struct sadb_lifetime *)  skb_put(skb,
-						     sizeof(struct sadb_lifetime));
+	lifetime = skb_put(skb, sizeof(struct sadb_lifetime));
 	lifetime->sadb_lifetime_len =
 		sizeof(struct sadb_lifetime)/sizeof(uint64_t);
 	lifetime->sadb_lifetime_exttype = SADB_EXT_LIFETIME_CURRENT;
@@ -2154,7 +2148,7 @@ static int pfkey_xfrm_policy2msg(struct sk_buff *skb, const struct xfrm_policy *
 	lifetime->sadb_lifetime_addtime = xp->curlft.add_time;
 	lifetime->sadb_lifetime_usetime = xp->curlft.use_time;
 
-	pol = (struct sadb_x_policy *)  skb_put(skb, sizeof(struct sadb_x_policy));
+	pol = skb_put(skb, sizeof(struct sadb_x_policy));
 	pol->sadb_x_policy_len = sizeof(struct sadb_x_policy)/sizeof(uint64_t);
 	pol->sadb_x_policy_exttype = SADB_X_EXT_POLICY;
 	pol->sadb_x_policy_type = IPSEC_POLICY_DISCARD;
@@ -2182,7 +2176,7 @@ static int pfkey_xfrm_policy2msg(struct sk_buff *skb, const struct xfrm_policy *
 		} else {
 			size -= 2*socklen;
 		}
-		rq = (void*)skb_put(skb, req_size);
+		rq = skb_put(skb, req_size);
 		pol->sadb_x_policy_len += req_size/8;
 		memset(rq, 0, sizeof(*rq));
 		rq->sadb_x_ipsecrequest_len = req_size;
@@ -2212,7 +2206,7 @@ static int pfkey_xfrm_policy2msg(struct sk_buff *skb, const struct xfrm_policy *
 	if ((xfrm_ctx = xp->security)) {
 		int ctx_size = pfkey_xfrm_policy2sec_ctx_size(xp);
 
-		sec_ctx = (struct sadb_x_sec_ctx *) skb_put(skb, ctx_size);
+		sec_ctx = skb_put(skb, ctx_size);
 		sec_ctx->sadb_x_sec_len = ctx_size / sizeof(uint64_t);
 		sec_ctx->sadb_x_sec_exttype = SADB_X_EXT_SEC_CTX;
 		sec_ctx->sadb_x_ctx_doi = xfrm_ctx->ctx_doi;
@@ -2223,7 +2217,7 @@ static int pfkey_xfrm_policy2msg(struct sk_buff *skb, const struct xfrm_policy *
 	}
 
 	hdr->sadb_msg_len = size / sizeof(uint64_t);
-	hdr->sadb_msg_reserved = atomic_read(&xp->refcnt);
+	hdr->sadb_msg_reserved = refcount_read(&xp->refcnt);
 
 	return 0;
 }
@@ -2239,8 +2233,10 @@ static int key_notify_policy(struct xfrm_policy *xp, int dir, const struct km_ev
 		return PTR_ERR(out_skb);
 
 	err = pfkey_xfrm_policy2msg(out_skb, xp, dir);
-	if (err < 0)
+	if (err < 0) {
+		kfree_skb(out_skb);
 		return err;
+	}
 
 	out_hdr = (struct sadb_msg *) out_skb->data;
 	out_hdr->sadb_msg_version = PF_KEY_V2;
@@ -2424,7 +2420,7 @@ static int pfkey_spddelete(struct sock *sk, struct sk_buff *skb, const struct sa
 			return err;
 	}
 
-	xp = xfrm_policy_bysel_ctx(net, DUMMY_MARK, XFRM_POLICY_TYPE_MAIN,
+	xp = xfrm_policy_bysel_ctx(net, &dummy_mark, 0, XFRM_POLICY_TYPE_MAIN,
 				   pol->sadb_x_policy_dir - 1, &sel, pol_ctx,
 				   1, &err);
 	security_xfrm_policy_free(pol_ctx);
@@ -2444,8 +2440,6 @@ static int pfkey_spddelete(struct sock *sk, struct sk_buff *skb, const struct sa
 
 out:
 	xfrm_pol_put(xp);
-	if (err == 0)
-		xfrm_garbage_collect(net);
 	return err;
 }
 
@@ -2646,7 +2640,7 @@ static int pfkey_migrate(struct sock *sk, struct sk_buff *skb,
 	}
 
 	return xfrm_migrate(&sel, dir, XFRM_POLICY_TYPE_MAIN, m, i,
-			    kma ? &k : NULL, net);
+			    kma ? &k : NULL, net, NULL, 0);
 
  out:
 	return err;
@@ -2677,7 +2671,7 @@ static int pfkey_spdget(struct sock *sk, struct sk_buff *skb, const struct sadb_
 		return -EINVAL;
 
 	delete = (hdr->sadb_msg_type == SADB_X_SPDDELETE2);
-	xp = xfrm_policy_byid(net, DUMMY_MARK, XFRM_POLICY_TYPE_MAIN,
+	xp = xfrm_policy_byid(net, &dummy_mark, 0, XFRM_POLICY_TYPE_MAIN,
 			      dir, pol->sadb_x_policy_id, delete, &err);
 	if (xp == NULL)
 		return -ENOENT;
@@ -2698,8 +2692,6 @@ static int pfkey_spdget(struct sock *sk, struct sk_buff *skb, const struct sadb_
 
 out:
 	xfrm_pol_put(xp);
-	if (delete && err == 0)
-		xfrm_garbage_collect(net);
 	return err;
 }
 
@@ -2780,7 +2772,7 @@ static int key_notify_policy_flush(const struct km_event *c)
 	skb_out = alloc_skb(sizeof(struct sadb_msg) + 16, GFP_ATOMIC);
 	if (!skb_out)
 		return -ENOBUFS;
-	hdr = (struct sadb_msg *) skb_put(skb_out, sizeof(struct sadb_msg));
+	hdr = skb_put(skb_out, sizeof(struct sadb_msg));
 	hdr->sadb_msg_type = SADB_X_SPDFLUSH;
 	hdr->sadb_msg_seq = c->seq;
 	hdr->sadb_msg_pid = c->portid;
@@ -2851,6 +2843,10 @@ static int pfkey_process(struct sock *sk, struct sk_buff *skb, const struct sadb
 	void *ext_hdrs[SADB_EXT_MAX];
 	int err;
 
+	/* Non-zero return value of pfkey_broadcast() does not always signal
+	 * an error and even on an actual error we may still want to process
+	 * the message so rather ignore the return value.
+	 */
 	pfkey_broadcast(skb_clone(skb, GFP_KERNEL), GFP_KERNEL,
 			BROADCAST_PROMISC_ONLY, NULL, sock_net(sk));
 
@@ -2959,12 +2955,13 @@ static int count_esp_combs(const struct xfrm_tmpl *t)
 	return sz + sizeof(struct sadb_prop);
 }
 
-static void dump_ah_combs(struct sk_buff *skb, const struct xfrm_tmpl *t)
+static int dump_ah_combs(struct sk_buff *skb, const struct xfrm_tmpl *t)
 {
 	struct sadb_prop *p;
+	int sz = 0;
 	int i;
 
-	p = (struct sadb_prop*)skb_put(skb, sizeof(struct sadb_prop));
+	p = skb_put(skb, sizeof(struct sadb_prop));
 	p->sadb_prop_len = sizeof(struct sadb_prop)/8;
 	p->sadb_prop_exttype = SADB_EXT_PROPOSAL;
 	p->sadb_prop_replay = 32;
@@ -2980,8 +2977,7 @@ static void dump_ah_combs(struct sk_buff *skb, const struct xfrm_tmpl *t)
 
 		if (aalg_tmpl_set(t, aalg) && aalg->available) {
 			struct sadb_comb *c;
-			c = (struct sadb_comb*)skb_put(skb, sizeof(struct sadb_comb));
-			memset(c, 0, sizeof(*c));
+			c = skb_put_zero(skb, sizeof(struct sadb_comb));
 			p->sadb_prop_len += sizeof(struct sadb_comb)/8;
 			c->sadb_comb_auth = aalg->desc.sadb_alg_id;
 			c->sadb_comb_auth_minbits = aalg->desc.sadb_alg_minbits;
@@ -2990,16 +2986,20 @@ static void dump_ah_combs(struct sk_buff *skb, const struct xfrm_tmpl *t)
 			c->sadb_comb_soft_addtime = 20*60*60;
 			c->sadb_comb_hard_usetime = 8*60*60;
 			c->sadb_comb_soft_usetime = 7*60*60;
+			sz += sizeof(*c);
 		}
 	}
+
+	return sz + sizeof(*p);
 }
 
-static void dump_esp_combs(struct sk_buff *skb, const struct xfrm_tmpl *t)
+static int dump_esp_combs(struct sk_buff *skb, const struct xfrm_tmpl *t)
 {
 	struct sadb_prop *p;
+	int sz = 0;
 	int i, k;
 
-	p = (struct sadb_prop*)skb_put(skb, sizeof(struct sadb_prop));
+	p = skb_put(skb, sizeof(struct sadb_prop));
 	p->sadb_prop_len = sizeof(struct sadb_prop)/8;
 	p->sadb_prop_exttype = SADB_EXT_PROPOSAL;
 	p->sadb_prop_replay = 32;
@@ -3025,7 +3025,7 @@ static void dump_esp_combs(struct sk_buff *skb, const struct xfrm_tmpl *t)
 				continue;
 			if (!(aalg_tmpl_set(t, aalg) && aalg->available))
 				continue;
-			c = (struct sadb_comb*)skb_put(skb, sizeof(struct sadb_comb));
+			c = skb_put(skb, sizeof(struct sadb_comb));
 			memset(c, 0, sizeof(*c));
 			p->sadb_prop_len += sizeof(struct sadb_comb)/8;
 			c->sadb_comb_auth = aalg->desc.sadb_alg_id;
@@ -3038,8 +3038,11 @@ static void dump_esp_combs(struct sk_buff *skb, const struct xfrm_tmpl *t)
 			c->sadb_comb_soft_addtime = 20*60*60;
 			c->sadb_comb_hard_usetime = 8*60*60;
 			c->sadb_comb_soft_usetime = 7*60*60;
+			sz += sizeof(*c);
 		}
 	}
+
+	return sz + sizeof(*p);
 }
 
 static int key_notify_policy_expire(struct xfrm_policy *xp, const struct km_event *c)
@@ -3169,6 +3172,7 @@ static int pfkey_send_acquire(struct xfrm_state *x, struct xfrm_tmpl *t, struct 
 	struct sadb_x_sec_ctx *sec_ctx;
 	struct xfrm_sec_ctx *xfrm_ctx;
 	int ctx_size = 0;
+	int alg_size = 0;
 
 	sockaddr_size = pfkey_sockaddr_size(x->props.family);
 	if (!sockaddr_size)
@@ -3180,20 +3184,20 @@ static int pfkey_send_acquire(struct xfrm_state *x, struct xfrm_tmpl *t, struct 
 		sizeof(struct sadb_x_policy);
 
 	if (x->id.proto == IPPROTO_AH)
-		size += count_ah_combs(t);
+		alg_size = count_ah_combs(t);
 	else if (x->id.proto == IPPROTO_ESP)
-		size += count_esp_combs(t);
+		alg_size = count_esp_combs(t);
 
 	if ((xfrm_ctx = x->security)) {
 		ctx_size = PFKEY_ALIGN8(xfrm_ctx->ctx_len);
 		size +=  sizeof(struct sadb_x_sec_ctx) + ctx_size;
 	}
 
-	skb =  alloc_skb(size + 16, GFP_ATOMIC);
+	skb =  alloc_skb(size + alg_size + 16, GFP_ATOMIC);
 	if (skb == NULL)
 		return -ENOMEM;
 
-	hdr = (struct sadb_msg *) skb_put(skb, sizeof(struct sadb_msg));
+	hdr = skb_put(skb, sizeof(struct sadb_msg));
 	hdr->sadb_msg_version = PF_KEY_V2;
 	hdr->sadb_msg_type = SADB_ACQUIRE;
 	hdr->sadb_msg_satype = pfkey_proto2satype(x->id.proto);
@@ -3204,8 +3208,7 @@ static int pfkey_send_acquire(struct xfrm_state *x, struct xfrm_tmpl *t, struct 
 	hdr->sadb_msg_pid = 0;
 
 	/* src address */
-	addr = (struct sadb_address*) skb_put(skb,
-					      sizeof(struct sadb_address)+sockaddr_size);
+	addr = skb_put(skb, sizeof(struct sadb_address) + sockaddr_size);
 	addr->sadb_address_len =
 		(sizeof(struct sadb_address)+sockaddr_size)/
 			sizeof(uint64_t);
@@ -3220,8 +3223,7 @@ static int pfkey_send_acquire(struct xfrm_state *x, struct xfrm_tmpl *t, struct 
 		BUG();
 
 	/* dst address */
-	addr = (struct sadb_address*) skb_put(skb,
-					      sizeof(struct sadb_address)+sockaddr_size);
+	addr = skb_put(skb, sizeof(struct sadb_address) + sockaddr_size);
 	addr->sadb_address_len =
 		(sizeof(struct sadb_address)+sockaddr_size)/
 			sizeof(uint64_t);
@@ -3235,7 +3237,7 @@ static int pfkey_send_acquire(struct xfrm_state *x, struct xfrm_tmpl *t, struct 
 	if (!addr->sadb_address_prefixlen)
 		BUG();
 
-	pol = (struct sadb_x_policy *)  skb_put(skb, sizeof(struct sadb_x_policy));
+	pol = skb_put(skb, sizeof(struct sadb_x_policy));
 	pol->sadb_x_policy_len = sizeof(struct sadb_x_policy)/sizeof(uint64_t);
 	pol->sadb_x_policy_exttype = SADB_X_EXT_POLICY;
 	pol->sadb_x_policy_type = IPSEC_POLICY_IPSEC;
@@ -3245,15 +3247,18 @@ static int pfkey_send_acquire(struct xfrm_state *x, struct xfrm_tmpl *t, struct 
 	pol->sadb_x_policy_priority = xp->priority;
 
 	/* Set sadb_comb's. */
+	alg_size = 0;
 	if (x->id.proto == IPPROTO_AH)
-		dump_ah_combs(skb, t);
+		alg_size = dump_ah_combs(skb, t);
 	else if (x->id.proto == IPPROTO_ESP)
-		dump_esp_combs(skb, t);
+		alg_size = dump_esp_combs(skb, t);
+
+	hdr->sadb_msg_len += alg_size / 8;
 
 	/* security context */
 	if (xfrm_ctx) {
-		sec_ctx = (struct sadb_x_sec_ctx *) skb_put(skb,
-				sizeof(struct sadb_x_sec_ctx) + ctx_size);
+		sec_ctx = skb_put(skb,
+				  sizeof(struct sadb_x_sec_ctx) + ctx_size);
 		sec_ctx->sadb_x_sec_len =
 		  (sizeof(struct sadb_x_sec_ctx) + ctx_size) / sizeof(uint64_t);
 		sec_ctx->sadb_x_sec_exttype = SADB_X_EXT_SEC_CTX;
@@ -3396,7 +3401,7 @@ static int pfkey_send_new_mapping(struct xfrm_state *x, xfrm_address_t *ipaddr, 
 	if (skb == NULL)
 		return -ENOMEM;
 
-	hdr = (struct sadb_msg *) skb_put(skb, sizeof(struct sadb_msg));
+	hdr = skb_put(skb, sizeof(struct sadb_msg));
 	hdr->sadb_msg_version = PF_KEY_V2;
 	hdr->sadb_msg_type = SADB_X_NAT_T_NEW_MAPPING;
 	hdr->sadb_msg_satype = satype;
@@ -3407,7 +3412,7 @@ static int pfkey_send_new_mapping(struct xfrm_state *x, xfrm_address_t *ipaddr, 
 	hdr->sadb_msg_pid = 0;
 
 	/* SA */
-	sa = (struct sadb_sa *) skb_put(skb, sizeof(struct sadb_sa));
+	sa = skb_put(skb, sizeof(struct sadb_sa));
 	sa->sadb_sa_len = sizeof(struct sadb_sa)/sizeof(uint64_t);
 	sa->sadb_sa_exttype = SADB_EXT_SA;
 	sa->sadb_sa_spi = x->id.spi;
@@ -3418,8 +3423,7 @@ static int pfkey_send_new_mapping(struct xfrm_state *x, xfrm_address_t *ipaddr, 
 	sa->sadb_sa_flags = 0;
 
 	/* ADDRESS_SRC (old addr) */
-	addr = (struct sadb_address*)
-		skb_put(skb, sizeof(struct sadb_address)+sockaddr_size);
+	addr = skb_put(skb, sizeof(struct sadb_address) + sockaddr_size);
 	addr->sadb_address_len =
 		(sizeof(struct sadb_address)+sockaddr_size)/
 			sizeof(uint64_t);
@@ -3434,15 +3438,14 @@ static int pfkey_send_new_mapping(struct xfrm_state *x, xfrm_address_t *ipaddr, 
 		BUG();
 
 	/* NAT_T_SPORT (old port) */
-	n_port = (struct sadb_x_nat_t_port*) skb_put(skb, sizeof (*n_port));
+	n_port = skb_put(skb, sizeof(*n_port));
 	n_port->sadb_x_nat_t_port_len = sizeof(*n_port)/sizeof(uint64_t);
 	n_port->sadb_x_nat_t_port_exttype = SADB_X_EXT_NAT_T_SPORT;
 	n_port->sadb_x_nat_t_port_port = natt->encap_sport;
 	n_port->sadb_x_nat_t_port_reserved = 0;
 
 	/* ADDRESS_DST (new addr) */
-	addr = (struct sadb_address*)
-		skb_put(skb, sizeof(struct sadb_address)+sockaddr_size);
+	addr = skb_put(skb, sizeof(struct sadb_address) + sockaddr_size);
 	addr->sadb_address_len =
 		(sizeof(struct sadb_address)+sockaddr_size)/
 			sizeof(uint64_t);
@@ -3457,7 +3460,7 @@ static int pfkey_send_new_mapping(struct xfrm_state *x, xfrm_address_t *ipaddr, 
 		BUG();
 
 	/* NAT_T_DPORT (new port) */
-	n_port = (struct sadb_x_nat_t_port*) skb_put(skb, sizeof (*n_port));
+	n_port = skb_put(skb, sizeof(*n_port));
 	n_port->sadb_x_nat_t_port_len = sizeof(*n_port)/sizeof(uint64_t);
 	n_port->sadb_x_nat_t_port_exttype = SADB_X_EXT_NAT_T_DPORT;
 	n_port->sadb_x_nat_t_port_port = sport;
@@ -3472,7 +3475,7 @@ static int set_sadb_address(struct sk_buff *skb, int sasize, int type,
 			    const struct xfrm_selector *sel)
 {
 	struct sadb_address *addr;
-	addr = (struct sadb_address *)skb_put(skb, sizeof(struct sadb_address) + sasize);
+	addr = skb_put(skb, sizeof(struct sadb_address) + sasize);
 	addr->sadb_address_len = (sizeof(struct sadb_address) + sasize)/8;
 	addr->sadb_address_exttype = type;
 	addr->sadb_address_proto = sel->proto;
@@ -3510,8 +3513,7 @@ static int set_sadb_kmaddress(struct sk_buff *skb, const struct xfrm_kmaddress *
 	size_req = (sizeof(struct sadb_x_kmaddress) +
 		    pfkey_sockaddr_pair_size(family));
 
-	kma = (struct sadb_x_kmaddress *)skb_put(skb, size_req);
-	memset(kma, 0, size_req);
+	kma = skb_put_zero(skb, size_req);
 	kma->sadb_x_kmaddress_len = size_req / 8;
 	kma->sadb_x_kmaddress_exttype = SADB_X_EXT_KMADDRESS;
 	kma->sadb_x_kmaddress_reserved = k->reserved;
@@ -3537,8 +3539,7 @@ static int set_ipsecrequest(struct sk_buff *skb,
 	size_req = sizeof(struct sadb_x_ipsecrequest) +
 		   pfkey_sockaddr_pair_size(family);
 
-	rq = (struct sadb_x_ipsecrequest *)skb_put(skb, size_req);
-	memset(rq, 0, size_req);
+	rq = skb_put_zero(skb, size_req);
 	rq->sadb_x_ipsecrequest_len = size_req;
 	rq->sadb_x_ipsecrequest_proto = proto;
 	rq->sadb_x_ipsecrequest_mode = mode;
@@ -3557,7 +3558,8 @@ static int set_ipsecrequest(struct sk_buff *skb,
 #ifdef CONFIG_NET_KEY_MIGRATE
 static int pfkey_send_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
 			      const struct xfrm_migrate *m, int num_bundles,
-			      const struct xfrm_kmaddress *k)
+			      const struct xfrm_kmaddress *k,
+			      const struct xfrm_encap_tmpl *encap)
 {
 	int i;
 	int sasize_sel;
@@ -3606,7 +3608,7 @@ static int pfkey_send_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
 	if (skb == NULL)
 		return -ENOMEM;
 
-	hdr = (struct sadb_msg *)skb_put(skb, sizeof(struct sadb_msg));
+	hdr = skb_put(skb, sizeof(struct sadb_msg));
 	hdr->sadb_msg_version = PF_KEY_V2;
 	hdr->sadb_msg_type = SADB_X_MIGRATE;
 	hdr->sadb_msg_satype = pfkey_proto2satype(m->proto);
@@ -3627,7 +3629,7 @@ static int pfkey_send_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
 	set_sadb_address(skb, sasize_sel, SADB_EXT_ADDRESS_DST, sel);
 
 	/* policy information */
-	pol = (struct sadb_x_policy *)skb_put(skb, sizeof(struct sadb_x_policy));
+	pol = skb_put(skb, sizeof(struct sadb_x_policy));
 	pol->sadb_x_policy_len = size_pol / 8;
 	pol->sadb_x_policy_exttype = SADB_X_EXT_POLICY;
 	pol->sadb_x_policy_type = IPSEC_POLICY_IPSEC;
@@ -3667,7 +3669,8 @@ err:
 #else
 static int pfkey_send_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
 			      const struct xfrm_migrate *m, int num_bundles,
-			      const struct xfrm_kmaddress *k)
+			      const struct xfrm_kmaddress *k,
+			      const struct xfrm_encap_tmpl *encap)
 {
 	return -ENOPROTOOPT;
 }
@@ -3795,7 +3798,7 @@ static int pfkey_seq_show(struct seq_file *f, void *v)
 	else
 		seq_printf(f, "%pK %-6d %-6u %-6u %-6u %-6lu\n",
 			       s,
-			       atomic_read(&s->sk_refcnt),
+			       refcount_read(&s->sk_refcnt),
 			       sk_rmem_alloc_get(s),
 			       sk_wmem_alloc_get(s),
 			       from_kuid_munged(seq_user_ns(f), sock_i_uid(s)),
@@ -3835,24 +3838,12 @@ static const struct seq_operations pfkey_seq_ops = {
 	.show	= pfkey_seq_show,
 };
 
-static int pfkey_seq_open(struct inode *inode, struct file *file)
-{
-	return seq_open_net(inode, file, &pfkey_seq_ops,
-			    sizeof(struct seq_net_private));
-}
-
-static const struct file_operations pfkey_proc_ops = {
-	.open	 = pfkey_seq_open,
-	.read	 = seq_read,
-	.llseek	 = seq_lseek,
-	.release = seq_release_net,
-};
-
 static int __net_init pfkey_init_proc(struct net *net)
 {
 	struct proc_dir_entry *e;
 
-	e = proc_create("pfkey", 0, net->proc_net, &pfkey_proc_ops);
+	e = proc_create_net("pfkey", 0, net->proc_net, &pfkey_seq_ops,
+			sizeof(struct seq_net_private));
 	if (e == NULL)
 		return -ENOMEM;
 
@@ -3876,7 +3867,6 @@ static inline void pfkey_exit_proc(struct net *net)
 
 static struct xfrm_mgr pfkeyv2_mgr =
 {
-	.id		= "pfkeyv2",
 	.notify		= pfkey_send_notify,
 	.acquire	= pfkey_send_acquire,
 	.compile_policy	= pfkey_compile_policy,
@@ -3904,7 +3894,7 @@ static void __net_exit pfkey_net_exit(struct net *net)
 	struct netns_pfkey *net_pfkey = net_generic(net, pfkey_net_id);
 
 	pfkey_exit_proc(net);
-	BUG_ON(!hlist_empty(&net_pfkey->table));
+	WARN_ON(!hlist_empty(&net_pfkey->table));
 }
 
 static struct pernet_operations pfkey_net_ops = {

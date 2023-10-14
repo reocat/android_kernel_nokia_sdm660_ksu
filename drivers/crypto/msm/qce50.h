@@ -1,14 +1,8 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
  */
+
 #ifndef _DRIVERS_CRYPTO_MSM_QCE50_H_
 #define _DRIVERS_CRYPTO_MSM_QCE50_H_
 
@@ -132,6 +126,10 @@ struct qce_cmdlistptr_ops {
 	struct qce_cmdlist_info f9_kasumi;
 	struct qce_cmdlist_info f9_snow3g;
 	struct qce_cmdlist_info unlock_all_pipes;
+	struct qce_cmdlist_info auth_sha384;
+	struct qce_cmdlist_info auth_sha512;
+	struct qce_cmdlist_info auth_sha384_hmac;
+	struct qce_cmdlist_info auth_sha512_hmac;
 };
 
 struct qce_ce_cfg_reg_setting {
@@ -176,6 +174,11 @@ struct qce_ce_cfg_reg_setting {
 	uint32_t auth_cfg_aead_sha256_hmac;
 	uint32_t auth_cfg_kasumi;
 	uint32_t auth_cfg_snow3g;
+
+	uint32_t auth_cfg_sha384;
+	uint32_t auth_cfg_sha512;
+	uint32_t auth_cfg_hmac_sha384;
+	uint32_t auth_cfg_hmac_sha512;
 };
 
 struct ce_bam_info {

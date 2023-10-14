@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM migrate
 
@@ -19,7 +20,7 @@
 	EM( MR_SYSCALL,		"syscall_or_cpuset")		\
 	EM( MR_MEMPOLICY_MBIND,	"mempolicy_mbind")		\
 	EM( MR_NUMA_MISPLACED,	"numa_misplaced")		\
-	EMe(MR_CMA,		"cma")
+	EMe(MR_CONTIG_RANGE,	"contig_range")
 
 /*
  * First define the enums in the above macros to be exported to userspace
@@ -77,10 +78,10 @@ TRACE_EVENT(mm_numa_migrate_ratelimit,
 	TP_ARGS(p, dst_nid, nr_pages),
 
 	TP_STRUCT__entry(
-		__array(	char,		comm,	TASK_COMM_LEN)
-		__field(	pid_t,		pid)
-		__field(	int,		dst_nid)
-		__field(	unsigned long,	nr_pages)
+		__array(char,		comm,	TASK_COMM_LEN)
+		__field(pid_t,		pid)
+		__field(int,		dst_nid)
+		__field(unsigned long,	nr_pages)
 	),
 
 	TP_fast_assign(

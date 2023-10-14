@@ -1,13 +1,6 @@
-/* Copyright (c) 2014-2017, Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2014-2016, 2018-2019, Linux Foundation. All rights reserved.
  */
 
 #include <linux/clk.h>
@@ -23,8 +16,6 @@
 #include "msm_bus_adhoc.h"
 #include "msm_bus_noc.h"
 #include "msm_bus_bimc.h"
-
-static LIST_HEAD(fabdev_list);
 
 static int msm_bus_dev_init_qos(struct device *dev, void *data);
 
@@ -52,13 +43,6 @@ ssize_t bw_show(struct device *dev, struct device_attribute *attr,
 			bus_node->lnode_list[i].lnode_ab[ACTIVE_CTX],
 			bus_node->lnode_list[i].lnode_ib[DUAL_CTX],
 			bus_node->lnode_list[i].lnode_ab[DUAL_CTX]);
-		trace_printk(
-		"[%d]:%s:Act_IB %llu Act_AB %llu Slp_IB %llu Slp_AB %llu\n",
-			i, bus_node->lnode_list[i].cl_name,
-			bus_node->lnode_list[i].lnode_ib[ACTIVE_CTX],
-			bus_node->lnode_list[i].lnode_ab[ACTIVE_CTX],
-			bus_node->lnode_list[i].lnode_ib[DUAL_CTX],
-			bus_node->lnode_list[i].lnode_ab[DUAL_CTX]);
 	}
 	off += scnprintf((buf + off), PAGE_SIZE,
 	"Max_Act_IB %llu Sum_Act_AB %llu Act_Util_fact %d Act_Vrail_comp %d\n",
@@ -72,18 +56,6 @@ ssize_t bw_show(struct device *dev, struct device_attribute *attr,
 		bus_node->node_bw[DUAL_CTX].sum_ab,
 		bus_node->node_bw[DUAL_CTX].util_used,
 		bus_node->node_bw[DUAL_CTX].vrail_used);
-	trace_printk(
-	"Max_Act_IB %llu Sum_Act_AB %llu Act_Util_fact %d Act_Vrail_comp %d\n",
-		bus_node->node_bw[ACTIVE_CTX].max_ib,
-		bus_node->node_bw[ACTIVE_CTX].sum_ab,
-		bus_node->node_bw[ACTIVE_CTX].util_used,
-		bus_node->node_bw[ACTIVE_CTX].vrail_used);
-	trace_printk(
-	"Max_Slp_IB %llu Sum_Slp_AB %lluSlp_Util_fact %d Slp_Vrail_comp %d\n",
-		bus_node->node_bw[DUAL_CTX].max_ib,
-		bus_node->node_bw[DUAL_CTX].sum_ab,
-		bus_node->node_bw[DUAL_CTX].util_used,
-		bus_node->node_bw[DUAL_CTX].vrail_used);
 	return off;
 }
 
@@ -93,7 +65,7 @@ ssize_t bw_store(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
-DEVICE_ATTR(bw, 0600, bw_show, bw_store);
+DEVICE_ATTR_RW(bw);
 
 struct static_rules_type {
 	int num_rules;
@@ -126,7 +98,7 @@ static int bus_get_reg(struct nodeclk *nclk, struct device *dev)
 			dev_err(dev, "Error: Failed to get regulator %s:%d\n",
 							nclk->reg_name, ret);
 		} else {
-			dev_dbg(dev, "Succesfully got regulator for %d\n",
+			dev_dbg(dev, "Successfully got regulator for %d\n",
 				node_dev->node_info->id);
 		}
 	}
@@ -386,13 +358,12 @@ static int flush_clk_data(struct msm_bus_node_device_type *node, int ctx)
 
 			if ((node->node_info->is_fab_dev) &&
 				!IS_ERR_OR_NULL(node->bus_qos_clk.clk))
-					ret = enable_nodeclk(&node->bus_qos_clk,
-								&node->dev);
+				ret = enable_nodeclk(&node->bus_qos_clk,
+							&node->dev);
 		} else {
 			if ((node->node_info->is_fab_dev) &&
 				!IS_ERR_OR_NULL(node->bus_qos_clk.clk))
-					ret =
-					disable_nodeclk(&node->bus_qos_clk);
+				ret = disable_nodeclk(&node->bus_qos_clk);
 
 			ret = disable_nodeclk(nodeclk);
 		}
@@ -412,7 +383,7 @@ exit_flush_clk_data:
 		node->node_bw[ctx].cur_clk_hz = 0;
 
 	if (nodeclk)
-		nodeclk->dirty = 0;
+		nodeclk->dirty = false;
 	return ret;
 }
 
@@ -433,68 +404,6 @@ static int msm_bus_agg_fab_clks(struct msm_bus_node_device_type *bus_dev)
 	return ret;
 }
 
-static void msm_bus_log_fab_max_votes(struct msm_bus_node_device_type *bus_dev)
-{
-	int ctx;
-	struct timespec ts;
-	uint32_t vrail_comp = 0;
-	struct msm_bus_node_device_type *node;
-	uint64_t max_ib, max_ib_temp[NUM_CTX];
-
-	for (ctx = 0; ctx < NUM_CTX; ctx++) {
-		max_ib_temp[ctx] = 0;
-		bus_dev->node_bw[ctx].max_ib = 0;
-		bus_dev->node_bw[ctx].max_ab = 0;
-		bus_dev->node_bw[ctx].max_ib_cl_name = NULL;
-		bus_dev->node_bw[ctx].max_ab_cl_name = NULL;
-	}
-
-	list_for_each_entry(node, &bus_dev->devlist, dev_link) {
-		for (ctx = 0; ctx < NUM_CTX; ctx++) {
-			max_ib = node->node_bw[ctx].max_ib;
-			vrail_comp = node->node_bw[ctx].vrail_used;
-
-			if (vrail_comp && (vrail_comp != 100)) {
-				max_ib *= 100;
-				max_ib = msm_bus_div64(vrail_comp, max_ib);
-			}
-
-			if (max_ib > max_ib_temp[ctx]) {
-				max_ib_temp[ctx] = max_ib;
-				bus_dev->node_bw[ctx].max_ib =
-					node->node_bw[ctx].max_ib;
-				bus_dev->node_bw[ctx].max_ib_cl_name =
-					node->node_bw[ctx].max_ib_cl_name;
-			}
-
-			if (node->node_bw[ctx].max_ab >
-					bus_dev->node_bw[ctx].max_ab) {
-				bus_dev->node_bw[ctx].max_ab =
-					node->node_bw[ctx].max_ab;
-				bus_dev->node_bw[ctx].max_ab_cl_name =
-					node->node_bw[ctx].max_ab_cl_name;
-			}
-		}
-	}
-
-	ts = ktime_to_timespec(ktime_get());
-	for (ctx = 0; ctx < NUM_CTX; ctx++) {
-		trace_bus_max_votes((int)ts.tv_sec, (int)ts.tv_nsec,
-				bus_dev->node_info->name,
-				((ctx == ACTIVE_CTX) ? "active" : "sleep"),
-				"ib", bus_dev->node_bw[ctx].max_ib,
-				bus_dev->node_bw[ctx].max_ib_cl_name);
-	}
-
-	for (ctx = 0; ctx < NUM_CTX; ctx++) {
-		trace_bus_max_votes((int)ts.tv_sec, (int)ts.tv_nsec,
-				bus_dev->node_info->name,
-				((ctx == ACTIVE_CTX) ? "active" : "sleep"),
-				"ab", bus_dev->node_bw[ctx].max_ab,
-				bus_dev->node_bw[ctx].max_ab_cl_name);
-	}
-}
-
 int msm_bus_commit_data(struct list_head *clist)
 {
 	int ret = 0;
@@ -504,15 +413,13 @@ int msm_bus_commit_data(struct list_head *clist)
 
 	list_for_each_entry(node, clist, link) {
 		/* Aggregate the bus clocks */
-		if (node->node_info->is_fab_dev) {
+		if (node->node_info->is_fab_dev)
 			msm_bus_agg_fab_clks(node);
-			msm_bus_log_fab_max_votes(node);
-		}
 	}
 
 	list_for_each_entry_safe(node, node_tmp, clist, link) {
 		if (unlikely(node->node_info->defer_qos))
-				msm_bus_dev_init_qos(&node->dev, NULL);
+			msm_bus_dev_init_qos(&node->dev, NULL);
 
 		for (ctx = 0; ctx < NUM_CTX; ctx++) {
 			ret = flush_clk_data(node, ctx);
@@ -545,10 +452,8 @@ void *msm_bus_realloc_devmem(struct device *dev, void *p, size_t old_size,
 		copy_size = new_size;
 
 	ret = devm_kzalloc(dev, new_size, flags);
-	if (!ret) {
-		MSM_BUS_ERR("%s: Error Reallocating memory", __func__);
+	if (!ret)
 		goto exit_realloc_devmem;
-	}
 
 	memcpy(ret, p, copy_size);
 	devm_kfree(dev, p);
@@ -564,6 +469,9 @@ static void msm_bus_fab_init_noc_ops(struct msm_bus_node_device_type *bus_dev)
 		break;
 	case MSM_BUS_BIMC:
 		msm_bus_bimc_set_ops(bus_dev);
+		break;
+	case MSM_BUS_QNOC:
+		msm_bus_qnoc_set_ops(bus_dev);
 		break;
 	default:
 		MSM_BUS_ERR("%s: Invalid Bus type", __func__);
@@ -581,12 +489,12 @@ static int msm_bus_disable_node_qos_clk(struct msm_bus_node_device_type *node)
 		goto exit_disable_node_qos_clk;
 	}
 
-	for (i = node->num_node_qos_clks - 1; i >= 0; i--)
+	for (i = 0; i < node->num_node_qos_clks; i++)
 		ret = disable_nodeclk(&node->node_qos_clks[i]);
 
 	bus_node = to_msm_bus_node(node->node_info->bus_device);
 
-	for (i = bus_node->num_node_qos_clks - 1; i >= 0; i--)
+	for (i = 0; i < bus_node->num_node_qos_clks; i++)
 		ret = disable_nodeclk(&bus_node->node_qos_clks[i]);
 
 exit_disable_node_qos_clk:
@@ -597,7 +505,7 @@ static int msm_bus_enable_node_qos_clk(struct msm_bus_node_device_type *node)
 {
 	struct msm_bus_node_device_type *bus_node = NULL;
 	int i;
-	int ret = 0;
+	int ret;
 	long rounded_rate;
 
 	if (!node || (!to_msm_bus_node(node->node_info->bus_device))) {
@@ -706,7 +614,7 @@ static int msm_bus_dev_init_qos(struct device *dev, void *data)
 
 	node_dev = to_msm_bus_node(dev);
 	if (!node_dev) {
-		MSM_BUS_ERR("%s: Unable to get node device info" , __func__);
+		MSM_BUS_ERR("%s: Unable to get node device info", __func__);
 		ret = -ENXIO;
 		goto exit_init_qos;
 	}
@@ -771,7 +679,7 @@ static int msm_bus_fabric_init(struct device *dev,
 
 	node_dev = to_msm_bus_node(dev);
 	if (!node_dev) {
-		MSM_BUS_ERR("%s: Unable to get bus device info" , __func__);
+		MSM_BUS_ERR("%s: Unable to get bus device info", __func__);
 		ret = -ENXIO;
 		goto exit_fabric_init;
 	}
@@ -785,7 +693,6 @@ static int msm_bus_fabric_init(struct device *dev,
 	fabdev = devm_kzalloc(dev, sizeof(struct msm_bus_fab_device_type),
 								GFP_KERNEL);
 	if (!fabdev) {
-		MSM_BUS_ERR("Fabric alloc failed\n");
 		ret = -ENOMEM;
 		goto exit_fabric_init;
 	}
@@ -858,10 +765,8 @@ static int msm_bus_init_clk(struct device *bus_dev,
 		node_dev->node_qos_clks = devm_kzalloc(bus_dev,
 			(node_dev->num_node_qos_clks * sizeof(struct nodeclk)),
 			GFP_KERNEL);
-		if (!node_dev->node_qos_clks) {
-			dev_err(bus_dev, "Failed to alloc memory for qos clk");
+		if (!node_dev->node_qos_clks)
 			return -ENOMEM;
-		}
 
 		for (i = 0; i < pdata->num_node_qos_clks; i++) {
 			node_dev->node_qos_clks[i].clk =
@@ -897,8 +802,8 @@ static int msm_bus_copy_node_info(struct msm_bus_node_device_type *pdata,
 
 	if (!bus_node || !pdata) {
 		ret = -ENXIO;
-		MSM_BUS_ERR("%s: Invalid pointers pdata %p, bus_node %p",
-			__func__, pdata, bus_node);
+		MSM_BUS_ERR("%s: NULL pointers for pdata or bus_node",
+			__func__);
 		goto exit_copy_node_info;
 	}
 
@@ -918,6 +823,9 @@ static int msm_bus_copy_node_info(struct msm_bus_node_device_type *pdata,
 	node_info->qos_params.mode = pdata_node_info->qos_params.mode;
 	node_info->qos_params.prio1 = pdata_node_info->qos_params.prio1;
 	node_info->qos_params.prio0 = pdata_node_info->qos_params.prio0;
+	node_info->qos_params.prio_dflt = pdata_node_info->qos_params.prio_dflt;
+	node_info->qos_params.urg_fwd_en =
+				pdata_node_info->qos_params.urg_fwd_en;
 	node_info->qos_params.reg_prio1 = pdata_node_info->qos_params.reg_prio1;
 	node_info->qos_params.reg_prio0 = pdata_node_info->qos_params.reg_prio0;
 	node_info->qos_params.prio_lvl = pdata_node_info->qos_params.prio_lvl;
@@ -987,10 +895,10 @@ static int msm_bus_copy_node_info(struct msm_bus_node_device_type *pdata,
 		goto exit_copy_node_info;
 	}
 
-	node_info->black_listed_connections = devm_kzalloc(bus_dev,
+	node_info->bl_cons = devm_kzalloc(bus_dev,
 			pdata_node_info->num_blist * sizeof(int),
 			GFP_KERNEL);
-	if (!node_info->black_listed_connections) {
+	if (!node_info->bl_cons) {
 		MSM_BUS_ERR("%s:Bus black list connections alloc failed\n",
 					__func__);
 		devm_kfree(bus_dev, node_info->black_connections);
@@ -1000,8 +908,8 @@ static int msm_bus_copy_node_info(struct msm_bus_node_device_type *pdata,
 		goto exit_copy_node_info;
 	}
 
-	memcpy(node_info->black_listed_connections,
-		pdata_node_info->black_listed_connections,
+	memcpy(node_info->bl_cons,
+		pdata_node_info->bl_cons,
 		sizeof(int) * pdata_node_info->num_blist);
 
 	node_info->qport = devm_kzalloc(bus_dev,
@@ -1011,7 +919,7 @@ static int msm_bus_copy_node_info(struct msm_bus_node_device_type *pdata,
 		MSM_BUS_ERR("%s:Bus qport allocation failed\n", __func__);
 		devm_kfree(bus_dev, node_info->dev_connections);
 		devm_kfree(bus_dev, node_info->connections);
-		devm_kfree(bus_dev, node_info->black_listed_connections);
+		devm_kfree(bus_dev, node_info->bl_cons);
 		ret = -ENOMEM;
 		goto exit_copy_node_info;
 	}
@@ -1033,8 +941,8 @@ static struct device *msm_bus_device_init(
 	int ret = 0;
 
 	/**
-	* Init here so we can use devm calls
-	*/
+	 * Init here so we can use devm calls
+	 */
 
 	bus_node = kzalloc(sizeof(struct msm_bus_node_device_type), GFP_KERNEL);
 	if (!bus_node) {
@@ -1134,15 +1042,15 @@ static int msm_bus_setup_dev_conn(struct device *bus_dev, void *data)
 	for (j = 0; j < bus_node->node_info->num_blist; j++) {
 		bus_node->node_info->black_connections[j] =
 			bus_find_device(&msm_bus_type, NULL,
-				(void *)&bus_node->node_info->
-				black_listed_connections[j],
+			(void *)
+			&bus_node->node_info->bl_cons[j],
 				msm_bus_device_match_adhoc);
 
 		if (!bus_node->node_info->black_connections[j]) {
 			MSM_BUS_ERR("%s: Error finding conn %d for device %d\n",
-				__func__, bus_node->node_info->
-				black_listed_connections[j],
-				bus_node->node_info->id);
+			__func__,
+			bus_node->node_info->bl_cons[j],
+			bus_node->node_info->id);
 			ret = -ENODEV;
 			goto exit_setup_dev_conn;
 		}
@@ -1200,53 +1108,6 @@ int msm_bus_device_remove(struct platform_device *pdev)
 	return 0;
 }
 
-/**
- * msm_bus_panic_callback() - panic notification callback function.
- *              This function is invoked when a kernel panic occurs.
- * @nfb:        Notifier block pointer
- * @event:      Value passed unmodified to notifier function
- * @data:       Pointer passed unmodified to notifier function
- *
- * Return: NOTIFY_OK
- */
-static int msm_bus_panic_callback(struct notifier_block *nfb,
-					unsigned long event, void *data)
-{
-	struct msm_bus_node_device_type *bus_node = NULL;
-	unsigned int ctx;
-
-	list_for_each_entry(bus_node, &fabdev_list, dev_link) {
-		for (ctx = 0; ctx < NUM_CTX; ctx++) {
-			if (bus_node->node_bw[ctx].max_ib_cl_name &&
-				bus_node->node_bw[ctx].max_ib) {
-				pr_err("%s: %s: %s max_ib: %llu: client-name: %s\n",
-				__func__, bus_node->node_info->name,
-				((ctx == ACTIVE_CTX) ? "active" : "sleep"),
-				bus_node->node_bw[ctx].max_ib,
-				bus_node->node_bw[ctx].max_ib_cl_name);
-			}
-		}
-
-		for (ctx = 0; ctx < NUM_CTX; ctx++) {
-			if (bus_node->node_bw[ctx].max_ab_cl_name &&
-				bus_node->node_bw[ctx].max_ab) {
-				pr_err("%s: %s: %s max_ab: %llu: client-name: %s\n",
-				__func__, bus_node->node_info->name,
-				((ctx == ACTIVE_CTX) ? "active" : "sleep"),
-				bus_node->node_bw[ctx].max_ab,
-				bus_node->node_bw[ctx].max_ab_cl_name);
-			}
-		}
-	}
-
-	return NOTIFY_OK;
-}
-
-static struct notifier_block msm_bus_panic_notifier = {
-	.notifier_call = msm_bus_panic_callback,
-	.priority = 1,
-};
-
 static int msm_bus_device_probe(struct platform_device *pdev)
 {
 	unsigned int i, ret;
@@ -1256,8 +1117,9 @@ static int msm_bus_device_probe(struct platform_device *pdev)
 	if (pdev->dev.of_node)
 		pdata = msm_bus_of_to_pdata(pdev);
 	else {
-		pdata = (struct msm_bus_device_node_registration *)pdev->
-			dev.platform_data;
+		pdata =
+		(struct msm_bus_device_node_registration *)
+		pdev->dev.platform_data;
 	}
 
 	if (IS_ERR_OR_NULL(pdata)) {
@@ -1268,7 +1130,6 @@ static int msm_bus_device_probe(struct platform_device *pdev)
 
 	for (i = 0; i < pdata->num_devices; i++) {
 		struct device *node_dev = NULL;
-		struct msm_bus_node_device_type *bus_node = NULL;
 
 		node_dev = msm_bus_device_init(&pdata->info[i]);
 
@@ -1295,9 +1156,6 @@ static int msm_bus_device_probe(struct platform_device *pdev)
 					__func__, pdata->info[i].node_info->id);
 				goto exit_device_probe;
 			}
-
-			bus_node = to_msm_bus_node(node_dev);
-			list_add_tail(&bus_node->dev_link, &fabdev_list);
 		}
 	}
 
@@ -1319,11 +1177,11 @@ static int msm_bus_device_probe(struct platform_device *pdev)
 	msm_bus_arb_setops_adhoc(&arb_ops);
 	bus_for_each_dev(&msm_bus_type, NULL, NULL, msm_bus_node_debug);
 
-	atomic_notifier_chain_register(&panic_notifier_list,
-						&msm_bus_panic_notifier);
-
 	devm_kfree(&pdev->dev, pdata->info);
 	devm_kfree(&pdev->dev, pdata);
+
+	dev_info(&pdev->dev, "Bus scaling driver probe successful\n");
+
 exit_device_probe:
 	return ret;
 }
@@ -1359,7 +1217,7 @@ int msm_bus_device_rules_remove(struct platform_device *pdev)
 }
 
 
-static struct of_device_id rules_match[] = {
+static const struct of_device_id rules_match[] = {
 	{.compatible = "qcom,msm-bus-static-bw-rules"},
 	{}
 };
@@ -1369,12 +1227,11 @@ static struct platform_driver msm_bus_rules_driver = {
 	.remove = msm_bus_device_rules_remove,
 	.driver = {
 		.name = "msm_bus_rules_device",
-		.owner = THIS_MODULE,
 		.of_match_table = rules_match,
 	},
 };
 
-static struct of_device_id fabric_match[] = {
+static const struct of_device_id fabric_match[] = {
 	{.compatible = "qcom,msm-bus-device"},
 	{}
 };
@@ -1384,7 +1241,6 @@ static struct platform_driver msm_bus_device_driver = {
 	.remove = msm_bus_device_remove,
 	.driver = {
 		.name = "msm_bus_device",
-		.owner = THIS_MODULE,
 		.of_match_table = fabric_match,
 	},
 };
@@ -1402,4 +1258,4 @@ int __init msm_bus_device_init_driver(void)
 	}
 	return platform_driver_register(&msm_bus_rules_driver);
 }
-subsys_initcall(msm_bus_device_init_driver);
+fs_initcall(msm_bus_device_init_driver);

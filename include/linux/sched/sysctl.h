@@ -1,11 +1,18 @@
-#ifndef _SCHED_SYSCTL_H
-#define _SCHED_SYSCTL_H
+/* SPDX-License-Identifier: GPL-2.0 */
+#ifndef _LINUX_SCHED_SYSCTL_H
+#define _LINUX_SCHED_SYSCTL_H
+
+#include <linux/types.h>
+
+struct ctl_table;
 
 #ifdef CONFIG_DETECT_HUNG_TASK
 extern int	     sysctl_hung_task_check_count;
 extern unsigned int  sysctl_hung_task_panic;
 extern unsigned long sysctl_hung_task_timeout_secs;
+extern unsigned long sysctl_hung_task_check_interval_secs;
 extern int sysctl_hung_task_warnings;
+extern int sysctl_hung_task_selective_monitoring;
 extern int proc_dohung_task_timeout_secs(struct ctl_table *table, int write,
 					 void __user *buffer,
 					 size_t *lenp, loff_t *ppos);
@@ -14,85 +21,69 @@ extern int proc_dohung_task_timeout_secs(struct ctl_table *table, int write,
 enum { sysctl_hung_task_timeout_secs = 0 };
 #endif
 
-/*
- * Default maximum number of active map areas, this limits the number of vmas
- * per mm struct. Users can overwrite this number by sysctl but there is a
- * problem.
- *
- * When a program's coredump is generated as ELF format, a section is created
- * per a vma. In ELF, the number of sections is represented in unsigned short.
- * This means the number of sections should be smaller than 65535 at coredump.
- * Because the kernel adds some informative sections to a image of program at
- * generating coredump, we need some margin. The number of extra sections is
- * 1-3 now and depends on arch. We use "5" as safe margin, here.
- *
- * ELF extended numbering allows more than 65535 sections, so 16-bit bound is
- * not a hard limit any more. Although some userspace tools can be surprised by
- * that.
- */
-#define MAPCOUNT_ELF_CORE_MARGIN	(5)
-#define DEFAULT_MAX_MAP_COUNT	(USHRT_MAX - MAPCOUNT_ELF_CORE_MARGIN)
-
-extern int sysctl_max_map_count;
+#define MAX_CLUSTERS 3
+/* MAX_MARGIN_LEVELS should be one less than MAX_CLUSTERS */
+#define MAX_MARGIN_LEVELS (MAX_CLUSTERS - 1)
 
 extern unsigned int sysctl_sched_latency;
 extern unsigned int sysctl_sched_min_granularity;
-extern unsigned int sysctl_sched_wakeup_granularity;
-extern unsigned int sysctl_sched_child_runs_first;
 extern unsigned int sysctl_sched_sync_hint_enable;
 extern unsigned int sysctl_sched_cstate_aware;
+extern unsigned int sysctl_sched_wakeup_granularity;
+extern unsigned int sysctl_sched_child_runs_first;
+extern unsigned int sysctl_sched_force_lb_enable;
 #ifdef CONFIG_SCHED_WALT
-extern unsigned int sysctl_sched_use_walt_cpu_util;
-extern unsigned int sysctl_sched_use_walt_task_util;
-extern unsigned int sysctl_sched_walt_init_task_load_pct;
-extern unsigned int sysctl_sched_walt_cpu_high_irqload;
-#endif
-
-#ifdef CONFIG_SCHED_HMP
-
-enum freq_reporting_policy {
-	FREQ_REPORT_MAX_CPU_LOAD_TOP_TASK,
-	FREQ_REPORT_CPU_LOAD,
-	FREQ_REPORT_TOP_TASK,
-	FREQ_REPORT_INVALID_POLICY
-};
-
-extern int sysctl_sched_freq_inc_notify;
-extern int sysctl_sched_freq_dec_notify;
-extern unsigned int sysctl_sched_freq_reporting_policy;
-extern unsigned int sysctl_sched_window_stats_policy;
-extern unsigned int sysctl_sched_ravg_hist_size;
+extern unsigned int sysctl_sched_capacity_margin_up[MAX_MARGIN_LEVELS];
+extern unsigned int sysctl_sched_capacity_margin_down[MAX_MARGIN_LEVELS];
+extern unsigned int sysctl_sched_user_hint;
+extern const int sched_user_hint_max;
 extern unsigned int sysctl_sched_cpu_high_irqload;
-extern unsigned int sysctl_sched_init_task_load_pct;
-extern __read_mostly unsigned int sysctl_sched_spill_nr_run;
-extern unsigned int sysctl_sched_spill_load_pct;
-extern unsigned int sysctl_sched_upmigrate_pct;
-extern unsigned int sysctl_sched_downmigrate_pct;
+extern unsigned int sysctl_sched_boost;
 extern unsigned int sysctl_sched_group_upmigrate_pct;
 extern unsigned int sysctl_sched_group_downmigrate_pct;
-extern unsigned int sysctl_early_detection_duration;
-extern unsigned int sysctl_sched_boost;
-extern unsigned int sysctl_sched_small_wakee_task_load_pct;
-extern unsigned int sysctl_sched_big_waker_task_load_pct;
-extern unsigned int sysctl_sched_select_prev_cpu_us;
-extern unsigned int sysctl_sched_restrict_cluster_spill;
-extern unsigned int sysctl_sched_new_task_windows;
-extern unsigned int sysctl_sched_pred_alert_freq;
-extern unsigned int sysctl_sched_freq_aggregate;
-extern unsigned int sysctl_sched_enable_thread_grouping;
-extern unsigned int sysctl_sched_freq_aggregate_threshold_pct;
-extern unsigned int sysctl_sched_prefer_sync_wakee_to_waker;
-extern unsigned int sysctl_sched_short_burst;
-extern unsigned int sysctl_sched_short_sleep;
+extern unsigned int sysctl_sched_conservative_pl;
+extern unsigned int sysctl_sched_many_wakeup_threshold;
+extern unsigned int sysctl_sched_walt_rotate_big_tasks;
+extern unsigned int sysctl_sched_min_task_util_for_boost;
+extern unsigned int sysctl_sched_min_task_util_for_colocation;
+extern unsigned int sysctl_sched_asym_cap_sibling_freq_match_pct;
+extern unsigned int sysctl_sched_coloc_downmigrate_ns;
+extern unsigned int sysctl_sched_task_unfilter_period;
+extern unsigned int sysctl_sched_busy_hyst_enable_cpus;
+extern unsigned int sysctl_sched_busy_hyst;
+extern unsigned int sysctl_sched_coloc_busy_hyst_enable_cpus;
+extern unsigned int sysctl_sched_coloc_busy_hyst;
+extern unsigned int sysctl_sched_coloc_busy_hyst_max_ms;
+extern unsigned int sysctl_sched_window_stats_policy;
+extern unsigned int sysctl_sched_ravg_window_nr_ticks;
+extern unsigned int sysctl_sched_dynamic_ravg_window_enable;
+extern unsigned int sysctl_sched_prefer_spread;
+extern unsigned int sysctl_walt_rtg_cfs_boost_prio;
+extern unsigned int sysctl_walt_low_latency_task_threshold;
 
-#else /* CONFIG_SCHED_HMP */
+extern int
+walt_proc_group_thresholds_handler(struct ctl_table *table, int write,
+			 void __user *buffer, size_t *lenp,
+			 loff_t *ppos);
+extern int
+walt_proc_user_hint_handler(struct ctl_table *table, int write,
+			 void __user *buffer, size_t *lenp,
+			 loff_t *ppos);
 
-#define sysctl_sched_enable_hmp_task_placement 0
+extern int
+sched_ravg_window_handler(struct ctl_table *table, int write,
+			 void __user *buffer, size_t *lenp,
+			 loff_t *ppos);
 
-#endif /* CONFIG_SCHED_HMP */
+extern int sched_updown_migrate_handler(struct ctl_table *table,
+					int write, void __user *buffer,
+					size_t *lenp, loff_t *ppos);
+#endif
 
-#if defined(CONFIG_PREEMPT_TRACER) || defined(CONFIG_IRQSOFF_TRACER)
+#if defined(CONFIG_PREEMPTIRQ_EVENTS) || defined(CONFIG_PREEMPT_TRACER)
 extern unsigned int sysctl_preemptoff_tracing_threshold_ns;
+#endif
+#if defined(CONFIG_PREEMPTIRQ_EVENTS) && defined(CONFIG_IRQSOFF_TRACER)
 extern unsigned int sysctl_irqsoff_tracing_threshold_ns;
 #endif
 
@@ -112,26 +103,14 @@ extern unsigned int sysctl_numa_balancing_scan_size;
 #ifdef CONFIG_SCHED_DEBUG
 extern __read_mostly unsigned int sysctl_sched_migration_cost;
 extern __read_mostly unsigned int sysctl_sched_nr_migrate;
-extern __read_mostly unsigned int sysctl_sched_time_avg;
-extern unsigned int sysctl_sched_shares_window;
 
 int sched_proc_update_handler(struct ctl_table *table, int write,
 		void __user *buffer, size_t *length,
 		loff_t *ppos);
 #endif
 
-extern int sched_migrate_notify_proc_handler(struct ctl_table *table,
-		int write, void __user *buffer, size_t *lenp, loff_t *ppos);
-
-extern int sched_hmp_proc_update_handler(struct ctl_table *table,
-		int write, void __user *buffer, size_t *lenp, loff_t *ppos);
-
 extern int sched_boost_handler(struct ctl_table *table, int write,
 			void __user *buffer, size_t *lenp, loff_t *ppos);
-
-extern int sched_window_update_handler(struct ctl_table *table,
-		 int write, void __user *buffer, size_t *lenp, loff_t *ppos);
-
 /*
  *  control realtime throttling:
  *
@@ -140,6 +119,11 @@ extern int sched_window_update_handler(struct ctl_table *table,
  */
 extern unsigned int sysctl_sched_rt_period;
 extern int sysctl_sched_rt_runtime;
+
+#ifdef CONFIG_UCLAMP_TASK
+extern unsigned int sysctl_sched_uclamp_util_min;
+extern unsigned int sysctl_sched_uclamp_util_max;
+#endif
 
 #ifdef CONFIG_CFS_BANDWIDTH
 extern unsigned int sysctl_sched_cfs_bandwidth_slice;
@@ -176,8 +160,29 @@ extern int sched_rt_handler(struct ctl_table *table, int write,
 		void __user *buffer, size_t *lenp,
 		loff_t *ppos);
 
+#ifdef CONFIG_UCLAMP_TASK
+extern int sysctl_sched_uclamp_handler(struct ctl_table *table, int write,
+				       void __user *buffer, size_t *lenp,
+				       loff_t *ppos);
+#endif
+
 extern int sysctl_numa_balancing(struct ctl_table *table, int write,
 				 void __user *buffer, size_t *lenp,
 				 loff_t *ppos);
 
-#endif /* _SCHED_SYSCTL_H */
+extern int sysctl_schedstats(struct ctl_table *table, int write,
+				 void __user *buffer, size_t *lenp,
+				 loff_t *ppos);
+#define LIB_PATH_LENGTH 512
+extern char sched_lib_name[LIB_PATH_LENGTH];
+extern unsigned int sched_lib_mask_force;
+extern bool is_sched_lib_based_app(pid_t pid);
+
+#if defined(CONFIG_ENERGY_MODEL) && defined(CONFIG_CPU_FREQ_GOV_SCHEDUTIL)
+extern unsigned int sysctl_sched_energy_aware;
+extern int sched_energy_aware_handler(struct ctl_table *table, int write,
+				 void __user *buffer, size_t *lenp,
+				 loff_t *ppos);
+#endif
+
+#endif /* _LINUX_SCHED_SYSCTL_H */

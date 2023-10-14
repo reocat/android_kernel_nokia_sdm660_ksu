@@ -1,13 +1,5 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0 */
+/* Copyright (c) 2015-2019, 2021 The Linux Foundation. All rights reserved.
  */
 
 #ifndef DIAGFWD_PERIPHERAL_H
@@ -15,13 +7,12 @@
 
 #define PERIPHERAL_BUF_SZ		16384
 #define MAX_PERIPHERAL_BUF_SZ		32768
-#define MAX_PERIPHERAL_HDLC_BUF_SZ	65539
+#define MAX_PERIPHERAL_HDLC_BUF_SZ	65536
 
 #define TRANSPORT_UNKNOWN		-1
-#define TRANSPORT_SMD			0
-#define TRANSPORT_SOCKET		1
-#define TRANSPORT_GLINK			2
-#define NUM_TRANSPORT			3
+#define TRANSPORT_SOCKET		0
+#define TRANSPORT_RPMSG			1
+#define NUM_TRANSPORT			2
 #define NUM_WRITE_BUFFERS		2
 #define PERIPHERAL_MASK(x)					\
 	((x == PERIPHERAL_MODEM) ? DIAG_CON_MPSS :		\
@@ -29,7 +20,8 @@
 	((x == PERIPHERAL_WCNSS) ? DIAG_CON_WCNSS :		\
 	((x == PERIPHERAL_SENSORS) ? DIAG_CON_SENSORS : \
 	((x == PERIPHERAL_WDSP) ? DIAG_CON_WDSP : \
-	((x == PERIPHERAL_CDSP) ? DIAG_CON_CDSP : 0))))))	\
+	((x == PERIPHERAL_CDSP) ? DIAG_CON_CDSP :	\
+	((x == PERIPHERAL_NPU) ? DIAG_CON_NPU : 0)))))))	\
 
 #define PERIPHERAL_STRING(x)					\
 	((x == PERIPHERAL_MODEM) ? "MODEM" :			\
@@ -37,7 +29,8 @@
 	((x == PERIPHERAL_WCNSS) ? "WCNSS" :			\
 	((x == PERIPHERAL_SENSORS) ? "SENSORS" :		\
 	((x == PERIPHERAL_WDSP) ? "WDSP" :			\
-	((x == PERIPHERAL_CDSP) ? "CDSP" : "UNKNOWN"))))))	\
+	((x == PERIPHERAL_CDSP) ? "CDSP" :			\
+	((x == PERIPHERAL_NPU) ? "NPU" : "UNKNOWN")))))))	\
 
 struct diagfwd_buf_t {
 	unsigned char *data;
@@ -63,32 +56,35 @@ struct diag_peripheral_ops {
 	void (*queue_read)(void *ctxt);
 };
 
+struct diag_id_info {
+	uint8_t diagid_val;
+	uint8_t pd;
+	char *reg_str;
+};
+
 struct diagfwd_info {
 	uint8_t peripheral;
 	uint8_t type;
 	uint8_t transport;
 	uint8_t inited;
 	uint8_t ch_open;
+	uint8_t num_pd;
+	int cpd_len_1;
+	int cpd_len_2;
+	int upd_len[MAX_PERIPHERAL_UPD][2];
+	int buffer_status[NUM_CHANNEL_BUFFERS];
 	atomic_t opened;
 	unsigned long read_bytes;
 	unsigned long write_bytes;
-	spinlock_t write_buf_lock;
 	struct mutex buf_mutex;
 	struct mutex data_mutex;
 	void *ctxt;
+	struct diag_id_info root_diag_id;
+	struct diag_id_info upd_diag_id[MAX_PERIPHERAL_UPD];
 	struct diagfwd_buf_t *buf_1;
 	struct diagfwd_buf_t *buf_2;
-	struct diagfwd_buf_t *buf_upd_1_a;
-	struct diagfwd_buf_t *buf_upd_1_b;
-	struct diagfwd_buf_t *buf_upd_2_a;
-	struct diagfwd_buf_t *buf_upd_2_b;
+	struct diagfwd_buf_t *buf_upd[MAX_PERIPHERAL_UPD][2];
 	struct diagfwd_buf_t *buf_ptr[NUM_WRITE_BUFFERS];
-	int cpd_len_1;
-	int cpd_len_2;
-	int upd_len_1_a;
-	int upd_len_1_b;
-	int upd_len_2_a;
-	int upd_len_2_b;
 	struct diag_peripheral_ops *p_ops;
 	struct diag_channel_ops *c_ops;
 };

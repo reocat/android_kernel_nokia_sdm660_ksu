@@ -1043,7 +1043,7 @@ static void vortex_fifo_init(vortex_t * vortex)
 	for (x = NR_ADB - 1; x >= 0; x--) {
 		hwwrite(vortex->mmio, addr, (FIFO_U0 | FIFO_U1));
 		if (hwread(vortex->mmio, addr) != (FIFO_U0 | FIFO_U1))
-			dev_err(vortex->card->dev, "bad adb fifo reset!");
+			dev_err(vortex->card->dev, "bad adb fifo reset!\n");
 		vortex_fifo_clearadbdata(vortex, x, FIFO_SIZE);
 		addr -= 4;
 	}
@@ -2004,7 +2004,7 @@ static int resnum[VORTEX_RESOURCE_LAST] =
  out: Mean checkout if != 0. Else mean Checkin resource.
  restype: Indicates type of resource to be checked in or out.
 */
-static char
+static int
 vortex_adb_checkinout(vortex_t * vortex, int resmap[], int out, int restype)
 {
 	int i, qty = resnum[restype], resinuse = 0;
@@ -2628,7 +2628,7 @@ static void vortex_spdif_init(vortex_t * vortex, int spdif_sr, int spdif_mode)
 			else
 				edi = 0x1ffff;
 		} else {
-			i = edi = 0x800;
+			edi = 0x800;
 		}
 		/* this_04 and this_08 are the CASp4Src's (samplerate converters) */
 		vortex_src_setupchannel(vortex, this_04, edi, 0, 1,
@@ -2770,7 +2770,7 @@ static int vortex_core_shutdown(vortex_t * vortex)
 
 /* Alsa support. */
 
-static int vortex_alsafmt_aspfmt(int alsafmt, vortex_t *v)
+static int vortex_alsafmt_aspfmt(snd_pcm_format_t alsafmt, vortex_t *v)
 {
 	int fmt;
 

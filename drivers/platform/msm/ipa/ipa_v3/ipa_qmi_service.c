@@ -1,14 +1,6 @@
-/* Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2013-2021, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -16,7 +8,6 @@
 #include <linux/errno.h>
 #include <linux/delay.h>
 #include <linux/debugfs.h>
-#include <linux/qmi_encdec.h>
 #include <linux/delay.h>
 #include <linux/uaccess.h>
 #include <soc/qcom/subsystem_restart.h>
@@ -24,6 +15,7 @@
 #include <linux/vmalloc.h>
 
 #include "ipa_qmi_service.h"
+#include "ipa_mhi_proxy.h"
 
 #define IPA_Q6_SVC_VERS 1
 #define IPA_A5_SVC_VERS 1
@@ -36,16 +28,12 @@
 
 #define QMI_SEND_STATS_REQ_TIMEOUT_MS 5000
 #define QMI_SEND_REQ_TIMEOUT_MS 60000
+#define QMI_MHI_SEND_REQ_TIMEOUT_MS 1000
 
 #define QMI_IPA_FORCE_CLEAR_DATAPATH_TIMEOUT_MS 1000
 
 static struct qmi_handle *ipa3_svc_handle;
-static void ipa3_a5_svc_recv_msg(struct work_struct *work);
-static DECLARE_DELAYED_WORK(work_recv_msg, ipa3_a5_svc_recv_msg);
-static struct workqueue_struct *ipa_svc_workqueue;
 static struct workqueue_struct *ipa_clnt_req_workqueue;
-static struct workqueue_struct *ipa_clnt_resp_workqueue;
-static void *curr_conn;
 static bool ipa3_qmi_modem_init_fin, ipa3_qmi_indication_fin;
 static struct work_struct ipa3_qmi_service_init_work;
 static uint32_t ipa_wan_platform;
@@ -53,89 +41,84 @@ struct ipa3_qmi_context *ipa3_qmi_ctx;
 static bool workqueues_stopped;
 static bool ipa3_modem_init_cmplt;
 static bool first_time_handshake;
+static bool send_qmi_init_q6;
 struct mutex ipa3_qmi_lock;
+struct ipa_msg_desc {
+	uint16_t msg_id;
+	int max_msg_len;
+	struct qmi_elem_info *ei_array;
+};
+
+static struct ipa_mhi_prime_aggr_info_req_msg_v01 aggr_req = {
+	.aggr_info_valid = 1,
+	.aggr_info_len = 5,
+	.aggr_info[0] = {
+		.ic_type = DATA_IC_TYPE_MHI_PRIME_V01,
+		.ep_type = DATA_EP_DESC_TYPE_DPL_PROD_V01,
+		.bytes_count = 16,
+	},
+	.aggr_info[1] = {
+		.ic_type = DATA_IC_TYPE_MHI_PRIME_V01,
+		.ep_type = DATA_EP_DESC_TYPE_TETH_CONS_V01,
+		.bytes_count = 24,
+		.aggr_type = DATA_AGGR_TYPE_QMAPv5_V01,
+	},
+	.aggr_info[2] = {
+		.ic_type = DATA_IC_TYPE_MHI_PRIME_V01,
+		.ep_type = DATA_EP_DESC_TYPE_TETH_PROD_V01,
+		.bytes_count = 16,
+		.aggr_type = DATA_AGGR_TYPE_QMAPv5_V01,
+	},
+	.aggr_info[3] = {
+		.ic_type = DATA_IC_TYPE_MHI_PRIME_V01,
+		.ep_type = DATA_EP_DESC_TYPE_TETH_RMNET_CONS_V01,
+		.bytes_count = 31,
+		.aggr_type = DATA_AGGR_TYPE_QMAPv5_V01,
+	},
+	.aggr_info[4] = {
+		.ic_type = DATA_IC_TYPE_MHI_PRIME_V01,
+		.ep_type = DATA_EP_DESC_TYPE_TETH_RMNET_PROD_V01,
+		.bytes_count = 31,
+		.aggr_type = DATA_AGGR_TYPE_QMAPv5_V01,
+	},
+};
 
 /* QMI A5 service */
 
-static struct msg_desc ipa3_indication_reg_req_desc = {
-	.max_msg_len = QMI_IPA_INDICATION_REGISTER_REQ_MAX_MSG_LEN_V01,
-	.msg_id = QMI_IPA_INDICATION_REGISTER_REQ_V01,
-	.ei_array = ipa3_indication_reg_req_msg_data_v01_ei,
-};
-static struct msg_desc ipa3_indication_reg_resp_desc = {
-	.max_msg_len = QMI_IPA_INDICATION_REGISTER_RESP_MAX_MSG_LEN_V01,
-	.msg_id = QMI_IPA_INDICATION_REGISTER_RESP_V01,
-	.ei_array = ipa3_indication_reg_resp_msg_data_v01_ei,
-};
-static struct msg_desc ipa3_master_driver_complete_indication_desc = {
-	.max_msg_len = QMI_IPA_MASTER_DRIVER_INIT_COMPLETE_IND_MAX_MSG_LEN_V01,
-	.msg_id = QMI_IPA_MASTER_DRIVER_INIT_COMPLETE_IND_V01,
-	.ei_array = ipa3_master_driver_init_complt_ind_msg_data_v01_ei,
-};
-static struct msg_desc ipa3_install_fltr_rule_req_desc = {
-	.max_msg_len = QMI_IPA_INSTALL_FILTER_RULE_REQ_MAX_MSG_LEN_V01,
-	.msg_id = QMI_IPA_INSTALL_FILTER_RULE_REQ_V01,
-	.ei_array = ipa3_install_fltr_rule_req_msg_data_v01_ei,
-};
-static struct msg_desc ipa3_install_fltr_rule_resp_desc = {
-	.max_msg_len = QMI_IPA_INSTALL_FILTER_RULE_RESP_MAX_MSG_LEN_V01,
-	.msg_id = QMI_IPA_INSTALL_FILTER_RULE_RESP_V01,
-	.ei_array = ipa3_install_fltr_rule_resp_msg_data_v01_ei,
-};
-static struct msg_desc ipa3_filter_installed_notif_req_desc = {
-	.max_msg_len = QMI_IPA_FILTER_INSTALLED_NOTIF_REQ_MAX_MSG_LEN_V01,
-	.msg_id = QMI_IPA_FILTER_INSTALLED_NOTIF_REQ_V01,
-	.ei_array = ipa3_fltr_installed_notif_req_msg_data_v01_ei,
-};
-static struct msg_desc ipa3_filter_installed_notif_resp_desc = {
-	.max_msg_len = QMI_IPA_FILTER_INSTALLED_NOTIF_RESP_MAX_MSG_LEN_V01,
-	.msg_id = QMI_IPA_FILTER_INSTALLED_NOTIF_RESP_V01,
-	.ei_array = ipa3_fltr_installed_notif_resp_msg_data_v01_ei,
-};
-static struct msg_desc ipa3_config_req_desc = {
-	.max_msg_len = QMI_IPA_CONFIG_REQ_MAX_MSG_LEN_V01,
-	.msg_id = QMI_IPA_CONFIG_REQ_V01,
-	.ei_array = ipa3_config_req_msg_data_v01_ei,
-};
-static struct msg_desc ipa3_config_resp_desc = {
-	.max_msg_len = QMI_IPA_CONFIG_RESP_MAX_MSG_LEN_V01,
-	.msg_id = QMI_IPA_CONFIG_RESP_V01,
-	.ei_array = ipa3_config_resp_msg_data_v01_ei,
-};
-
-static struct msg_desc ipa3_init_modem_driver_cmplt_req_desc = {
-	.max_msg_len = QMI_IPA_INIT_MODEM_DRIVER_CMPLT_REQ_MAX_MSG_LEN_V01,
-	.msg_id = QMI_IPA_INIT_MODEM_DRIVER_CMPLT_REQ_V01,
-	.ei_array = ipa3_init_modem_driver_cmplt_req_msg_data_v01_ei,
-};
-
-static struct msg_desc ipa3_init_modem_driver_cmplt_resp_desc = {
-	.max_msg_len = QMI_IPA_INIT_MODEM_DRIVER_CMPLT_RESP_MAX_MSG_LEN_V01,
-	.msg_id = QMI_IPA_INIT_MODEM_DRIVER_CMPLT_RESP_V01,
-	.ei_array = ipa3_init_modem_driver_cmplt_resp_msg_data_v01_ei,
-};
-
-static struct msg_desc ipa3_install_fltr_rule_req_ex_desc = {
-	.max_msg_len = QMI_IPA_INSTALL_FILTER_RULE_EX_REQ_MAX_MSG_LEN_V01,
-	.msg_id = QMI_IPA_INSTALL_FILTER_RULE_EX_REQ_V01,
-	.ei_array = ipa3_install_fltr_rule_req_ex_msg_data_v01_ei,
-};
-
-static int ipa3_handle_indication_req(void *req_h, void *req)
+static void ipa3_handle_indication_req(struct qmi_handle *qmi_handle,
+	struct sockaddr_qrtr *sq,
+	struct qmi_txn *txn,
+	const void *decoded_msg)
 {
 	struct ipa_indication_reg_req_msg_v01 *indication_req;
 	struct ipa_indication_reg_resp_msg_v01 resp;
 	struct ipa_master_driver_init_complt_ind_msg_v01 ind;
 	int rc;
 
-	indication_req = (struct ipa_indication_reg_req_msg_v01 *)req;
+	indication_req = (struct ipa_indication_reg_req_msg_v01 *)decoded_msg;
 	IPAWANDBG("Received INDICATION Request\n");
+
+	/* cache the client sq */
+	memcpy(&ipa3_qmi_ctx->client_sq, sq, sizeof(*sq));
 
 	memset(&resp, 0, sizeof(struct ipa_indication_reg_resp_msg_v01));
 	resp.resp.result = IPA_QMI_RESULT_SUCCESS_V01;
-	rc = qmi_send_resp_from_cb(ipa3_svc_handle, curr_conn, req_h,
-			&ipa3_indication_reg_resp_desc, &resp, sizeof(resp));
+
+	IPAWANDBG("qmi_snd_rsp: result %d, err %d\n",
+		resp.resp.result, resp.resp.error);
+	rc = qmi_send_response(qmi_handle, sq, txn,
+		QMI_IPA_INDICATION_REGISTER_RESP_V01,
+		QMI_IPA_INDICATION_REGISTER_RESP_MAX_MSG_LEN_V01,
+		ipa3_indication_reg_resp_msg_data_v01_ei,
+		&resp);
+
+	if (rc < 0) {
+		IPAWANERR("send response for Indication register failed\n");
+		return;
+	}
+
 	ipa3_qmi_indication_fin = true;
+
 	/* check if need sending indication to modem */
 	if (ipa3_qmi_modem_init_fin)	{
 		IPAWANDBG("send indication to modem (%d)\n",
@@ -144,33 +127,45 @@ static int ipa3_handle_indication_req(void *req_h, void *req)
 				ipa_master_driver_init_complt_ind_msg_v01));
 		ind.master_driver_init_status.result =
 			IPA_QMI_RESULT_SUCCESS_V01;
-		rc = qmi_send_ind_from_cb(ipa3_svc_handle, curr_conn,
-			&ipa3_master_driver_complete_indication_desc,
-			&ind,
-			sizeof(ind));
+
+		rc = qmi_send_indication(qmi_handle,
+			&(ipa3_qmi_ctx->client_sq),
+			QMI_IPA_MASTER_DRIVER_INIT_COMPLETE_IND_V01,
+			QMI_IPA_MASTER_DRIVER_INIT_COMPLETE_IND_MAX_MSG_LEN_V01,
+			ipa3_master_driver_init_complt_ind_msg_data_v01_ei,
+			&ind);
+
+		if (rc < 0) {
+			IPAWANERR("send indication failed\n");
+			ipa3_qmi_indication_fin = false;
+		}
 	} else {
 		IPAWANERR("not send indication\n");
 	}
-	return rc;
 }
 
-
-static int ipa3_handle_install_filter_rule_req(void *req_h, void *req)
+static void ipa3_handle_install_filter_rule_req(struct qmi_handle *qmi_handle,
+	struct sockaddr_qrtr *sq,
+	struct qmi_txn *txn,
+	const void *decoded_msg)
 {
 	struct ipa_install_fltr_rule_req_msg_v01 *rule_req;
 	struct ipa_install_fltr_rule_resp_msg_v01 resp;
 	uint32_t rule_hdl[MAX_NUM_Q6_RULE];
 	int rc = 0, i;
 
-	rule_req = (struct ipa_install_fltr_rule_req_msg_v01 *)req;
+	rule_req = (struct ipa_install_fltr_rule_req_msg_v01 *)decoded_msg;
 	memset(rule_hdl, 0, sizeof(rule_hdl));
 	memset(&resp, 0, sizeof(struct ipa_install_fltr_rule_resp_msg_v01));
 	IPAWANDBG("Received install filter Request\n");
 
 	rc = ipa3_copy_ul_filter_rule_to_ipa((struct
-		ipa_install_fltr_rule_req_msg_v01*)req);
-	if (rc)
+		ipa_install_fltr_rule_req_msg_v01*)decoded_msg);
+
+	if (rc) {
 		IPAWANERR("copy UL rules from modem is failed\n");
+		return;
+	}
 
 	resp.resp.result = IPA_QMI_RESULT_SUCCESS_V01;
 	if (rule_req->filter_spec_ex_list_valid == true) {
@@ -196,14 +191,25 @@ static int ipa3_handle_install_filter_rule_req(void *req_h, void *req)
 			rule_req->filter_spec_ex_list[i].rule_id;
 	}
 
-	rc = qmi_send_resp_from_cb(ipa3_svc_handle, curr_conn, req_h,
-			&ipa3_install_fltr_rule_resp_desc, &resp, sizeof(resp));
+	IPAWANDBG("qmi_snd_rsp: result %d, err %d\n",
+		resp.resp.result, resp.resp.error);
+	rc = qmi_send_response(qmi_handle, sq, txn,
+		QMI_IPA_INSTALL_FILTER_RULE_RESP_V01,
+		QMI_IPA_INSTALL_FILTER_RULE_RESP_MAX_MSG_LEN_V01,
+		ipa3_install_fltr_rule_resp_msg_data_v01_ei,
+		&resp);
 
-	IPAWANDBG("Replied to install filter request\n");
-	return rc;
+	if (rc < 0)
+		IPAWANERR("install filter rules failed\n");
+	else
+		IPAWANDBG("Replied to install filter request\n");
 }
 
-static int ipa3_handle_filter_installed_notify_req(void *req_h, void *req)
+static void ipa3_handle_filter_installed_notify_req(
+	struct qmi_handle *qmi_handle,
+	struct sockaddr_qrtr *sq,
+	struct qmi_txn *txn,
+	const void *decoded_msg)
 {
 	struct ipa_fltr_installed_notif_resp_msg_v01 resp;
 	int rc = 0;
@@ -212,15 +218,24 @@ static int ipa3_handle_filter_installed_notify_req(void *req_h, void *req)
 	IPAWANDBG("Received filter_install_notify Request\n");
 	resp.resp.result = IPA_QMI_RESULT_SUCCESS_V01;
 
-	rc = qmi_send_resp_from_cb(ipa3_svc_handle, curr_conn, req_h,
-			&ipa3_filter_installed_notif_resp_desc,
-			&resp, sizeof(resp));
+	IPAWANDBG("qmi_snd_rsp: result %d, err %d\n",
+		resp.resp.result, resp.resp.error);
+	rc = qmi_send_response(qmi_handle, sq, txn,
+		QMI_IPA_FILTER_INSTALLED_NOTIF_RESP_V01,
+		QMI_IPA_FILTER_INSTALLED_NOTIF_RESP_MAX_MSG_LEN_V01,
+		ipa3_fltr_installed_notif_resp_msg_data_v01_ei,
+		&resp);
 
-	IPAWANDBG("Responsed filter_install_notify Request\n");
-	return rc;
+	if (rc < 0)
+		IPAWANERR("handle filter rules failed\n");
+	else
+		IPAWANDBG("Responsed filter_install_notify Request\n");
 }
 
-static int handle_ipa_config_req(void *req_h, void *req)
+static void handle_ipa_config_req(struct qmi_handle *qmi_handle,
+	struct sockaddr_qrtr *sq,
+	struct qmi_txn *txn,
+	const void *decoded_msg)
 {
 	struct ipa_config_resp_msg_v01 resp;
 	int rc;
@@ -229,191 +244,189 @@ static int handle_ipa_config_req(void *req_h, void *req)
 	resp.resp.result = IPA_QMI_RESULT_SUCCESS_V01;
 	IPAWANDBG("Received IPA CONFIG Request\n");
 	rc = ipa_mhi_handle_ipa_config_req(
-		(struct ipa_config_req_msg_v01 *)req);
+		(struct ipa_config_req_msg_v01 *)decoded_msg);
 	if (rc) {
 		IPAERR("ipa3_mhi_handle_ipa_config_req failed %d\n", rc);
 		resp.resp.result = IPA_QMI_RESULT_FAILURE_V01;
 	}
-	rc = qmi_send_resp_from_cb(ipa3_svc_handle, curr_conn, req_h,
-		&ipa3_config_resp_desc,
-		&resp, sizeof(resp));
-	IPAWANDBG("Responsed IPA CONFIG Request\n");
-	return rc;
+
+	IPAWANDBG("qmi_snd_rsp: result %d, err %d\n",
+		resp.resp.result, resp.resp.error);
+	rc = qmi_send_response(qmi_handle, sq, txn,
+		QMI_IPA_CONFIG_RESP_V01,
+		QMI_IPA_CONFIG_RESP_MAX_MSG_LEN_V01,
+		ipa3_config_resp_msg_data_v01_ei,
+		&resp);
+
+	if (rc < 0)
+		IPAWANERR("QMI_IPA_CONFIG_RESP_V01 failed\n");
+	else
+		IPAWANDBG("Responsed QMI_IPA_CONFIG_RESP_V01\n");
 }
 
-static int ipa3_handle_modem_init_cmplt_req(void *req_h, void *req)
+static void ipa3_handle_modem_init_cmplt_req(struct qmi_handle *qmi_handle,
+	struct sockaddr_qrtr *sq,
+	struct qmi_txn *txn,
+	const void *decoded_msg)
 {
 	struct ipa_init_modem_driver_cmplt_req_msg_v01 *cmplt_req;
 	struct ipa_init_modem_driver_cmplt_resp_msg_v01 resp;
 	int rc;
 
 	IPAWANDBG("Received QMI_IPA_INIT_MODEM_DRIVER_CMPLT_REQ_V01\n");
-	cmplt_req = (struct ipa_init_modem_driver_cmplt_req_msg_v01 *)req;
+	cmplt_req = (struct ipa_init_modem_driver_cmplt_req_msg_v01 *)
+		decoded_msg;
 
-	if (ipa3_modem_init_cmplt == false) {
+	if (!ipa3_modem_init_cmplt) {
 		ipa3_modem_init_cmplt = true;
-		if (ipa3_qmi_modem_init_fin == true) {
-			IPAWANDBG("load uc related registers (%d)\n",
-			ipa3_qmi_modem_init_fin);
-			ipa3_uc_load_notify();
-		}
 	}
 
 	memset(&resp, 0, sizeof(resp));
 	resp.resp.result = IPA_QMI_RESULT_SUCCESS_V01;
 
-	rc = qmi_send_resp_from_cb(ipa3_svc_handle, curr_conn, req_h,
-			&ipa3_init_modem_driver_cmplt_resp_desc,
-			&resp, sizeof(resp));
+	IPAWANDBG("qmi_snd_rsp: result %d, err %d\n",
+		resp.resp.result, resp.resp.error);
+	rc = qmi_send_response(qmi_handle, sq, txn,
+		QMI_IPA_INIT_MODEM_DRIVER_CMPLT_RESP_V01,
+		QMI_IPA_INIT_MODEM_DRIVER_CMPLT_RESP_MAX_MSG_LEN_V01,
+		ipa3_init_modem_driver_cmplt_resp_msg_data_v01_ei,
+		&resp);
 
-	IPAWANDBG("Sent QMI_IPA_INIT_MODEM_DRIVER_CMPLT_RESP_V01\n");
-	return rc;
+
+	if (rc < 0)
+		IPAWANERR("QMI_IPA_INIT_MODEM_DRIVER_CMPLT_RESP_V01 failed\n");
+	else
+		IPAWANDBG("Sent QMI_IPA_INIT_MODEM_DRIVER_CMPLT_RESP_V01\n");
 }
 
-static int ipa3_a5_svc_connect_cb(struct qmi_handle *handle,
-			       void *conn_h)
+static void ipa3_handle_mhi_alloc_channel_req(struct qmi_handle *qmi_handle,
+	struct sockaddr_qrtr *sq,
+	struct qmi_txn *txn,
+	const void *decoded_msg)
 {
-	if (ipa3_svc_handle != handle || !conn_h)
-		return -EINVAL;
-
-	if (curr_conn) {
-		IPAWANERR("Service is busy\n");
-		return -ECONNREFUSED;
-	}
-	curr_conn = conn_h;
-	return 0;
-}
-
-static int ipa3_a5_svc_disconnect_cb(struct qmi_handle *handle,
-				  void *conn_h)
-{
-	if (ipa3_svc_handle != handle || curr_conn != conn_h)
-		return -EINVAL;
-
-	curr_conn = NULL;
-	return 0;
-}
-
-static int ipa3_a5_svc_req_desc_cb(unsigned int msg_id,
-				struct msg_desc **req_desc)
-{
+	struct ipa_mhi_alloc_channel_req_msg_v01 *ch_alloc_req;
+	struct ipa_mhi_alloc_channel_resp_msg_v01 *resp = NULL;
 	int rc;
 
-	switch (msg_id) {
-	case QMI_IPA_INDICATION_REGISTER_REQ_V01:
-		*req_desc = &ipa3_indication_reg_req_desc;
-		rc = sizeof(struct ipa_indication_reg_req_msg_v01);
-		break;
+	IPAWANDBG("Received QMI_IPA_MHI_ALLOC_CHANNEL_REQ_V01\n");
+	ch_alloc_req = (struct ipa_mhi_alloc_channel_req_msg_v01 *)decoded_msg;
 
-	case QMI_IPA_INSTALL_FILTER_RULE_REQ_V01:
-		*req_desc = &ipa3_install_fltr_rule_req_desc;
-		rc = sizeof(struct ipa_install_fltr_rule_req_msg_v01);
-		break;
-	case QMI_IPA_INSTALL_FILTER_RULE_EX_REQ_V01:
-		*req_desc = &ipa3_install_fltr_rule_req_ex_desc;
-		rc = sizeof(struct ipa_install_fltr_rule_req_ex_msg_v01);
-		break;
-	case QMI_IPA_FILTER_INSTALLED_NOTIF_REQ_V01:
-		*req_desc = &ipa3_filter_installed_notif_req_desc;
-		rc = sizeof(struct ipa_fltr_installed_notif_req_msg_v01);
-		break;
-	case QMI_IPA_CONFIG_REQ_V01:
-		*req_desc = &ipa3_config_req_desc;
-		rc = sizeof(struct ipa_config_req_msg_v01);
-		break;
-	case QMI_IPA_INIT_MODEM_DRIVER_CMPLT_REQ_V01:
-		*req_desc = &ipa3_init_modem_driver_cmplt_req_desc;
-		rc = sizeof(struct ipa_init_modem_driver_cmplt_req_msg_v01);
-		break;
-	default:
-		rc = -ENOTSUPP;
-		break;
+	resp = imp_handle_allocate_channel_req(ch_alloc_req);
+	if (!resp) {
+		IPAWANERR("imp handle allocate channel req fails\n");
+		return;
 	}
-	return rc;
+
+	IPAWANDBG("qmi_snd_rsp: result %d, err %d, arr_vald: %d, arr_len %d\n",
+		resp->resp.result, resp->resp.error, resp->alloc_resp_arr_valid,
+		resp->alloc_resp_arr_len);
+	rc = qmi_send_response(qmi_handle, sq, txn,
+		QMI_IPA_MHI_ALLOC_CHANNEL_RESP_V01,
+		IPA_MHI_ALLOC_CHANNEL_RESP_MSG_V01_MAX_MSG_LEN,
+		ipa_mhi_alloc_channel_resp_msg_v01_ei,
+		resp);
+
+	if (rc < 0)
+		IPAWANERR("QMI_IPA_MHI_ALLOC_CHANNEL_RESP_V01 failed\n");
+	else
+		IPAWANDBG("Sent QMI_IPA_MHI_ALLOC_CHANNEL_RESP_V01\n");
 }
 
-static int ipa3_a5_svc_req_cb(struct qmi_handle *handle, void *conn_h,
-			void *req_h, unsigned int msg_id, void *req)
+static void ipa3_handle_mhi_vote_req(struct qmi_handle *qmi_handle,
+	struct sockaddr_qrtr *sq,
+	struct qmi_txn *txn,
+	const void *decoded_msg)
 {
+	struct ipa_mhi_clk_vote_req_msg_v01 *vote_req;
+	struct ipa_mhi_clk_vote_resp_msg_v01 *resp = NULL, resp2;
 	int rc;
+	uint32_t bw_mbps = 0;
 
-	if (ipa3_svc_handle != handle || curr_conn != conn_h)
-		return -EINVAL;
+	vote_req = (struct ipa_mhi_clk_vote_req_msg_v01 *)decoded_msg;
+	IPAWANDBG("Received QMI_IPA_MHI_CLK_VOTE_REQ_V01(%d)\n",
+		vote_req->mhi_vote);
 
-	switch (msg_id) {
-	case QMI_IPA_INDICATION_REGISTER_REQ_V01:
-		rc = ipa3_handle_indication_req(req_h, req);
-		break;
-	case QMI_IPA_INSTALL_FILTER_RULE_REQ_V01:
-		rc = ipa3_handle_install_filter_rule_req(req_h, req);
-		rc = ipa3_wwan_update_mux_channel_prop();
-		break;
-	case QMI_IPA_FILTER_INSTALLED_NOTIF_REQ_V01:
-		rc = ipa3_handle_filter_installed_notify_req(req_h, req);
-		break;
-	case QMI_IPA_CONFIG_REQ_V01:
-		rc = handle_ipa_config_req(req_h, req);
-		break;
-	case QMI_IPA_INIT_MODEM_DRIVER_CMPLT_REQ_V01:
-		rc = ipa3_handle_modem_init_cmplt_req(req_h, req);
-		break;
-	default:
-		rc = -ENOTSUPP;
-		break;
+	memset(&resp2, 0, sizeof(struct ipa_mhi_clk_vote_resp_msg_v01));
+
+	/* for mpm used for ipa clk voting */
+	if (ipa3_is_apq()) {
+		IPAWANDBG("Throughput(%d:%d) clk-rate(%d:%d)\n",
+			vote_req->tput_value_valid,
+			vote_req->tput_value,
+			vote_req->clk_rate_valid,
+			vote_req->clk_rate);
+		if (vote_req->clk_rate_valid) {
+			switch (vote_req->clk_rate) {
+			case QMI_IPA_CLOCK_RATE_LOW_SVS_V01:
+				bw_mbps = 0;
+				break;
+			case QMI_IPA_CLOCK_RATE_SVS_V01:
+				bw_mbps = 350;
+				break;
+			case QMI_IPA_CLOCK_RATE_NOMINAL_V01:
+				bw_mbps = 690;
+				break;
+			case QMI_IPA_CLOCK_RATE_TURBO_V01:
+				bw_mbps = 1200;
+				break;
+			default:
+				IPAWANERR("Note supported clk_rate (%d)\n",
+				vote_req->clk_rate);
+				bw_mbps = 0;
+				resp2.resp.result = IPA_QMI_RESULT_FAILURE_V01;
+				resp2.resp.error =
+					IPA_QMI_ERR_NOT_SUPPORTED_V01;
+				break;
+			}
+			if (ipa3_vote_for_bus_bw(&bw_mbps)) {
+				IPAWANERR("Failed to vote BW (%u)\n", bw_mbps);
+				resp2.resp.result = IPA_QMI_RESULT_FAILURE_V01;
+				resp2.resp.error =
+					IPA_QMI_ERR_NOT_SUPPORTED_V01;
+			}
+			resp = &resp2;
+		} else {
+			IPAWANERR("clk_rate_valid is false\n");
+			return;
+		}
+	} else {
+		resp = imp_handle_vote_req(vote_req->mhi_vote);
+		if (!resp) {
+			IPAWANERR("imp handle vote req fails\n");
+			return;
+		}
+		IPAWANDBG("start sending QMI_IPA_MHI_CLK_VOTE_RESP_V01\n");
 	}
-	return rc;
+
+	IPAWANDBG("qmi_snd_rsp: result %d, err %d\n",
+		resp->resp.result, resp->resp.error);
+	rc = qmi_send_response(qmi_handle, sq, txn,
+		QMI_IPA_MHI_CLK_VOTE_RESP_V01,
+		IPA_MHI_CLK_VOTE_RESP_MSG_V01_MAX_MSG_LEN,
+		ipa_mhi_clk_vote_resp_msg_v01_ei,
+		resp);
+
+	if (rc < 0)
+		IPAWANERR("QMI_IPA_MHI_CLK_VOTE_RESP_V01 failed\n");
+	else
+		IPAWANDBG("Finished senting QMI_IPA_MHI_CLK_VOTE_RESP_V01\n");
 }
 
-static void ipa3_a5_svc_recv_msg(struct work_struct *work)
+static void ipa3_a5_svc_disconnect_cb(struct qmi_handle *qmi,
+	unsigned int node, unsigned int port)
 {
-	int rc;
-
-	do {
-		IPAWANDBG_LOW("Notified about a Receive Event");
-		rc = qmi_recv_msg(ipa3_svc_handle);
-	} while (rc == 0);
-	if (rc != -ENOMSG)
-		IPAWANERR("Error receiving message\n");
+	IPAWANDBG_LOW("Received QMI client disconnect\n");
 }
-
-static void qmi_ipa_a5_svc_ntfy(struct qmi_handle *handle,
-		enum qmi_event_type event, void *priv)
-{
-	switch (event) {
-	case QMI_RECV_MSG:
-		if (!workqueues_stopped)
-			queue_delayed_work(ipa_svc_workqueue,
-					   &work_recv_msg, 0);
-		break;
-	default:
-		break;
-	}
-}
-
-static struct qmi_svc_ops_options ipa3_a5_svc_ops_options = {
-	.version = 1,
-	.service_id = IPA_A5_SERVICE_SVC_ID,
-	.service_vers = IPA_A5_SVC_VERS,
-	.service_ins = IPA_A5_SERVICE_INS_ID,
-	.connect_cb = ipa3_a5_svc_connect_cb,
-	.disconnect_cb = ipa3_a5_svc_disconnect_cb,
-	.req_desc_cb = ipa3_a5_svc_req_desc_cb,
-	.req_cb = ipa3_a5_svc_req_cb,
-};
-
 
 /****************************************************/
 /*                 QMI A5 client ->Q6               */
 /****************************************************/
-static void ipa3_q6_clnt_recv_msg(struct work_struct *work);
-static DECLARE_DELAYED_WORK(ipa3_work_recv_msg_client, ipa3_q6_clnt_recv_msg);
 static void ipa3_q6_clnt_svc_arrive(struct work_struct *work);
 static DECLARE_DELAYED_WORK(ipa3_work_svc_arrive, ipa3_q6_clnt_svc_arrive);
 static void ipa3_q6_clnt_svc_exit(struct work_struct *work);
 static DECLARE_DELAYED_WORK(ipa3_work_svc_exit, ipa3_q6_clnt_svc_exit);
 /* Test client port for IPC Router */
 static struct qmi_handle *ipa_q6_clnt;
-static int ipa_q6_clnt_reset;
 
 static int ipa3_check_qmi_response(int rc,
 				  int req_id,
@@ -447,13 +460,54 @@ static int ipa3_check_qmi_response(int rc,
 	return 0;
 }
 
+static int ipa3_qmi_send_req_wait(struct qmi_handle *client_handle,
+	struct ipa_msg_desc *req_desc, void *req,
+	struct ipa_msg_desc *resp_desc, void *resp,
+	unsigned long timeout_ms)
+{
+	struct qmi_txn txn;
+	int ret;
+
+	ret = qmi_txn_init(client_handle, &txn, resp_desc->ei_array, resp);
+
+	if (ret < 0) {
+		IPAWANERR("QMI txn init failed, ret= %d\n", ret);
+		return ret;
+	}
+
+	mutex_lock(&ipa3_qmi_lock);
+	ret = qmi_send_request(client_handle,
+		&ipa3_qmi_ctx->server_sq,
+		&txn,
+		req_desc->msg_id,
+		req_desc->max_msg_len,
+		req_desc->ei_array,
+		req);
+
+	if (unlikely(!ipa_q6_clnt)) {
+		mutex_unlock(&ipa3_qmi_lock);
+		return -EINVAL;
+	}
+
+	mutex_unlock(&ipa3_qmi_lock);
+
+	if (ret < 0) {
+		qmi_txn_cancel(&txn);
+		return ret;
+	}
+	ret = qmi_txn_wait(&txn, msecs_to_jiffies(timeout_ms));
+
+	return ret;
+}
+
 static int ipa3_qmi_init_modem_send_sync_msg(void)
 {
 	struct ipa_init_modem_driver_req_msg_v01 req;
 	struct ipa_init_modem_driver_resp_msg_v01 resp;
-	struct msg_desc req_desc, resp_desc;
+	struct ipa_msg_desc req_desc, resp_desc;
 	int rc;
 	u16 smem_restr_bytes = ipa3_get_smem_restr_bytes();
+	int wan_cons_ep;
 
 	memset(&req, 0, sizeof(struct ipa_init_modem_driver_req_msg_v01));
 	memset(&resp, 0, sizeof(struct ipa_init_modem_driver_resp_msg_v01));
@@ -492,9 +546,16 @@ static int ipa3_qmi_init_modem_send_sync_msg(void)
 		IPA_MEM_PART(modem_ofst) + smem_restr_bytes;
 	req.modem_mem_info.size = IPA_MEM_PART(modem_size);
 
-	req.ctrl_comm_dest_end_pt_valid = true;
-	req.ctrl_comm_dest_end_pt =
-		ipa3_get_ep_mapping(IPA_CLIENT_APPS_WAN_CONS);
+	wan_cons_ep = ipa_get_ep_mapping(IPA_CLIENT_APPS_WAN_CONS);
+	if (wan_cons_ep == IPA_EP_NOT_ALLOCATED) {
+		IPAWANDBG("APPS_WAN_CONS is not valid\n");
+		req.ctrl_comm_dest_end_pt_valid = false;
+		req.ctrl_comm_dest_end_pt = 0;
+	} else {
+		req.ctrl_comm_dest_end_pt_valid = true;
+		req.ctrl_comm_dest_end_pt =
+			ipa3_get_ep_mapping(IPA_CLIENT_APPS_WAN_CONS);
+	}
 
 	req.hdr_proc_ctx_tbl_info_valid =
 		(IPA_MEM_PART(modem_hdr_proc_ctx_size) != 0);
@@ -511,25 +572,43 @@ static int ipa3_qmi_init_modem_send_sync_msg(void)
 		IPA_MEM_PART(modem_comp_decomp_ofst) +
 		IPA_MEM_PART(modem_comp_decomp_size) + smem_restr_bytes - 1;
 
-	req.v4_hash_route_tbl_info_valid = true;
-	req.v4_hash_route_tbl_info.route_tbl_start_addr =
-		IPA_MEM_PART(v4_rt_hash_ofst) + smem_restr_bytes;
-	req.v4_hash_route_tbl_info.num_indices =
-		IPA_MEM_PART(v4_modem_rt_index_hi);
+	/* if hashing not supported, Modem filter/routing hash
+	 * tables should not fill with valid data.
+	 */
+	if (!ipa3_ctx->ipa_fltrt_not_hashable) {
+		req.v4_hash_route_tbl_info_valid = true;
+		req.v4_hash_route_tbl_info.route_tbl_start_addr =
+			IPA_MEM_PART(v4_rt_hash_ofst) + smem_restr_bytes;
+		req.v4_hash_route_tbl_info.num_indices =
+			IPA_MEM_PART(v4_modem_rt_index_hi);
 
-	req.v6_hash_route_tbl_info_valid = true;
-	req.v6_hash_route_tbl_info.route_tbl_start_addr =
-		IPA_MEM_PART(v6_rt_hash_ofst) + smem_restr_bytes;
-	req.v6_hash_route_tbl_info.num_indices =
-		IPA_MEM_PART(v6_modem_rt_index_hi);
+		req.v6_hash_route_tbl_info_valid = true;
+		req.v6_hash_route_tbl_info.route_tbl_start_addr =
+			IPA_MEM_PART(v6_rt_hash_ofst) + smem_restr_bytes;
+		req.v6_hash_route_tbl_info.num_indices =
+			IPA_MEM_PART(v6_modem_rt_index_hi);
 
-	req.v4_hash_filter_tbl_start_addr_valid = true;
-	req.v4_hash_filter_tbl_start_addr =
-		IPA_MEM_PART(v4_flt_hash_ofst) + smem_restr_bytes;
+		req.v4_hash_filter_tbl_start_addr_valid = true;
+		req.v4_hash_filter_tbl_start_addr =
+			IPA_MEM_PART(v4_flt_hash_ofst) + smem_restr_bytes;
 
-	req.v6_hash_filter_tbl_start_addr_valid = true;
-	req.v6_hash_filter_tbl_start_addr =
-		IPA_MEM_PART(v6_flt_hash_ofst) + smem_restr_bytes;
+		req.v6_hash_filter_tbl_start_addr_valid = true;
+		req.v6_hash_filter_tbl_start_addr =
+			IPA_MEM_PART(v6_flt_hash_ofst) + smem_restr_bytes;
+	}
+	req.hw_stats_quota_base_addr_valid = true;
+	req.hw_stats_quota_base_addr =
+		IPA_MEM_PART(stats_quota_q6_ofst) + smem_restr_bytes;
+
+	req.hw_stats_quota_size_valid = true;
+	req.hw_stats_quota_size = IPA_MEM_PART(stats_quota_q6_size);
+
+	req.hw_drop_stats_base_addr_valid = true;
+	req.hw_drop_stats_base_addr =
+		IPA_MEM_PART(stats_drop_ofst) + smem_restr_bytes;
+
+	req.hw_drop_stats_table_size_valid = true;
+	req.hw_drop_stats_table_size = IPA_MEM_PART(stats_drop_size);
 
 	if (!ipa3_uc_loaded_check()) {  /* First time boot */
 		req.is_ssr_bootup_valid = false;
@@ -588,9 +667,18 @@ static int ipa3_qmi_init_modem_send_sync_msg(void)
 	pr_info("Sending QMI_IPA_INIT_MODEM_DRIVER_REQ_V01\n");
 	if (unlikely(!ipa_q6_clnt))
 		return -ETIMEDOUT;
-	rc = qmi_send_req_wait(ipa_q6_clnt, &req_desc, &req, sizeof(req),
-			&resp_desc, &resp, sizeof(resp),
-			QMI_SEND_REQ_TIMEOUT_MS);
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, &req,
+		&resp_desc, &resp,
+		QMI_SEND_REQ_TIMEOUT_MS);
+
+	if (rc < 0) {
+		IPAWANERR("QMI send Req %d failed, rc= %d\n",
+			QMI_IPA_INIT_MODEM_DRIVER_REQ_V01,
+			rc);
+		return rc;
+	}
+
 	pr_info("QMI_IPA_INIT_MODEM_DRIVER_REQ_V01 response received\n");
 	return ipa3_check_qmi_response(rc,
 		QMI_IPA_INIT_MODEM_DRIVER_REQ_V01, resp.resp.result,
@@ -601,7 +689,7 @@ static int ipa3_qmi_init_modem_send_sync_msg(void)
 int ipa3_qmi_filter_request_send(struct ipa_install_fltr_rule_req_msg_v01 *req)
 {
 	struct ipa_install_fltr_rule_resp_msg_v01 resp;
-	struct msg_desc req_desc, resp_desc;
+	struct ipa_msg_desc req_desc, resp_desc;
 	int rc;
 	int i;
 
@@ -614,11 +702,12 @@ int ipa3_qmi_filter_request_send(struct ipa_install_fltr_rule_req_msg_v01 *req)
 	}
 
 	/* check if the filter rules from IPACM is valid */
-	if (req->filter_spec_list_len == 0)
+	if (req->filter_spec_list_len == 0) {
 		IPAWANDBG("IPACM pass zero rules to Q6\n");
-	else
+	} else {
 		IPAWANDBG("IPACM pass %u rules to Q6\n",
-			req->filter_spec_list_len);
+		req->filter_spec_list_len);
+	}
 
 	if (req->filter_spec_list_len >= QMI_IPA_MAX_FILTERS_V01) {
 		IPAWANDBG(
@@ -647,7 +736,7 @@ int ipa3_qmi_filter_request_send(struct ipa_install_fltr_rule_req_msg_v01 *req)
 			== false)
 			return -EINVAL;
 		if ((req->filter_spec_list[i].filter_action <=
-			QMI_IPA_FILTER_ACTION_INVALID_V01) &&
+			QMI_IPA_FILTER_ACTION_INVALID_V01) ||
 			(req->filter_spec_list[i].filter_action >
 			QMI_IPA_FILTER_ACTION_EXCEPTION_V01))
 			return -EINVAL;
@@ -677,14 +766,59 @@ int ipa3_qmi_filter_request_send(struct ipa_install_fltr_rule_req_msg_v01 *req)
 
 	if (unlikely(!ipa_q6_clnt))
 		return -ETIMEDOUT;
-	rc = qmi_send_req_wait(ipa_q6_clnt, &req_desc,
-			req,
-			sizeof(struct ipa_install_fltr_rule_req_msg_v01),
-			&resp_desc, &resp, sizeof(resp),
-			QMI_SEND_REQ_TIMEOUT_MS);
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, req,
+		&resp_desc, &resp,
+		QMI_SEND_REQ_TIMEOUT_MS);
+
+	if (rc < 0) {
+		IPAWANERR("QMI send Req %d failed, rc= %d\n",
+			QMI_IPA_INSTALL_FILTER_RULE_REQ_V01,
+			rc);
+		return rc;
+	}
+
 	return ipa3_check_qmi_response(rc,
 		QMI_IPA_INSTALL_FILTER_RULE_REQ_V01, resp.resp.result,
 		resp.resp.error, "ipa_install_filter");
+}
+
+static int ipa3_qmi_filter_request_ex_calc_length(
+	struct ipa_install_fltr_rule_req_ex_msg_v01 *req)
+{
+	int len = 0;
+
+	/* caller should validate and send the req */
+	/* instead of sending max length,the approximate length is calculated */
+	len += ((sizeof(struct ipa_install_fltr_rule_req_ex_msg_v01)) -
+		(QMI_IPA_MAX_FILTERS_EX_V01 *
+		sizeof(struct ipa_filter_spec_ex_type_v01) -
+		QMI_IPA_MAX_FILTERS_EX_V01 * sizeof(uint32_t)) -
+		(QMI_IPA_MAX_FILTERS_V01 *
+		sizeof(struct ipa_filter_spec_ex2_type_v01)));
+
+	if (req->filter_spec_ex_list_valid &&
+		req->filter_spec_ex_list_len > 0) {
+		len += sizeof(struct ipa_filter_spec_ex_type_v01)*
+			req->filter_spec_ex_list_len;
+	}
+	if (req->xlat_filter_indices_list_valid &&
+		req->xlat_filter_indices_list_len > 0) {
+		len += sizeof(uint32_t)*req->xlat_filter_indices_list_len;
+	}
+
+	if (req->filter_spec_ex2_list_valid &&
+		req->filter_spec_ex2_list_len > 0) {
+		len += sizeof(struct ipa_filter_spec_ex2_type_v01)*
+		req->filter_spec_ex2_list_len;
+	}
+
+	if (req->ul_firewall_indices_list_valid &&
+		req->ul_firewall_indices_list_len > 0) {
+		len += sizeof(uint32_t)*req->ul_firewall_indices_list_len;
+	}
+
+	return len;
 }
 
 /* sending filter-install-request to modem*/
@@ -692,7 +826,7 @@ int ipa3_qmi_filter_request_ex_send(
 	struct ipa_install_fltr_rule_req_ex_msg_v01 *req)
 {
 	struct ipa_install_fltr_rule_resp_ex_msg_v01 resp;
-	struct msg_desc req_desc, resp_desc;
+	struct ipa_msg_desc req_desc, resp_desc;
 	int rc;
 	int i;
 
@@ -735,7 +869,7 @@ int ipa3_qmi_filter_request_ex_send(
 			== false)
 			return -EINVAL;
 		if ((req->filter_spec_ex_list[i].filter_action <=
-			QMI_IPA_FILTER_ACTION_INVALID_V01) &&
+			QMI_IPA_FILTER_ACTION_INVALID_V01) ||
 			(req->filter_spec_ex_list[i].filter_action >
 			QMI_IPA_FILTER_ACTION_EXCEPTION_V01))
 			return -EINVAL;
@@ -752,8 +886,9 @@ int ipa3_qmi_filter_request_ex_send(
 	}
 	mutex_unlock(&ipa3_qmi_lock);
 
-	req_desc.max_msg_len =
-		QMI_IPA_INSTALL_FILTER_RULE_EX_REQ_MAX_MSG_LEN_V01;
+	req_desc.max_msg_len = ipa3_qmi_filter_request_ex_calc_length(req);
+	IPAWANDBG("QMI send request length = %d\n", req_desc.max_msg_len);
+
 	req_desc.msg_id = QMI_IPA_INSTALL_FILTER_RULE_EX_REQ_V01;
 	req_desc.ei_array = ipa3_install_fltr_rule_req_ex_msg_data_v01_ei;
 
@@ -763,14 +898,272 @@ int ipa3_qmi_filter_request_ex_send(
 	resp_desc.msg_id = QMI_IPA_INSTALL_FILTER_RULE_EX_RESP_V01;
 	resp_desc.ei_array = ipa3_install_fltr_rule_resp_ex_msg_data_v01_ei;
 
-	rc = qmi_send_req_wait(ipa_q6_clnt, &req_desc,
-			req,
-			sizeof(struct ipa_install_fltr_rule_req_ex_msg_v01),
-			&resp_desc, &resp, sizeof(resp),
-			QMI_SEND_REQ_TIMEOUT_MS);
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, req,
+		&resp_desc, &resp,
+		QMI_SEND_REQ_TIMEOUT_MS);
+
+	if (rc < 0) {
+		IPAWANERR("QMI send Req %d failed, rc= %d\n",
+			QMI_IPA_INSTALL_FILTER_RULE_EX_REQ_V01,
+			rc);
+		return rc;
+	}
+
 	return ipa3_check_qmi_response(rc,
 		QMI_IPA_INSTALL_FILTER_RULE_EX_REQ_V01, resp.resp.result,
 		resp.resp.error, "ipa_install_filter");
+}
+
+/* sending add offload-connection-request to modem*/
+int ipa3_qmi_add_offload_request_send(
+	struct ipa_add_offload_connection_req_msg_v01 *req)
+{
+	struct ipa_add_offload_connection_resp_msg_v01 resp;
+	struct ipa_msg_desc req_desc, resp_desc;
+	int rc = 0;
+	int i, j;
+	uint32_t id;
+
+	/* check if modem up */
+	if (!ipa3_qmi_modem_init_fin ||
+		!ipa_q6_clnt) {
+		IPAWANDBG("modem QMI haven't up yet\n");
+		return -EINVAL;
+	}
+
+	/* check if the filter rules from IPACM is valid */
+	if (req->filter_spec_ex2_list_len < 0) {
+		IPAWANERR("IPACM pass invalid num of rules\n");
+		return -EINVAL;
+	} else if (req->filter_spec_ex2_list_len == 0) {
+		IPAWANDBG("IPACM pass zero rules to Q6\n");
+	} else {
+		IPAWANDBG("IPACM pass %u rules to Q6\n",
+		req->filter_spec_ex2_list_len);
+	}
+
+	/* currently set total max to 64 */
+	if ((ipa3_qmi_ctx->num_ipa_offload_connection < 0) ||
+		(req->filter_spec_ex2_list_len >=
+		(QMI_IPA_MAX_FILTERS_V01 -
+			ipa3_qmi_ctx->num_ipa_offload_connection))) {
+		IPAWANDBG(
+		"cur(%d), req(%d), exceed limit (%d)\n",
+			ipa3_qmi_ctx->num_ipa_offload_connection,
+			req->filter_spec_ex2_list_len,
+			QMI_IPA_MAX_FILTERS_V01);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < req->filter_spec_ex2_list_len; i++) {
+		if ((req->filter_spec_ex2_list[i].ip_type !=
+			QMI_IPA_IP_TYPE_V4_V01) &&
+			(req->filter_spec_ex2_list[i].ip_type !=
+			QMI_IPA_IP_TYPE_V6_V01))
+			return -EINVAL;
+		if (req->filter_spec_ex2_list[i].is_mux_id_valid == false)
+			return -EINVAL;
+		if ((req->filter_spec_ex2_list[i].filter_action <=
+			QMI_IPA_FILTER_ACTION_INVALID_V01) ||
+			(req->filter_spec_ex2_list[i].filter_action >
+			QMI_IPA_FILTER_ACTION_EXCEPTION_V01))
+			return -EINVAL;
+	}
+
+	req_desc.max_msg_len =
+		IPA_ADD_OFFLOAD_CONNECTION_REQ_MSG_V01_MAX_MSG_LEN;
+	req_desc.msg_id = QMI_IPA_ADD_OFFLOAD_CONNECTION_REQ_V01;
+	req_desc.ei_array = ipa_add_offload_connection_req_msg_v01_ei;
+
+	memset(&resp, 0, sizeof(struct
+		ipa_add_offload_connection_resp_msg_v01));
+	resp_desc.max_msg_len =
+		IPA_ADD_OFFLOAD_CONNECTION_RESP_MSG_V01_MAX_MSG_LEN;
+	resp_desc.msg_id = QMI_IPA_ADD_OFFLOAD_CONNECTION_RESP_V01;
+	resp_desc.ei_array = ipa_add_offload_connection_resp_msg_v01_ei;
+
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, req,
+		&resp_desc, &resp,
+		QMI_SEND_REQ_TIMEOUT_MS);
+
+	if (rc < 0) {
+		IPAWANERR("QMI send Req %d failed, rc= %d\n",
+			QMI_IPA_ADD_OFFLOAD_CONNECTION_REQ_V01,
+			rc);
+		return rc;
+	}
+
+	rc = ipa3_check_qmi_response(rc,
+		QMI_IPA_ADD_OFFLOAD_CONNECTION_REQ_V01, resp.resp.result,
+		resp.resp.error, "ipa_add_offload_connection");
+
+	if (rc) {
+		IPAWANERR("QMI get Response %d failed, rc= %d\n",
+			QMI_IPA_ADD_OFFLOAD_CONNECTION_REQ_V01,
+			rc);
+		return rc;
+	}
+
+	/* Check & copy rule-handle */
+	if (!resp.filter_handle_list_valid) {
+		IPAWANERR("QMI resp invalid %d failed\n",
+			resp.filter_handle_list_valid);
+		return -ERANGE;
+	}
+
+	if (resp.filter_handle_list_len !=
+		req->filter_spec_ex2_list_len) {
+		IPAWANERR("QMI resp invalid size %d req %d\n",
+			resp.filter_handle_list_len,
+			req->filter_spec_ex2_list_len);
+		return -ERANGE;
+	}
+
+	mutex_lock(&ipa3_qmi_lock);
+	for (i = 0; i < req->filter_spec_ex2_list_len; i++) {
+		id = resp.filter_handle_list[i].filter_spec_identifier;
+		/* check rule-id matched or not */
+		if (req->filter_spec_ex2_list[i].rule_id !=
+			id) {
+			IPAWANERR("QMI error (%d)st-(%d) rule-id (%d)\n",
+				i,
+				id,
+				req->filter_spec_ex2_list[i].rule_id);
+			mutex_unlock(&ipa3_qmi_lock);
+			return -EINVAL;
+		}
+		/* find free spot*/
+		for (j = 0; j < QMI_IPA_MAX_FILTERS_V01; j++) {
+			if (!ipa3_qmi_ctx->ipa_offload_cache[j].valid)
+				break;
+		}
+
+		if (j == QMI_IPA_MAX_FILTERS_V01) {
+			IPAWANERR("can't find free spot for rule-id %d\n",
+				id);
+			mutex_unlock(&ipa3_qmi_lock);
+			return -EINVAL;
+		}
+
+		/* save rule-id handle to cache */
+		ipa3_qmi_ctx->ipa_offload_cache[j].rule_id =
+			resp.filter_handle_list[i].filter_spec_identifier;
+		ipa3_qmi_ctx->ipa_offload_cache[j].rule_hdl =
+			resp.filter_handle_list[i].filter_handle;
+		ipa3_qmi_ctx->ipa_offload_cache[j].valid = true;
+		ipa3_qmi_ctx->ipa_offload_cache[j].ip_type =
+			req->filter_spec_ex2_list[i].ip_type;
+		ipa3_qmi_ctx->num_ipa_offload_connection++;
+	}
+	mutex_unlock(&ipa3_qmi_lock);
+	IPAWANDBG("Update cached conntrack entries (%d)\n",
+		ipa3_qmi_ctx->num_ipa_offload_connection);
+	return rc;
+}
+
+/* sending rmv offload-connection-request to modem*/
+int ipa3_qmi_rmv_offload_request_send(
+	struct ipa_remove_offload_connection_req_msg_v01 *req)
+{
+	struct ipa_remove_offload_connection_resp_msg_v01 resp;
+	struct ipa_msg_desc req_desc, resp_desc;
+	int rc = 0;
+	int i, j;
+	uint32_t id;
+
+	/* check if modem up */
+	if (!ipa3_qmi_modem_init_fin ||
+		!ipa_q6_clnt) {
+		IPAWANDBG("modem QMI haven't up yet\n");
+		return -EINVAL;
+	}
+
+	/* check if the # of handles from IPACM is valid */
+	if (!req->clean_all_rules_valid && req->filter_handle_list_len == 0) {
+		IPAWANDBG("IPACM deleted zero rules !\n");
+		return -EINVAL;
+	}
+
+	IPAWANDBG("IPACM pass (%d) rules handles to Q6, cur (%d)\n",
+	req->filter_handle_list_len,
+	ipa3_qmi_ctx->num_ipa_offload_connection);
+
+	/*  max as num_ipa_offload_connection */
+	if (req->filter_handle_list_len >
+		ipa3_qmi_ctx->num_ipa_offload_connection) {
+		IPAWANDBG(
+		"cur(%d), req_rmv(%d)\n",
+			ipa3_qmi_ctx->num_ipa_offload_connection,
+			req->filter_handle_list_len);
+		return -EINVAL;
+	}
+
+	mutex_lock(&ipa3_qmi_lock);
+	for (i = 0; i < req->filter_handle_list_len; i++) {
+		/* check if rule-id match */
+		id =
+			req->filter_handle_list[i].filter_spec_identifier;
+		for (j = 0; j < QMI_IPA_MAX_FILTERS_V01; j++) {
+			if ((ipa3_qmi_ctx->ipa_offload_cache[j].valid) &&
+				(ipa3_qmi_ctx->ipa_offload_cache[j].rule_id ==
+				id))
+				break;
+		}
+		if (j == QMI_IPA_MAX_FILTERS_V01) {
+			IPAWANERR("can't find rule-id %d\n",
+				id);
+			mutex_unlock(&ipa3_qmi_lock);
+			return -EINVAL;
+		}
+
+		/* fill up the filter_handle */
+		req->filter_handle_list[i].filter_handle =
+			ipa3_qmi_ctx->ipa_offload_cache[j].rule_hdl;
+		ipa3_qmi_ctx->ipa_offload_cache[j].valid = false;
+		ipa3_qmi_ctx->num_ipa_offload_connection--;
+	}
+	mutex_unlock(&ipa3_qmi_lock);
+
+	req_desc.max_msg_len =
+		IPA_REMOVE_OFFLOAD_CONNECTION_REQ_MSG_V01_MAX_MSG_LEN;
+	req_desc.msg_id = QMI_IPA_REMOVE_OFFLOAD_CONNECTION_REQ_V01;
+	req_desc.ei_array = ipa_remove_offload_connection_req_msg_v01_ei;
+
+	/* clean the Dl rules  in the cache if flag is set */
+	if (req->clean_all_rules) {
+		for (i = 0; i < QMI_IPA_MAX_FILTERS_V01; i++)
+			if (ipa3_qmi_ctx->ipa_offload_cache[i].valid)
+				ipa3_qmi_ctx->ipa_offload_cache[i].valid =
+				false;
+	}
+
+
+	memset(&resp, 0, sizeof(struct
+		ipa_remove_offload_connection_resp_msg_v01));
+	resp_desc.max_msg_len =
+		IPA_REMOVE_OFFLOAD_CONNECTION_RESP_MSG_V01_MAX_MSG_LEN;
+	resp_desc.msg_id = QMI_IPA_REMOVE_OFFLOAD_CONNECTION_RESP_V01;
+	resp_desc.ei_array = ipa_remove_offload_connection_resp_msg_v01_ei;
+
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, req,
+		&resp_desc, &resp,
+		QMI_SEND_REQ_TIMEOUT_MS);
+
+	if (rc < 0) {
+		IPAWANERR("QMI send Req %d failed, rc= %d\n",
+			QMI_IPA_REMOVE_OFFLOAD_CONNECTION_REQ_V01,
+			rc);
+		return rc;
+	}
+	IPAWANDBG("left cached conntrack entries (%d)\n",
+		ipa3_qmi_ctx->num_ipa_offload_connection);
+
+	return ipa3_check_qmi_response(rc,
+		QMI_IPA_REMOVE_OFFLOAD_CONNECTION_REQ_V01, resp.resp.result,
+		resp.resp.error, "ipa_rmv_offload_connection");
 }
 
 /* sending ul-filter-install-request to modem*/
@@ -778,7 +1171,7 @@ int ipa3_qmi_ul_filter_request_send(
 	struct ipa_configure_ul_firewall_rules_req_msg_v01 *req)
 {
 	struct ipa_configure_ul_firewall_rules_resp_msg_v01 resp;
-	struct msg_desc req_desc, resp_desc;
+	struct ipa_msg_desc req_desc, resp_desc;
 	int rc, i;
 
 	IPAWANDBG("IPACM pass %u rules to Q6\n",
@@ -844,15 +1237,20 @@ int ipa3_qmi_ul_filter_request_send(
 	resp_desc.msg_id = QMI_IPA_INSTALL_UL_FIREWALL_RULES_RESP_V01;
 	resp_desc.ei_array =
 		ipa3_configure_ul_firewall_rules_resp_msg_data_v01_ei;
-
-	rc = qmi_send_req_wait(ipa_q6_clnt, &req_desc,
-		req,
-		sizeof(
-		struct ipa_configure_ul_firewall_rules_req_msg_v01),
-		&resp_desc, &resp, sizeof(resp),
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, req,
+		&resp_desc, &resp,
 		QMI_SEND_REQ_TIMEOUT_MS);
+	if (rc < 0) {
+		IPAWANERR("send Req %d failed, rc= %d\n",
+			QMI_IPA_INSTALL_UL_FIREWALL_RULES_REQ_V01,
+			rc);
+		return rc;
+	}
+
 	return ipa3_check_qmi_response(rc,
-		QMI_IPA_INSTALL_UL_FIREWALL_RULES_REQ_V01, resp.resp.result,
+		QMI_IPA_INSTALL_UL_FIREWALL_RULES_REQ_V01,
+		resp.resp.result,
 		resp.resp.error, "ipa_received_ul_firewall_filter");
 }
 
@@ -860,13 +1258,18 @@ int ipa3_qmi_enable_force_clear_datapath_send(
 	struct ipa_enable_force_clear_datapath_req_msg_v01 *req)
 {
 	struct ipa_enable_force_clear_datapath_resp_msg_v01 resp;
-	struct msg_desc req_desc, resp_desc;
+	struct ipa_msg_desc req_desc, resp_desc;
 	int rc = 0;
-
 
 	if (!req || !req->source_pipe_bitmask) {
 		IPAWANERR("invalid params\n");
 		return -EINVAL;
+	}
+
+	if (ipa3_ctx->ipa3_hw_mode == IPA_HW_MODE_VIRTUAL ||
+		ipa3_ctx->ipa3_hw_mode == IPA_HW_MODE_EMULATION) {
+		IPAWANDBG("Simulating success on emu/virt mode\n");
+		return 0;
 	}
 
 	req_desc.max_msg_len =
@@ -884,36 +1287,47 @@ int ipa3_qmi_enable_force_clear_datapath_send(
 
 	if (unlikely(!ipa_q6_clnt))
 		return -ETIMEDOUT;
-	rc = qmi_send_req_wait(ipa_q6_clnt,
-			&req_desc,
-			req,
-			sizeof(*req),
-			&resp_desc, &resp, sizeof(resp),
-			QMI_IPA_FORCE_CLEAR_DATAPATH_TIMEOUT_MS);
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, req,
+		&resp_desc, &resp,
+		QMI_IPA_FORCE_CLEAR_DATAPATH_TIMEOUT_MS);
+
 	if (rc < 0) {
-		IPAWANERR("send req failed %d\n", rc);
+		IPAWANERR("send Req %d failed, rc= %d\n",
+			QMI_IPA_ENABLE_FORCE_CLEAR_DATAPATH_REQ_V01,
+			rc);
 		return rc;
 	}
+
 	if (resp.resp.result != IPA_QMI_RESULT_SUCCESS_V01) {
 		IPAWANERR("filter_notify failed %d\n",
 			resp.resp.result);
 		return resp.resp.result;
 	}
-	IPAWANDBG("SUCCESS\n");
-	return rc;
+
+	return ipa3_check_qmi_response(rc,
+		QMI_IPA_ENABLE_FORCE_CLEAR_DATAPATH_REQ_V01,
+		resp.resp.result,
+		resp.resp.error, "ipa_enable_force_clear_datapath");
 }
 
 int ipa3_qmi_disable_force_clear_datapath_send(
 	struct ipa_disable_force_clear_datapath_req_msg_v01 *req)
 {
 	struct ipa_disable_force_clear_datapath_resp_msg_v01 resp;
-	struct msg_desc req_desc, resp_desc;
+	struct ipa_msg_desc req_desc, resp_desc;
 	int rc = 0;
 
 
 	if (!req) {
 		IPAWANERR("invalid params\n");
 		return -EINVAL;
+	}
+
+	if (ipa3_ctx->ipa3_hw_mode == IPA_HW_MODE_VIRTUAL ||
+		ipa3_ctx->ipa3_hw_mode == IPA_HW_MODE_EMULATION) {
+		IPAWANDBG("Simulating success on emu/virt mode\n");
+		return 0;
 	}
 
 	req_desc.max_msg_len =
@@ -930,23 +1344,28 @@ int ipa3_qmi_disable_force_clear_datapath_send(
 		ipa3_disable_force_clear_datapath_resp_msg_data_v01_ei;
 	if (unlikely(!ipa_q6_clnt))
 		return -ETIMEDOUT;
-	rc = qmi_send_req_wait(ipa_q6_clnt,
-			&req_desc,
-			req,
-			sizeof(*req),
-			&resp_desc, &resp, sizeof(resp),
-			QMI_IPA_FORCE_CLEAR_DATAPATH_TIMEOUT_MS);
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, req,
+		&resp_desc, &resp,
+		QMI_IPA_FORCE_CLEAR_DATAPATH_TIMEOUT_MS);
+
 	if (rc < 0) {
-		IPAWANERR("send req failed %d\n", rc);
+		IPAWANERR("send Req %d failed, rc= %d\n",
+			QMI_IPA_DISABLE_FORCE_CLEAR_DATAPATH_REQ_V01,
+			rc);
 		return rc;
 	}
+
 	if (resp.resp.result != IPA_QMI_RESULT_SUCCESS_V01) {
 		IPAWANERR("filter_notify failed %d\n",
 			resp.resp.result);
 		return resp.resp.result;
 	}
-	IPAWANDBG("SUCCESS\n");
-	return rc;
+
+	return ipa3_check_qmi_response(rc,
+		QMI_IPA_DISABLE_FORCE_CLEAR_DATAPATH_REQ_V01,
+		resp.resp.result,
+		resp.resp.error, "ipa_disable_force_clear_datapath");
 }
 
 /* sending filter-installed-notify-request to modem*/
@@ -954,7 +1373,7 @@ int ipa3_qmi_filter_notify_send(
 		struct ipa_fltr_installed_notif_req_msg_v01 *req)
 {
 	struct ipa_fltr_installed_notif_resp_msg_v01 resp;
-	struct msg_desc req_desc, resp_desc;
+	struct ipa_msg_desc req_desc, resp_desc;
 	int rc = 0;
 
 	/* check if the filter rules from IPACM is valid */
@@ -968,17 +1387,25 @@ int ipa3_qmi_filter_notify_send(
 		return -EINVAL;
 	}
 
-	if (req->source_pipe_index == -1) {
-		IPAWANERR("Source pipe index invalid\n");
+	if (req->rule_id_ex_len == 0) {
+		IPAWANDBG(" delete UL filter rule for pipe %d\n",
+		req->source_pipe_index);
+	} else if (req->rule_id_ex_len > QMI_IPA_MAX_FILTERS_EX2_V01) {
+		IPAWANERR(" UL filter rule for pipe %d exceed max (%u)\n",
+		req->source_pipe_index,
+		req->rule_id_ex_len);
 		return -EINVAL;
 	}
+
 	if (req->install_status != IPA_QMI_RESULT_SUCCESS_V01) {
 		IPAWANERR(" UL filter rule for pipe %d install_status = %d\n",
 			req->source_pipe_index, req->install_status);
 		return -EINVAL;
-	} else if (req->rule_id_valid != 1) {
-		IPAWANERR(" UL filter rule for pipe %d rule_id_valid = %d\n",
-			req->source_pipe_index, req->rule_id_valid);
+	} else if ((req->rule_id_valid != 1) &&
+		(req->rule_id_ex_valid != 1)) {
+		IPAWANERR(" UL filter rule for pipe %d rule_id_valid = %d/%d\n",
+			req->source_pipe_index, req->rule_id_valid,
+			req->rule_id_ex_valid);
 		return -EINVAL;
 	} else if (req->source_pipe_index >= ipa3_ctx->ipa_num_pipes) {
 		IPAWANDBG(
@@ -995,6 +1422,11 @@ int ipa3_qmi_filter_notify_send(
 	} else if (req->embedded_pipe_index >= ipa3_ctx->ipa_num_pipes) {
 		IPAWANERR("IPACM passes source pipe index not valid ID = %d\n",
 		req->source_pipe_index);
+		return -EINVAL;
+	}
+
+	if (req->source_pipe_index == -1) {
+		IPAWANERR("Source pipe index invalid\n");
 		return -EINVAL;
 	}
 
@@ -1023,107 +1455,102 @@ int ipa3_qmi_filter_notify_send(
 
 	if (unlikely(!ipa_q6_clnt))
 		return -ETIMEDOUT;
-	rc = qmi_send_req_wait(ipa_q6_clnt,
-			&req_desc,
-			req,
-			sizeof(struct ipa_fltr_installed_notif_req_msg_v01),
-			&resp_desc, &resp, sizeof(resp),
-			QMI_SEND_REQ_TIMEOUT_MS);
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, req,
+		&resp_desc, &resp,
+		QMI_SEND_REQ_TIMEOUT_MS);
+
+	if (rc < 0) {
+		IPAWANERR("send Req %d failed, rc= %d\n",
+			QMI_IPA_FILTER_INSTALLED_NOTIF_REQ_V01,
+			rc);
+		return rc;
+	}
+
 	return ipa3_check_qmi_response(rc,
 		QMI_IPA_FILTER_INSTALLED_NOTIF_REQ_V01, resp.resp.result,
 		resp.resp.error, "ipa_fltr_installed_notif_resp");
 }
 
-static void ipa3_q6_clnt_recv_msg(struct work_struct *work)
+static void ipa3_q6_clnt_quota_reached_ind_cb(struct qmi_handle *handle,
+	struct sockaddr_qrtr *sq,
+	struct qmi_txn *txn,
+	const void *data)
 {
-	int rc;
-
-	do {
-		IPAWANDBG_LOW("Notified about a Receive Event");
-		rc = qmi_recv_msg(ipa_q6_clnt);
-	} while (rc == 0);
-	if (rc != -ENOMSG)
-		IPAWANERR("Error receiving message\n");
-}
-
-static void ipa3_q6_clnt_notify(struct qmi_handle *handle,
-			     enum qmi_event_type event, void *notify_priv)
-{
-	switch (event) {
-	case QMI_RECV_MSG:
-		IPAWANDBG_LOW("client qmi recv message called");
-		if (!workqueues_stopped)
-			queue_delayed_work(ipa_clnt_resp_workqueue,
-					   &ipa3_work_recv_msg_client, 0);
-		break;
-	default:
-		break;
-	}
-}
-
-static void ipa3_q6_clnt_ind_cb(struct qmi_handle *handle, unsigned int msg_id,
-			       void *msg, unsigned int msg_len,
-			       void *ind_cb_priv)
-{
-	struct ipa_data_usage_quota_reached_ind_msg_v01 qmi_ind;
-	struct ipa_configure_ul_firewall_rules_ind_msg_v01 qmi_ul_firewall_ind;
-	struct msg_desc qmi_ind_desc;
-	int rc = 0;
+	struct ipa_data_usage_quota_reached_ind_msg_v01 *qmi_ind;
 
 	if (handle != ipa_q6_clnt) {
 		IPAWANERR("Wrong client\n");
 		return;
 	}
 
-	if (msg_id == QMI_IPA_DATA_USAGE_QUOTA_REACHED_IND_V01) {
-		memset(&qmi_ind, 0, sizeof(
-			struct ipa_data_usage_quota_reached_ind_msg_v01));
-		qmi_ind_desc.max_msg_len =
-			QMI_IPA_DATA_USAGE_QUOTA_REACHED_IND_MAX_MSG_LEN_V01;
-		qmi_ind_desc.msg_id = QMI_IPA_DATA_USAGE_QUOTA_REACHED_IND_V01;
-		qmi_ind_desc.ei_array =
-			ipa3_data_usage_quota_reached_ind_msg_data_v01_ei;
+	qmi_ind = (struct ipa_data_usage_quota_reached_ind_msg_v01 *) data;
 
-		rc = qmi_kernel_decode(&qmi_ind_desc, &qmi_ind, msg, msg_len);
-		if (rc < 0) {
-			IPAWANERR("Error decoding msg_id %d\n", msg_id);
-			return;
-		}
-		IPAWANDBG("Quota reached indication on qmux(%d) Mbytes(%lu)\n",
-			  qmi_ind.apn.mux_id,
-			  (unsigned long int) qmi_ind.apn.num_Mbytes);
-		ipa3_broadcast_quota_reach_ind(qmi_ind.apn.mux_id,
-			IPA_UPSTEAM_MODEM);
+	IPAWANDBG("Quota reached indication on qmux(%d) Mbytes(%lu)\n",
+		qmi_ind->apn.mux_id, (unsigned long) qmi_ind->apn.num_Mbytes);
+	ipa3_broadcast_quota_reach_ind(qmi_ind->apn.mux_id,
+		IPA_UPSTEAM_MODEM);
+}
+
+static void ipa3_q6_clnt_install_firewall_rules_ind_cb(
+	struct qmi_handle *handle,
+	struct sockaddr_qrtr *sq,
+	struct qmi_txn *txn,
+	const void *data)
+{
+	struct ipa_configure_ul_firewall_rules_ind_msg_v01 qmi_ul_firewall_ind;
+
+	memset(&qmi_ul_firewall_ind, 0, sizeof(
+		struct ipa_configure_ul_firewall_rules_ind_msg_v01));
+	memcpy(&qmi_ul_firewall_ind, data, sizeof(
+		struct ipa_configure_ul_firewall_rules_ind_msg_v01));
+
+	IPAWANDBG("UL firewall rules install indication on Q6");
+	if (qmi_ul_firewall_ind.result.is_success ==
+		QMI_IPA_UL_FIREWALL_STATUS_SUCCESS_V01) {
+		IPAWANDBG(" : Success\n");
+		IPAWANDBG
+		("Mux ID : %d\n", qmi_ul_firewall_ind.result.mux_id);
+	} else if (qmi_ul_firewall_ind.result.is_success ==
+		QMI_IPA_UL_FIREWALL_STATUS_FAILURE_V01) {
+		IPAWANERR(": Failure\n");
+	} else {
+		IPAWANERR(": Unexpected Result");
+	}
+}
+
+static void ipa3_q6_clnt_bw_vhang_ind_cb(struct qmi_handle *handle,
+	struct sockaddr_qrtr *sq,
+	struct qmi_txn *txn,
+	const void *data)
+{
+	struct ipa_bw_change_ind_msg_v01 *qmi_ind;
+	uint32_t bw_mbps = 0;
+
+	if (handle != ipa_q6_clnt) {
+		IPAWANERR("Wrong client\n");
+		return;
 	}
 
-	if (msg_id == QMI_IPA_INSTALL_UL_FIREWALL_RULES_IND_V01) {
-		memset(&qmi_ul_firewall_ind, 0, sizeof(
-			struct ipa_configure_ul_firewall_rules_ind_msg_v01));
-		qmi_ind_desc.max_msg_len =
-			QMI_IPA_INSTALL_UL_FIREWALL_RULES_IND_MAX_MSG_LEN_V01;
-		qmi_ind_desc.msg_id = QMI_IPA_INSTALL_UL_FIREWALL_RULES_IND_V01;
-		qmi_ind_desc.ei_array =
-			ipa3_configure_ul_firewall_rules_ind_msg_data_v01_ei;
+	qmi_ind = (struct ipa_bw_change_ind_msg_v01 *) data;
 
-		rc = qmi_kernel_decode(
-			&qmi_ind_desc, &qmi_ul_firewall_ind, msg, msg_len);
-		if (rc < 0) {
-			IPAWANERR("Error decoding msg_id %d\n", msg_id);
-			return;
-		}
+	IPAWANDBG("Q6 BW change UL valid(%d):(%d)Kbps\n",
+		qmi_ind->peak_bw_ul_valid,
+		qmi_ind->peak_bw_ul);
 
-		IPAWANDBG("UL firewall rules install indication on Q6");
-		if (qmi_ul_firewall_ind.result.is_success ==
-				QMI_IPA_UL_FIREWALL_STATUS_SUCCESS_V01) {
-			IPAWANDBG(" : Success\n");
-			IPAWANDBG
-			("Mux ID : %d\n", qmi_ul_firewall_ind.result.mux_id);
-		} else if (qmi_ul_firewall_ind.result.is_success ==
-				QMI_IPA_UL_FIREWALL_STATUS_FAILURE_V01){
-			IPAWANERR(": Failure\n");
-		} else {
-			IPAWANERR(": Unexpected Result");
-		}
+	IPAWANDBG("Q6 BW change DL valid(%d):(%d)Kbps\n",
+		qmi_ind->peak_bw_dl_valid,
+		qmi_ind->peak_bw_dl);
+
+	if (qmi_ind->peak_bw_ul_valid)
+		bw_mbps += qmi_ind->peak_bw_ul/1000;
+
+	if (qmi_ind->peak_bw_dl_valid)
+		bw_mbps += qmi_ind->peak_bw_dl/1000;
+
+	IPAWANDBG("vote modem BW (%u)\n", bw_mbps);
+	if (ipa3_vote_for_bus_bw(&bw_mbps)) {
+		IPAWANERR("Failed to vote BW (%u)\n", bw_mbps);
 	}
 }
 
@@ -1132,58 +1559,62 @@ static void ipa3_q6_clnt_svc_arrive(struct work_struct *work)
 	int rc;
 	struct ipa_master_driver_init_complt_ind_msg_v01 ind;
 
-	/* Create a Local client port for QMI communication */
-	ipa_q6_clnt = qmi_handle_create(ipa3_q6_clnt_notify, NULL);
-	if (!ipa_q6_clnt) {
-		IPAWANERR("QMI client handle alloc failed\n");
+	if (unlikely(!ipa_q6_clnt)) {
+		IPAWANERR("Invalid q6 clnt.Ignore sending ind.\n");
 		return;
 	}
 
-	IPAWANDBG("Lookup server name, get client-hdl(%p)\n",
-		ipa_q6_clnt);
-	rc = qmi_connect_to_service(ipa_q6_clnt,
-			IPA_Q6_SERVICE_SVC_ID,
-			IPA_Q6_SVC_VERS,
-			IPA_Q6_SERVICE_INS_ID);
+	rc = kernel_connect(ipa_q6_clnt->sock,
+		(struct sockaddr *) &ipa3_qmi_ctx->server_sq,
+		sizeof(ipa3_qmi_ctx->server_sq),
+		0);
+
 	if (rc < 0) {
-		IPAWANERR("Server not found\n");
-		qmi_handle_destroy(ipa_q6_clnt);
-		ipa_q6_clnt = NULL;
+		IPAWANERR("Couldnt connect Server\n");
 		return;
 	}
 
-	rc = qmi_register_ind_cb(ipa_q6_clnt, ipa3_q6_clnt_ind_cb, NULL);
-	if (rc < 0)
-		IPAWANERR("Unable to register for indications\n");
+	if (!send_qmi_init_q6)
+		return;
 
-	ipa_q6_clnt_reset = 0;
 	IPAWANDBG("Q6 QMI service available now\n");
+	if (ipa3_is_apq()) {
+		ipa3_qmi_modem_init_fin = true;
+		IPAWANDBG("QMI-client complete, ipa3_qmi_modem_init_fin : %d\n",
+			ipa3_qmi_modem_init_fin);
+		return;
+	}
+
 	/* Initialize modem IPA-driver */
 	IPAWANDBG("send ipa3_qmi_init_modem_send_sync_msg to modem\n");
 	rc = ipa3_qmi_init_modem_send_sync_msg();
 	if ((rc == -ENETRESET) || (rc == -ENODEV)) {
 		IPAWANERR(
-			"ipa3_qmi_init_modem_send_sync_msg failed due to SSR!\n");
-		/* Cleanup will take place when ipa3_wwan_remove is called */
+		"ipa3_qmi_init_modem_send_sync_msg failed due to SSR!\n");
+		/* Cleanup when ipa3_wwan_remove is called */
+		if (ipa_q6_clnt != NULL) {
+			qmi_handle_release(ipa_q6_clnt);
+			mutex_lock(&ipa3_qmi_lock);
+			vfree(ipa_q6_clnt);
+			ipa_q6_clnt = NULL;
+			mutex_unlock(&ipa3_qmi_lock);
+			return;
+		}
+		IPAWANERR("Exit from service arrive fun\n");
 		return;
 	}
+
 	if (rc != 0) {
 		IPAWANERR("ipa3_qmi_init_modem_send_sync_msg failed\n");
 		/*
-		 * This is a very unexpected scenario, which requires a kernel
-		 * panic in order to force dumps for QMI/Q6 side analysis.
+		 * Hardware not responding.
+		 * This is a very unexpected scenario
+		 * which requires a kernel panic in
+		 * order to force dumps for QMI/Q6 side analysis.
 		 */
 		BUG();
-		return;
 	}
 	ipa3_qmi_modem_init_fin = true;
-
-	/* got modem_init_cmplt_req already, load uc-related register */
-	if (ipa3_modem_init_cmplt == true) {
-		IPAWANDBG("load uc related registers (%d)\n",
-		ipa3_modem_init_cmplt);
-			ipa3_uc_load_notify();
-	}
 
 	/* In cold-bootup, first_time_handshake = false */
 	ipa3_q6_handshake_complete(first_time_handshake);
@@ -1191,145 +1622,296 @@ static void ipa3_q6_clnt_svc_arrive(struct work_struct *work)
 	IPAWANDBG("complete, ipa3_qmi_modem_init_fin : %d\n",
 		ipa3_qmi_modem_init_fin);
 
-	if (ipa3_qmi_indication_fin)	{
+	if (ipa3_qmi_indication_fin) {
 		IPAWANDBG("send indication to modem (%d)\n",
 		ipa3_qmi_indication_fin);
 		memset(&ind, 0, sizeof(struct
-				ipa_master_driver_init_complt_ind_msg_v01));
+			ipa_master_driver_init_complt_ind_msg_v01));
 		ind.master_driver_init_status.result =
 			IPA_QMI_RESULT_SUCCESS_V01;
-		rc = qmi_send_ind(ipa3_svc_handle, curr_conn,
-			&ipa3_master_driver_complete_indication_desc,
-			&ind,
-			sizeof(ind));
+
+		if (unlikely(!ipa3_svc_handle)) {
+			IPAWANERR("Invalid svc handle.Ignore sending ind.\n");
+			return;
+		}
+
+		rc = qmi_send_indication(ipa3_svc_handle,
+			&ipa3_qmi_ctx->client_sq,
+			QMI_IPA_MASTER_DRIVER_INIT_COMPLETE_IND_V01,
+			QMI_IPA_MASTER_DRIVER_INIT_COMPLETE_IND_MAX_MSG_LEN_V01,
+			ipa3_master_driver_init_complt_ind_msg_data_v01_ei,
+			&ind);
+
 		IPAWANDBG("ipa_qmi_service_client good\n");
 	} else {
 		IPAWANERR("not send indication (%d)\n",
 		ipa3_qmi_indication_fin);
 	}
-}
 
+	send_qmi_init_q6 = false;
+
+}
 
 static void ipa3_q6_clnt_svc_exit(struct work_struct *work)
 {
-	qmi_handle_destroy(ipa_q6_clnt);
-	ipa_q6_clnt_reset = 1;
-	ipa_q6_clnt = NULL;
+	if (ipa3_qmi_ctx != NULL) {
+		ipa3_qmi_ctx->server_sq.sq_family = 0;
+		ipa3_qmi_ctx->server_sq.sq_node = 0;
+		ipa3_qmi_ctx->server_sq.sq_port = 0;
+	}
 }
 
-
-static int ipa3_q6_clnt_svc_event_notify(struct notifier_block *this,
-				      unsigned long code,
-				      void *_cmd)
+static int ipa3_q6_clnt_svc_event_notify_svc_new(struct qmi_handle *qmi,
+	struct qmi_service *service)
 {
-	IPAWANDBG("event %ld\n", code);
-	switch (code) {
-	case QMI_SERVER_ARRIVE:
-		if (!workqueues_stopped)
-			queue_delayed_work(ipa_clnt_req_workqueue,
-					   &ipa3_work_svc_arrive, 0);
-		break;
-	case QMI_SERVER_EXIT:
-		if (!workqueues_stopped)
-			queue_delayed_work(ipa_clnt_req_workqueue,
-					   &ipa3_work_svc_exit, 0);
-		break;
-	default:
-		break;
+	IPAWANDBG("QMI svc:%d vers:%d ins:%d node:%d port:%d\n",
+		  service->service, service->version, service->instance,
+		  service->node, service->port);
+
+	if (ipa3_qmi_ctx != NULL) {
+		ipa3_qmi_ctx->server_sq.sq_family = AF_QIPCRTR;
+		ipa3_qmi_ctx->server_sq.sq_node = service->node;
+		ipa3_qmi_ctx->server_sq.sq_port = service->port;
+	}
+	if (!workqueues_stopped) {
+		queue_delayed_work(ipa_clnt_req_workqueue,
+			&ipa3_work_svc_arrive, 0);
 	}
 	return 0;
 }
 
+static void ipa3_q6_clnt_svc_event_notify_net_reset(struct qmi_handle *qmi)
+{
+	if (!workqueues_stopped)
+		queue_delayed_work(ipa_clnt_req_workqueue,
+			&ipa3_work_svc_exit, 0);
+}
 
-static struct notifier_block ipa3_q6_clnt_nb = {
-	.notifier_call = ipa3_q6_clnt_svc_event_notify,
+static void ipa3_q6_clnt_svc_event_notify_svc_exit(struct qmi_handle *qmi,
+						   struct qmi_service *svc)
+{
+	IPAWANDBG("QMI svc:%d vers:%d ins:%d node:%d port:%d\n", svc->service,
+		  svc->version, svc->instance, svc->node, svc->port);
+
+	if (!workqueues_stopped)
+		queue_delayed_work(ipa_clnt_req_workqueue,
+			&ipa3_work_svc_exit, 0);
+}
+
+static struct qmi_ops server_ops = {
+	.del_client = ipa3_a5_svc_disconnect_cb,
 };
+
+static struct qmi_ops client_ops = {
+	.new_server = ipa3_q6_clnt_svc_event_notify_svc_new,
+	.del_server = ipa3_q6_clnt_svc_event_notify_svc_exit,
+	.net_reset = ipa3_q6_clnt_svc_event_notify_net_reset,
+};
+
+static struct qmi_msg_handler server_handlers[] = {
+	{
+		.type = QMI_REQUEST,
+		.msg_id = QMI_IPA_INDICATION_REGISTER_REQ_V01,
+		.ei = ipa3_indication_reg_req_msg_data_v01_ei,
+		.decoded_size = sizeof(struct ipa_indication_reg_req_msg_v01),
+		.fn = ipa3_handle_indication_req,
+	},
+	{
+		.type = QMI_REQUEST,
+		.msg_id = QMI_IPA_INSTALL_FILTER_RULE_REQ_V01,
+		.ei = ipa3_install_fltr_rule_req_msg_data_v01_ei,
+		.decoded_size = sizeof(
+			struct ipa_install_fltr_rule_req_msg_v01),
+		.fn = ipa3_handle_install_filter_rule_req,
+	},
+	{
+		.type = QMI_REQUEST,
+		.msg_id = QMI_IPA_FILTER_INSTALLED_NOTIF_REQ_V01,
+		.ei = ipa3_fltr_installed_notif_req_msg_data_v01_ei,
+		.decoded_size = sizeof(
+			struct ipa_fltr_installed_notif_req_msg_v01),
+		.fn = ipa3_handle_filter_installed_notify_req,
+	},
+	{
+		.type = QMI_REQUEST,
+		.msg_id = QMI_IPA_CONFIG_REQ_V01,
+		.ei = ipa3_config_req_msg_data_v01_ei,
+		.decoded_size = sizeof(struct ipa_config_req_msg_v01),
+		.fn = handle_ipa_config_req,
+	},
+	{
+		.type = QMI_REQUEST,
+		.msg_id = QMI_IPA_INIT_MODEM_DRIVER_CMPLT_REQ_V01,
+		.ei = ipa3_init_modem_driver_cmplt_req_msg_data_v01_ei,
+		.decoded_size = sizeof(
+			struct ipa_init_modem_driver_cmplt_req_msg_v01),
+		.fn = ipa3_handle_modem_init_cmplt_req,
+	},
+	{
+		.type = QMI_REQUEST,
+		.msg_id = QMI_IPA_INIT_MODEM_DRIVER_CMPLT_REQ_V01,
+		.ei = ipa3_init_modem_driver_cmplt_req_msg_data_v01_ei,
+		.decoded_size = sizeof(
+			struct ipa_init_modem_driver_cmplt_req_msg_v01),
+		.fn = ipa3_handle_modem_init_cmplt_req,
+	},
+	{
+		.type = QMI_REQUEST,
+		.msg_id = QMI_IPA_MHI_ALLOC_CHANNEL_REQ_V01,
+		.ei = ipa_mhi_alloc_channel_req_msg_v01_ei,
+		.decoded_size = sizeof(
+			struct ipa_mhi_alloc_channel_req_msg_v01),
+		.fn = ipa3_handle_mhi_alloc_channel_req,
+	},
+	{
+		.type = QMI_REQUEST,
+		.msg_id = QMI_IPA_MHI_CLK_VOTE_REQ_V01,
+		.ei = ipa_mhi_clk_vote_req_msg_v01_ei,
+		.decoded_size = sizeof(struct ipa_mhi_clk_vote_req_msg_v01),
+		.fn = ipa3_handle_mhi_vote_req,
+	},
+
+};
+
+/*  clinet_handlers are client callbacks that will be called from QMI context
+ *  when an indication from Q6 server arrives.
+ *  In our case, client_handlers needs handling only for QMI_INDICATION,
+ *  since the QMI_REQUEST/ QMI_RESPONSE are handled in a blocking fashion
+ *  at the time of sending QMI_REQUESTs.
+ */
+static struct qmi_msg_handler client_handlers[] = {
+	{
+		.type = QMI_INDICATION,
+		.msg_id = QMI_IPA_DATA_USAGE_QUOTA_REACHED_IND_V01,
+		.ei = ipa3_data_usage_quota_reached_ind_msg_data_v01_ei,
+		.decoded_size = sizeof(
+			struct ipa_data_usage_quota_reached_ind_msg_v01),
+		.fn = ipa3_q6_clnt_quota_reached_ind_cb,
+	},
+	{
+		.type = QMI_INDICATION,
+		.msg_id = QMI_IPA_INSTALL_UL_FIREWALL_RULES_IND_V01,
+		.ei = ipa3_install_fltr_rule_req_msg_data_v01_ei,
+		.decoded_size = sizeof(
+			struct ipa_configure_ul_firewall_rules_ind_msg_v01),
+		.fn = ipa3_q6_clnt_install_firewall_rules_ind_cb,
+	},
+	{
+		.type = QMI_INDICATION,
+		.msg_id = QMI_IPA_BW_CHANGE_INDICATION_V01,
+		.ei = ipa_bw_change_ind_msg_v01_ei,
+		.decoded_size = sizeof(struct ipa_bw_change_ind_msg_v01),
+		.fn = ipa3_q6_clnt_bw_vhang_ind_cb,
+	},
+};
+
 
 static void ipa3_qmi_service_init_worker(struct work_struct *work)
 {
 	int rc;
 
-	/* Initialize QMI-service*/
-	IPAWANDBG("IPA A7 QMI init OK :>>>>\n");
-
 	/* start the QMI msg cache */
 	ipa3_qmi_ctx = vzalloc(sizeof(*ipa3_qmi_ctx));
 	if (!ipa3_qmi_ctx) {
-		IPAWANERR(":kzalloc err.\n");
+		IPAWANERR("Failed to allocate ipa3_qmi_ctx\n");
 		return;
 	}
+
+	if (ipa3_is_apq()) {
+		/* Only start QMI-client */
+		IPAWANDBG("Only start IPA A7 QMI client\n");
+		goto qmi_client_start;
+	}
+
+	/* Initialize QMI-service*/
+	IPAWANDBG("IPA A7 QMI init OK :>>>>\n");
+
 	ipa3_qmi_ctx->modem_cfg_emb_pipe_flt =
 		ipa3_get_modem_cfg_emb_pipe_flt();
 
-	ipa_svc_workqueue = create_singlethread_workqueue("ipa_A7_svc");
-	if (!ipa_svc_workqueue) {
-		IPAWANERR("Creating ipa_A7_svc workqueue failed\n");
-		vfree(ipa3_qmi_ctx);
-		ipa3_qmi_ctx = NULL;
-		return;
-	}
+	ipa3_qmi_ctx->num_ipa_offload_connection = 0;
+	ipa3_svc_handle = vzalloc(sizeof(*ipa3_svc_handle));
 
-	ipa3_svc_handle = qmi_handle_create(qmi_ipa_a5_svc_ntfy, NULL);
-	if (!ipa3_svc_handle) {
-		IPAWANERR("Creating ipa_A7_svc qmi handle failed\n");
+	if (!ipa3_svc_handle)
 		goto destroy_ipa_A7_svc_wq;
-	}
 
-	/*
-	 * Setting the current connection to NULL, as due to a race between
-	 * server and client clean-up in SSR, the disconnect_cb might not
-	 * have necessarily been called
-	 */
-	curr_conn = NULL;
+	rc = qmi_handle_init(ipa3_svc_handle,
+		QMI_IPA_MAX_MSG_LEN,
+		&server_ops,
+		server_handlers);
 
-	rc = qmi_svc_register(ipa3_svc_handle, &ipa3_a5_svc_ops_options);
 	if (rc < 0) {
-		IPAWANERR("Registering ipa_a5 svc failed %d\n",
-				rc);
+		IPAWANERR("Initializing ipa_a5 svc failed %d\n", rc);
 		goto destroy_qmi_handle;
 	}
 
-	/* Initialize QMI-client */
+	rc = qmi_add_server(ipa3_svc_handle,
+		IPA_A5_SERVICE_SVC_ID,
+		IPA_A5_SVC_VERS,
+		IPA_A5_SERVICE_INS_ID);
 
+	if (rc < 0) {
+		IPAWANERR("Registering ipa_a5 svc failed %d\n",
+				rc);
+		goto deregister_qmi_srv;
+	}
+
+qmi_client_start:
+	/* Initialize QMI-client */
 	ipa_clnt_req_workqueue = create_singlethread_workqueue("clnt_req");
 	if (!ipa_clnt_req_workqueue) {
 		IPAWANERR("Creating clnt_req workqueue failed\n");
 		goto deregister_qmi_srv;
 	}
 
-	ipa_clnt_resp_workqueue = create_singlethread_workqueue("clnt_resp");
-	if (!ipa_clnt_resp_workqueue) {
-		IPAWANERR("Creating clnt_resp workqueue failed\n");
+	/* Create a Local client port for QMI communication */
+	ipa_q6_clnt = vzalloc(sizeof(*ipa_q6_clnt));
+
+	if (!ipa_q6_clnt)
 		goto destroy_clnt_req_wq;
+
+	rc = qmi_handle_init(ipa_q6_clnt,
+		QMI_IPA_MAX_MSG_LEN,
+		&client_ops,
+		client_handlers);
+
+	if (rc < 0) {
+		IPAWANERR("Creating clnt handle failed\n");
+		goto destroy_qmi_client_handle;
 	}
 
-	rc = qmi_svc_event_notifier_register(IPA_Q6_SERVICE_SVC_ID,
-				IPA_Q6_SVC_VERS,
-				IPA_Q6_SERVICE_INS_ID, &ipa3_q6_clnt_nb);
+	rc = qmi_add_lookup(ipa_q6_clnt,
+		IPA_Q6_SERVICE_SVC_ID,
+		IPA_Q6_SVC_VERS,
+		IPA_Q6_SERVICE_INS_ID);
+
 	if (rc < 0) {
-		IPAWANERR("notifier register failed\n");
-		goto destroy_clnt_resp_wq;
+		IPAWANERR("Adding Q6 Svc failed\n");
+		goto deregister_qmi_client;
 	}
 
 	/* get Q6 service and start send modem-initial to Q6 */
 	IPAWANDBG("wait service available\n");
 	return;
 
-destroy_clnt_resp_wq:
-	destroy_workqueue(ipa_clnt_resp_workqueue);
-	ipa_clnt_resp_workqueue = NULL;
+deregister_qmi_client:
+	qmi_handle_release(ipa_q6_clnt);
+destroy_qmi_client_handle:
+	vfree(ipa_q6_clnt);
+	ipa_q6_clnt = NULL;
 destroy_clnt_req_wq:
 	destroy_workqueue(ipa_clnt_req_workqueue);
 	ipa_clnt_req_workqueue = NULL;
 deregister_qmi_srv:
-	qmi_svc_unregister(ipa3_svc_handle);
+	if (!ipa3_is_apq())
+		qmi_handle_release(ipa3_svc_handle);
 destroy_qmi_handle:
-	qmi_handle_destroy(ipa3_svc_handle);
-	ipa3_svc_handle = 0;
-destroy_ipa_A7_svc_wq:
-	destroy_workqueue(ipa_svc_workqueue);
-	ipa_svc_workqueue = NULL;
 	vfree(ipa3_qmi_ctx);
+destroy_ipa_A7_svc_wq:
+	if (!ipa3_is_apq()) {
+		vfree(ipa3_svc_handle);
+		ipa3_svc_handle = NULL;
+	}
 	ipa3_qmi_ctx = NULL;
 }
 
@@ -1339,6 +1921,7 @@ int ipa3_qmi_service_init(uint32_t wan_platform_type)
 	ipa3_qmi_modem_init_fin = false;
 	ipa3_qmi_indication_fin = false;
 	ipa3_modem_init_cmplt = false;
+	send_qmi_init_q6 = true;
 	workqueues_stopped = false;
 
 	if (!ipa3_svc_handle) {
@@ -1351,65 +1934,41 @@ int ipa3_qmi_service_init(uint32_t wan_platform_type)
 
 void ipa3_qmi_service_exit(void)
 {
-	int ret = 0;
 
 	workqueues_stopped = true;
 
 	/* qmi-service */
-	if (ipa3_svc_handle) {
-		ret = qmi_svc_unregister(ipa3_svc_handle);
-		if (ret < 0)
-			IPAWANERR("unregister qmi handle %p failed, ret=%d\n",
-			ipa3_svc_handle, ret);
-	}
-	if (ipa_svc_workqueue) {
-		flush_workqueue(ipa_svc_workqueue);
-		destroy_workqueue(ipa_svc_workqueue);
-		ipa_svc_workqueue = NULL;
-	}
-
-	if (ipa3_svc_handle) {
-		ret = qmi_handle_destroy(ipa3_svc_handle);
-		if (ret < 0)
-			IPAWANERR("Error destroying qmi handle %p, ret=%d\n",
-			ipa3_svc_handle, ret);
+	if (ipa3_svc_handle != NULL) {
+		qmi_handle_release(ipa3_svc_handle);
+		vfree(ipa3_svc_handle);
+		ipa3_svc_handle = NULL;
 	}
 
 	/* qmi-client */
 
-	/* Unregister from events */
-	ret = qmi_svc_event_notifier_unregister(IPA_Q6_SERVICE_SVC_ID,
-				IPA_Q6_SVC_VERS,
-				IPA_Q6_SERVICE_INS_ID, &ipa3_q6_clnt_nb);
-	if (ret < 0)
-		IPAWANERR(
-		"Error qmi_svc_event_notifier_unregister service %d, ret=%d\n",
-		IPA_Q6_SERVICE_SVC_ID, ret);
-
 	/* Release client handle */
-	ipa3_q6_clnt_svc_exit(0);
-
-	if (ipa_clnt_req_workqueue) {
-		destroy_workqueue(ipa_clnt_req_workqueue);
-		ipa_clnt_req_workqueue = NULL;
-	}
-	if (ipa_clnt_resp_workqueue) {
-		destroy_workqueue(ipa_clnt_resp_workqueue);
-		ipa_clnt_resp_workqueue = NULL;
+	mutex_lock(&ipa3_qmi_lock);
+	if (ipa_q6_clnt != NULL) {
+		qmi_handle_release(ipa_q6_clnt);
+		vfree(ipa_q6_clnt);
+		ipa_q6_clnt = NULL;
+		if (ipa_clnt_req_workqueue) {
+			destroy_workqueue(ipa_clnt_req_workqueue);
+			ipa_clnt_req_workqueue = NULL;
+		}
 	}
 
 	/* clean the QMI msg cache */
-	mutex_lock(&ipa3_qmi_lock);
 	if (ipa3_qmi_ctx != NULL) {
 		vfree(ipa3_qmi_ctx);
 		ipa3_qmi_ctx = NULL;
 	}
 	mutex_unlock(&ipa3_qmi_lock);
 
-	ipa3_svc_handle = 0;
 	ipa3_qmi_modem_init_fin = false;
 	ipa3_qmi_indication_fin = false;
 	ipa3_modem_init_cmplt = false;
+	send_qmi_init_q6 = true;
 }
 
 void ipa3_qmi_stop_workqueues(void)
@@ -1420,34 +1979,29 @@ void ipa3_qmi_stop_workqueues(void)
 	workqueues_stopped = true;
 
 	/* Making sure that the current scheduled work won't be executed */
-	cancel_delayed_work(&work_recv_msg);
-	cancel_delayed_work(&ipa3_work_recv_msg_client);
 	cancel_delayed_work(&ipa3_work_svc_arrive);
 	cancel_delayed_work(&ipa3_work_svc_exit);
 }
 
-
 /* voting for bus BW to ipa_rm*/
 int ipa3_vote_for_bus_bw(uint32_t *bw_mbps)
 {
-	struct ipa_rm_perf_profile profile;
 	int ret;
+
+	IPAWANDBG("Bus BW is %d\n", *bw_mbps);
 
 	if (bw_mbps == NULL) {
 		IPAWANERR("Bus BW is invalid\n");
 		return -EINVAL;
 	}
 
-	memset(&profile, 0, sizeof(profile));
-	profile.max_supported_bandwidth_mbps = *bw_mbps;
-	ret = ipa_rm_set_perf_profile(IPA_RM_RESOURCE_Q6_PROD,
-			&profile);
+	ret = ipa3_wwan_set_modem_perf_profile(*bw_mbps);
 	if (ret)
 		IPAWANERR("Failed to set perf profile to BW %u\n",
-			profile.max_supported_bandwidth_mbps);
+			*bw_mbps);
 	else
 		IPAWANDBG("Succeeded to set perf profile to BW %u\n",
-			profile.max_supported_bandwidth_mbps);
+			*bw_mbps);
 
 	return ret;
 }
@@ -1455,7 +2009,7 @@ int ipa3_vote_for_bus_bw(uint32_t *bw_mbps)
 int ipa3_qmi_get_data_stats(struct ipa_get_data_stats_req_msg_v01 *req,
 			   struct ipa_get_data_stats_resp_msg_v01 *resp)
 {
-	struct msg_desc req_desc, resp_desc;
+	struct ipa_msg_desc req_desc, resp_desc;
 	int rc;
 
 	req_desc.max_msg_len = QMI_IPA_GET_DATA_STATS_REQ_MAX_MSG_LEN_V01;
@@ -1470,11 +2024,17 @@ int ipa3_qmi_get_data_stats(struct ipa_get_data_stats_req_msg_v01 *req,
 
 	if (unlikely(!ipa_q6_clnt))
 		return -ETIMEDOUT;
-	rc = qmi_send_req_wait(ipa_q6_clnt, &req_desc, req,
-			sizeof(struct ipa_get_data_stats_req_msg_v01),
-			&resp_desc, resp,
-			sizeof(struct ipa_get_data_stats_resp_msg_v01),
-			QMI_SEND_STATS_REQ_TIMEOUT_MS);
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, req,
+		&resp_desc, resp,
+		QMI_SEND_STATS_REQ_TIMEOUT_MS);
+
+	if (rc < 0) {
+		IPAWANERR("QMI send Req %d failed, rc= %d\n",
+			QMI_IPA_GET_DATA_STATS_REQ_V01,
+			rc);
+		return rc;
+	}
 
 	IPAWANDBG_LOW("QMI_IPA_GET_DATA_STATS_RESP_V01 received\n");
 
@@ -1486,7 +2046,7 @@ int ipa3_qmi_get_data_stats(struct ipa_get_data_stats_req_msg_v01 *req,
 int ipa3_qmi_get_network_stats(struct ipa_get_apn_data_stats_req_msg_v01 *req,
 			      struct ipa_get_apn_data_stats_resp_msg_v01 *resp)
 {
-	struct msg_desc req_desc, resp_desc;
+	struct ipa_msg_desc req_desc, resp_desc;
 	int rc;
 
 	req_desc.max_msg_len = QMI_IPA_GET_APN_DATA_STATS_REQ_MAX_MSG_LEN_V01;
@@ -1501,11 +2061,17 @@ int ipa3_qmi_get_network_stats(struct ipa_get_apn_data_stats_req_msg_v01 *req,
 
 	if (unlikely(!ipa_q6_clnt))
 		return -ETIMEDOUT;
-	rc = qmi_send_req_wait(ipa_q6_clnt, &req_desc, req,
-			sizeof(struct ipa_get_apn_data_stats_req_msg_v01),
-			&resp_desc, resp,
-			sizeof(struct ipa_get_apn_data_stats_resp_msg_v01),
-			QMI_SEND_STATS_REQ_TIMEOUT_MS);
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, req,
+		&resp_desc, resp,
+		QMI_SEND_STATS_REQ_TIMEOUT_MS);
+
+	if (rc < 0) {
+		IPAWANERR("QMI send Req %d failed, rc= %d\n",
+			QMI_IPA_GET_APN_DATA_STATS_REQ_V01,
+			rc);
+		return rc;
+	}
 
 	IPAWANDBG_LOW("QMI_IPA_GET_APN_DATA_STATS_RESP_V01 received\n");
 
@@ -1517,7 +2083,7 @@ int ipa3_qmi_get_network_stats(struct ipa_get_apn_data_stats_req_msg_v01 *req,
 int ipa3_qmi_set_data_quota(struct ipa_set_data_usage_quota_req_msg_v01 *req)
 {
 	struct ipa_set_data_usage_quota_resp_msg_v01 resp;
-	struct msg_desc req_desc, resp_desc;
+	struct ipa_msg_desc req_desc, resp_desc;
 	int rc;
 
 	memset(&resp, 0, sizeof(struct ipa_set_data_usage_quota_resp_msg_v01));
@@ -1534,10 +2100,17 @@ int ipa3_qmi_set_data_quota(struct ipa_set_data_usage_quota_req_msg_v01 *req)
 	IPAWANDBG_LOW("Sending QMI_IPA_SET_DATA_USAGE_QUOTA_REQ_V01\n");
 	if (unlikely(!ipa_q6_clnt))
 		return -ETIMEDOUT;
-	rc = qmi_send_req_wait(ipa_q6_clnt, &req_desc, req,
-			sizeof(struct ipa_set_data_usage_quota_req_msg_v01),
-			&resp_desc, &resp, sizeof(resp),
-			QMI_SEND_STATS_REQ_TIMEOUT_MS);
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, req,
+		&resp_desc, &resp,
+		QMI_SEND_STATS_REQ_TIMEOUT_MS);
+
+	if (rc < 0) {
+		IPAWANERR("QMI send Req %d failed, rc= %d\n",
+			QMI_IPA_SET_DATA_USAGE_QUOTA_REQ_V01,
+			rc);
+		return rc;
+	}
 
 	IPAWANDBG_LOW("QMI_IPA_SET_DATA_USAGE_QUOTA_RESP_V01 received\n");
 
@@ -1546,11 +2119,107 @@ int ipa3_qmi_set_data_quota(struct ipa_set_data_usage_quota_req_msg_v01 *req)
 		resp.resp.error, "ipa_set_data_usage_quota_req_msg_v01");
 }
 
+int ipa3_qmi_set_aggr_info(enum ipa_aggr_enum_type_v01 aggr_enum_type)
+{
+	struct ipa_mhi_prime_aggr_info_resp_msg_v01 resp;
+	struct ipa_msg_desc req_desc, resp_desc;
+	int rc;
+
+	IPAWANDBG("sending aggr_info_request\n");
+
+	/* replace to right qmap format */
+	aggr_req.aggr_info[1].aggr_type = aggr_enum_type;
+	aggr_req.aggr_info[1].bytes_count = ipa3_ctx->mpm_teth_aggr_size;
+	aggr_req.aggr_info[2].aggr_type = aggr_enum_type;
+	aggr_req.aggr_info[3].aggr_type = aggr_enum_type;
+	aggr_req.aggr_info[4].aggr_type = aggr_enum_type;
+
+	memset(&resp, 0, sizeof(struct ipa_mhi_prime_aggr_info_resp_msg_v01));
+
+	req_desc.max_msg_len = IPA_MHI_PRIME_AGGR_INFO_REQ_MSG_V01_MAX_MSG_LEN;
+	req_desc.msg_id = QMI_IPA_MHI_PRIME_AGGR_INFO_REQ_V01;
+	req_desc.ei_array = ipa_mhi_prime_aggr_info_req_msg_v01_ei;
+
+	resp_desc.max_msg_len =
+		IPA_MHI_PRIME_AGGR_INFO_RESP_MSG_V01_MAX_MSG_LEN;
+	resp_desc.msg_id = QMI_IPA_MHI_PRIME_AGGR_INFO_RESP_V01;
+	resp_desc.ei_array = ipa_mhi_prime_aggr_info_resp_msg_v01_ei;
+
+	IPAWANDBG("Sending QMI_IPA_MHI_PRIME_AGGR_INFO_REQ_V01(%d)\n",
+		aggr_enum_type);
+	if (unlikely(!ipa_q6_clnt)) {
+		IPAWANERR(" ipa_q6_clnt not initialized\n");
+		return -ETIMEDOUT;
+	}
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, &aggr_req,
+		&resp_desc, &resp,
+		QMI_SEND_STATS_REQ_TIMEOUT_MS);
+
+	if (rc < 0) {
+		IPAWANERR("QMI send Req %d failed, rc= %d\n",
+			QMI_IPA_SET_DATA_USAGE_QUOTA_REQ_V01,
+			rc);
+		return rc;
+	}
+
+	IPAWANDBG_LOW("QMI_IPA_MHI_PRIME_AGGR_INFO_RESP_V01 received\n");
+
+	return ipa3_check_qmi_response(rc,
+		QMI_IPA_SET_DATA_USAGE_QUOTA_REQ_V01, resp.resp.result,
+		resp.resp.error, "ipa_mhi_prime_aggr_info_req_msg_v01");
+}
+
+int ipa3_qmi_req_ind(bool bw_reg)
+{
+	struct ipa_indication_reg_req_msg_v01 req;
+	struct ipa_indication_reg_resp_msg_v01 resp;
+	struct ipa_msg_desc req_desc, resp_desc;
+	int rc;
+
+	memset(&req, 0, sizeof(struct ipa_indication_reg_req_msg_v01));
+	memset(&resp, 0, sizeof(struct ipa_indication_reg_resp_msg_v01));
+
+	req.bw_change_ind_valid = true;
+	req.bw_change_ind = bw_reg;
+
+	req_desc.max_msg_len =
+		QMI_IPA_INDICATION_REGISTER_REQ_MAX_MSG_LEN_V01;
+	req_desc.msg_id = QMI_IPA_INDICATION_REGISTER_REQ_V01;
+	req_desc.ei_array = ipa3_indication_reg_req_msg_data_v01_ei;
+
+	resp_desc.max_msg_len =
+		QMI_IPA_INDICATION_REGISTER_RESP_MAX_MSG_LEN_V01;
+	resp_desc.msg_id = QMI_IPA_INDICATION_REGISTER_RESP_V01;
+	resp_desc.ei_array = ipa3_indication_reg_resp_msg_data_v01_ei;
+
+	IPAWANDBG_LOW("Sending QMI_IPA_INDICATION_REGISTER_REQ_V01\n");
+	if (unlikely(!ipa_q6_clnt))
+		return -ETIMEDOUT;
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, &req,
+		&resp_desc, &resp,
+		QMI_SEND_STATS_REQ_TIMEOUT_MS);
+
+	if (rc < 0) {
+		IPAWANERR("QMI send Req %d failed, rc= %d\n",
+			QMI_IPA_INDICATION_REGISTER_REQ_V01,
+			rc);
+		return rc;
+	}
+
+	IPAWANDBG_LOW("QMI_IPA_INDICATION_REGISTER_RESP_V01 received\n");
+
+	return ipa3_check_qmi_response(rc,
+		QMI_IPA_INDICATION_REGISTER_REQ_V01, resp.resp.result,
+		resp.resp.error, "ipa_indication_reg_req_msg_v01");
+}
+
 int ipa3_qmi_stop_data_qouta(void)
 {
 	struct ipa_stop_data_usage_quota_req_msg_v01 req;
 	struct ipa_stop_data_usage_quota_resp_msg_v01 resp;
-	struct msg_desc req_desc, resp_desc;
+	struct ipa_msg_desc req_desc, resp_desc;
 	int rc;
 
 	memset(&req, 0, sizeof(struct ipa_stop_data_usage_quota_req_msg_v01));
@@ -1569,9 +2238,17 @@ int ipa3_qmi_stop_data_qouta(void)
 	IPAWANDBG_LOW("Sending QMI_IPA_STOP_DATA_USAGE_QUOTA_REQ_V01\n");
 	if (unlikely(!ipa_q6_clnt))
 		return -ETIMEDOUT;
-	rc = qmi_send_req_wait(ipa_q6_clnt, &req_desc, &req, sizeof(req),
-		&resp_desc, &resp, sizeof(resp),
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, &req,
+		&resp_desc, &resp,
 		QMI_SEND_STATS_REQ_TIMEOUT_MS);
+
+	if (rc < 0) {
+		IPAWANERR("QMI send Req %d failed, rc= %d\n",
+			QMI_IPA_STOP_DATA_USAGE_QUOTA_REQ_V01,
+			rc);
+		return rc;
+	}
 
 	IPAWANDBG_LOW("QMI_IPA_STOP_DATA_USAGE_QUOTA_RESP_V01 received\n");
 
@@ -1584,8 +2261,8 @@ int ipa3_qmi_enable_per_client_stats(
 	struct ipa_enable_per_client_stats_req_msg_v01 *req,
 	struct ipa_enable_per_client_stats_resp_msg_v01 *resp)
 {
-	struct msg_desc req_desc, resp_desc;
-	int rc;
+	struct ipa_msg_desc req_desc, resp_desc;
+	int rc = 0;
 
 	req_desc.max_msg_len =
 		QMI_IPA_ENABLE_PER_CLIENT_STATS_REQ_MAX_MSG_LEN_V01;
@@ -1603,11 +2280,19 @@ int ipa3_qmi_enable_per_client_stats(
 
 	IPAWANDBG("Sending QMI_IPA_ENABLE_PER_CLIENT_STATS_REQ_V01\n");
 
-	rc = qmi_send_req_wait(ipa_q6_clnt, &req_desc, req,
-		sizeof(struct ipa_enable_per_client_stats_req_msg_v01),
+	if (unlikely(!ipa_q6_clnt))
+		return -ETIMEDOUT;
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, req,
 		&resp_desc, resp,
-		sizeof(struct ipa_enable_per_client_stats_resp_msg_v01),
 		QMI_SEND_STATS_REQ_TIMEOUT_MS);
+
+	if (rc < 0) {
+		IPAWANERR("send Req %d failed, rc= %d\n",
+			QMI_IPA_ENABLE_PER_CLIENT_STATS_REQ_V01,
+			rc);
+		return rc;
+	}
 
 	IPAWANDBG("QMI_IPA_ENABLE_PER_CLIENT_STATS_RESP_V01 received\n");
 
@@ -1620,7 +2305,7 @@ int ipa3_qmi_get_per_client_packet_stats(
 	struct ipa_get_stats_per_client_req_msg_v01 *req,
 	struct ipa_get_stats_per_client_resp_msg_v01 *resp)
 {
-	struct msg_desc req_desc, resp_desc;
+	struct ipa_msg_desc req_desc, resp_desc;
 	int rc;
 
 	req_desc.max_msg_len = QMI_IPA_GET_STATS_PER_CLIENT_REQ_MAX_MSG_LEN_V01;
@@ -1634,11 +2319,19 @@ int ipa3_qmi_get_per_client_packet_stats(
 
 	IPAWANDBG("Sending QMI_IPA_GET_STATS_PER_CLIENT_REQ_V01\n");
 
-	rc = qmi_send_req_wait(ipa_q6_clnt, &req_desc, req,
-			sizeof(struct ipa_get_stats_per_client_req_msg_v01),
-			&resp_desc, resp,
-			sizeof(struct ipa_get_stats_per_client_resp_msg_v01),
-			QMI_SEND_STATS_REQ_TIMEOUT_MS);
+	if (unlikely(!ipa_q6_clnt))
+		return -ETIMEDOUT;
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, req,
+		&resp_desc, resp,
+		QMI_SEND_STATS_REQ_TIMEOUT_MS);
+
+	if (rc < 0) {
+		IPAWANERR("send Req %d failed, rc= %d\n",
+			QMI_IPA_GET_STATS_PER_CLIENT_REQ_V01,
+			rc);
+		return rc;
+	}
 
 	IPAWANDBG("QMI_IPA_GET_STATS_PER_CLIENT_RESP_V01 received\n");
 
@@ -1646,6 +2339,73 @@ int ipa3_qmi_get_per_client_packet_stats(
 		QMI_IPA_GET_STATS_PER_CLIENT_REQ_V01, resp->resp.result,
 		resp->resp.error,
 		"struct ipa_get_stats_per_client_req_msg_v01");
+}
+
+int ipa3_qmi_send_mhi_ready_indication(
+	struct ipa_mhi_ready_indication_msg_v01 *req)
+{
+	IPAWANDBG("Sending QMI_IPA_MHI_READY_IND_V01\n");
+
+	if (unlikely(!ipa3_svc_handle))
+		return -ETIMEDOUT;
+
+	return qmi_send_indication(ipa3_svc_handle,
+		&ipa3_qmi_ctx->client_sq,
+		QMI_IPA_MHI_READY_IND_V01,
+		IPA_MHI_READY_INDICATION_MSG_V01_MAX_MSG_LEN,
+		ipa_mhi_ready_indication_msg_v01_ei,
+		req);
+}
+
+int ipa3_qmi_send_mhi_cleanup_request(struct ipa_mhi_cleanup_req_msg_v01 *req)
+{
+
+	struct ipa_msg_desc req_desc, resp_desc;
+	struct ipa_mhi_cleanup_resp_msg_v01 resp;
+	int rc;
+
+	memset(&resp, 0, sizeof(resp));
+
+	IPAWANDBG("Sending QMI_IPA_MHI_CLEANUP_REQ_V01\n");
+	if (unlikely(!ipa_q6_clnt))
+		return -ETIMEDOUT;
+
+	req_desc.max_msg_len = IPA_MHI_CLK_VOTE_REQ_MSG_V01_MAX_MSG_LEN;
+	req_desc.msg_id = QMI_IPA_MHI_CLEANUP_REQ_V01;
+	req_desc.ei_array = ipa_mhi_cleanup_req_msg_v01_ei;
+
+	resp_desc.max_msg_len = IPA_MHI_CLK_VOTE_RESP_MSG_V01_MAX_MSG_LEN;
+	resp_desc.msg_id = QMI_IPA_MHI_CLEANUP_RESP_V01;
+	resp_desc.ei_array = ipa_mhi_cleanup_resp_msg_v01_ei;
+
+	if (unlikely(!ipa_q6_clnt))
+		return -ETIMEDOUT;
+	rc = ipa3_qmi_send_req_wait(ipa_q6_clnt,
+		&req_desc, req,
+		&resp_desc, &resp,
+		QMI_MHI_SEND_REQ_TIMEOUT_MS);
+
+	IPAWANDBG("QMI_IPA_MHI_CLEANUP_RESP_V01 received\n");
+
+	return ipa3_check_qmi_response(rc,
+		QMI_IPA_MHI_CLEANUP_REQ_V01, resp.resp.result,
+		resp.resp.error, "ipa_mhi_cleanup_req_msg");
+}
+
+int ipa3_qmi_send_rsc_pipe_indication(
+	struct ipa_endp_desc_indication_msg_v01 *req)
+{
+	IPAWANDBG("Sending QMI_IPA_ENDP_DESC_INDICATION_V01\n");
+
+	if (unlikely(!ipa3_svc_handle))
+		return -ETIMEDOUT;
+
+	return qmi_send_indication(ipa3_svc_handle,
+		&ipa3_qmi_ctx->client_sq,
+		QMI_IPA_ENDP_DESC_INDICATION_V01,
+		IPA_ENDP_DESC_INDICATION_MSG_V01_MAX_MSG_LEN,
+		ipa_endp_desc_indication_msg_v01_ei,
+		req);
 }
 
 void ipa3_qmi_init(void)

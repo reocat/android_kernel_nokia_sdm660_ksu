@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Implement the manual drop-all-pagecache function
  */
@@ -39,6 +40,7 @@ void drop_pagecache_sb(struct super_block *sb, void *unused)
 		iput(toput_inode);
 		toput_inode = inode;
 
+		cond_resched();
 		spin_lock(&sb->s_inode_list_lock);
 	}
 	spin_unlock(&sb->s_inode_list_lock);

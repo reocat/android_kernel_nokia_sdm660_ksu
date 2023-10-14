@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __ASM_SPINLOCK_H
 #define __ASM_SPINLOCK_H
 
@@ -13,8 +14,6 @@ static inline int arch_spin_is_locked(arch_spinlock_t *x)
 }
 
 #define arch_spin_lock(lock) arch_spin_lock_flags(lock, 0)
-#define arch_spin_unlock_wait(x) \
-		do { cpu_relax(); } while (arch_spin_is_locked(x))
 
 static inline void arch_spin_lock_flags(arch_spinlock_t *x,
 					 unsigned long flags)
@@ -31,6 +30,7 @@ static inline void arch_spin_lock_flags(arch_spinlock_t *x,
 			} else
 				cpu_relax();
 }
+#define arch_spin_lock_flags arch_spin_lock_flags
 
 static inline void arch_spin_unlock(arch_spinlock_t *x)
 {
@@ -165,26 +165,5 @@ static __inline__ int arch_write_trylock(arch_rwlock_t *rw)
 
 	return result;
 }
-
-/*
- * read_can_lock - would read_trylock() succeed?
- * @lock: the rwlock in question.
- */
-static __inline__ int arch_read_can_lock(arch_rwlock_t *rw)
-{
-	return rw->counter >= 0;
-}
-
-/*
- * write_can_lock - would write_trylock() succeed?
- * @lock: the rwlock in question.
- */
-static __inline__ int arch_write_can_lock(arch_rwlock_t *rw)
-{
-	return !rw->counter;
-}
-
-#define arch_read_lock_flags(lock, flags) arch_read_lock(lock)
-#define arch_write_lock_flags(lock, flags) arch_write_lock(lock)
 
 #endif /* __ASM_SPINLOCK_H */

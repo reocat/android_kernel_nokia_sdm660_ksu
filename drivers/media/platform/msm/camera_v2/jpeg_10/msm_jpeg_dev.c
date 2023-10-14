@@ -1,4 +1,5 @@
-/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -109,22 +110,6 @@ static const struct file_operations msm_jpeg_fops = {
 #endif
 };
 
-
-int msm_jpeg_subdev_init(struct v4l2_subdev *jpeg_sd)
-{
-	int rc;
-	struct msm_jpeg_device *pgmn_dev =
-		(struct msm_jpeg_device *)jpeg_sd->host_priv;
-
-	JPEG_DBG("%s:%d: jpeg_sd=0x%lx pgmn_dev=0x%pK\n",
-		__func__, __LINE__, (unsigned long)jpeg_sd,
-		pgmn_dev);
-	rc = __msm_jpeg_open(pgmn_dev);
-	JPEG_DBG("%s:%d: rc=%d\n",
-		__func__, __LINE__, rc);
-	return rc;
-}
-
 static long msm_jpeg_subdev_ioctl(struct v4l2_subdev *sd,
 	unsigned int cmd, void *arg)
 {
@@ -141,16 +126,6 @@ static long msm_jpeg_subdev_ioctl(struct v4l2_subdev *sd,
 	rc = __msm_jpeg_ioctl(pgmn_dev, cmd, (unsigned long)arg);
 	pr_debug("%s: X\n", __func__);
 	return rc;
-}
-
-void msm_jpeg_subdev_release(struct v4l2_subdev *jpeg_sd)
-{
-	int rc;
-	struct msm_jpeg_device *pgmn_dev =
-		(struct msm_jpeg_device *)jpeg_sd->host_priv;
-	JPEG_DBG("%s:pgmn_dev=0x%pK", __func__, pgmn_dev);
-	rc = __msm_jpeg_release(pgmn_dev);
-	JPEG_DBG("%s:rc=%d", __func__, rc);
 }
 
 static const struct v4l2_subdev_core_ops msm_jpeg_subdev_core_ops = {
@@ -321,7 +296,6 @@ static struct platform_driver msm_jpeg_driver = {
 	.remove = __msm_jpeg_remove,
 	.driver = {
 		.name = "msm_jpeg",
-		.owner = THIS_MODULE,
 		.of_match_table = msm_jpeg_dt_match,
 		.suppress_bind_attrs = true,
 	},

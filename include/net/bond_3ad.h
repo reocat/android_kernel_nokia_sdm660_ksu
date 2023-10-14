@@ -265,7 +265,7 @@ struct ad_system {
 
 struct ad_bond_info {
 	struct ad_system system;	/* 802.3ad system structure */
-	u32 agg_select_timer;		/* Timer to select aggregator after all adapter's hand shakes */
+	atomic_t agg_select_timer;	/* Timer to select aggregator after all adapter's hand shakes */
 	u16 aggregator_identifier;
 };
 
@@ -283,7 +283,7 @@ static inline const char *bond_3ad_churn_desc(churn_state_t state)
 		"none",
 		"unknown"
 	};
-	int max_size = sizeof(churn_description) / sizeof(churn_description[0]);
+	int max_size = ARRAY_SIZE(churn_description);
 
 	if (state >= max_size)
 		state = max_size - 1;
@@ -306,5 +306,6 @@ int bond_3ad_lacpdu_recv(const struct sk_buff *skb, struct bonding *bond,
 			 struct slave *slave);
 int bond_3ad_set_carrier(struct bonding *bond);
 void bond_3ad_update_lacp_rate(struct bonding *bond);
+void bond_3ad_update_ad_actor_settings(struct bonding *bond);
 #endif /* _NET_BOND_3AD_H */
 

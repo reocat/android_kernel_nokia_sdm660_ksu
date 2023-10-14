@@ -1,2 +1,2 @@
-obj-$(CONFIG_MSM_SDE_ROTATOR)	    += rotator/
-obj-$(CONFIG_MSM_SDE_HDMI_CEC)      += cec/
+# SPDX-License-Identifier: GPL-2.0-only
+obj-$(CONFIG_SDE_ROTATOR)	    += rotator/

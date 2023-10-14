@@ -1,14 +1,6 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
  */
 
 #if !defined(_ADRENO_TRACE_H) || defined(TRACE_HEADER_MULTI_READ)
@@ -23,7 +15,6 @@
 
 #include <linux/tracepoint.h>
 #include "adreno_a3xx.h"
-#include "adreno_a4xx.h"
 #include "adreno_a5xx.h"
 
 TRACE_EVENT(adreno_cmdbatch_queued,
@@ -343,7 +334,8 @@ TRACE_EVENT(adreno_gpu_fault,
 		__entry->ib2size = ib2size;
 		__entry->rb_id = rb_id;
 	),
-	TP_printk("ctx=%d ts=%d rb_id=%d status=%X RB=%X/%X IB1=%X/%X IB2=%X/%X",
+	TP_printk(
+		"ctx=%d ts=%d rb_id=%d status=%X RB=%X/%X IB1=%X/%X IB2=%X/%X",
 		__entry->ctx, __entry->ts, __entry->rb_id, __entry->status,
 		__entry->wptr, __entry->rptr, __entry->ib1base,
 		__entry->ib1size, __entry->ib2base, __entry->ib2size)
@@ -364,7 +356,7 @@ TRACE_EVENT(adreno_sp_tp,
 	),
 
 	TP_printk(
-		"func=%pf", (void *) __entry->ip
+		"func=%pS", (void *) __entry->ip
 	)
 );
 
@@ -392,33 +384,6 @@ TRACE_EVENT(kgsl_a3xx_irq_status,
 		__get_str(device_name),
 		__entry->status ? __print_flags(__entry->status, "|",
 			A3XX_IRQ_FLAGS) : "None"
-	)
-);
-
-/*
- * Tracepoint for a4xx irq. Includes status info
- */
-TRACE_EVENT(kgsl_a4xx_irq_status,
-
-	TP_PROTO(struct adreno_device *adreno_dev, unsigned int status),
-
-	TP_ARGS(adreno_dev, status),
-
-	TP_STRUCT__entry(
-		__string(device_name, adreno_dev->dev.name)
-		__field(unsigned int, status)
-	),
-
-	TP_fast_assign(
-		__assign_str(device_name, adreno_dev->dev.name);
-		__entry->status = status;
-	),
-
-	TP_printk(
-		"d_name=%s status=%s",
-		__get_str(device_name),
-		__entry->status ? __print_flags(__entry->status, "|",
-			A4XX_IRQ_FLAGS) : "None"
 	)
 );
 
@@ -572,36 +537,55 @@ TRACE_EVENT(adreno_hw_preempt_token_submit,
 );
 
 TRACE_EVENT(adreno_preempt_trigger,
-	TP_PROTO(struct adreno_ringbuffer *cur, struct adreno_ringbuffer *next),
-	TP_ARGS(cur, next),
+	TP_PROTO(struct adreno_ringbuffer *cur, struct adreno_ringbuffer *next,
+		unsigned int cntl),
+	TP_ARGS(cur, next, cntl),
 	TP_STRUCT__entry(
-		__field(struct adreno_ringbuffer *, cur)
-		__field(struct adreno_ringbuffer *, next)
+		__field(unsigned int, cur)
+		__field(unsigned int, next)
+		__field(unsigned int, cntl)
 	),
 	TP_fast_assign(
-		__entry->cur = cur;
-		__entry->next = next;
+		__entry->cur = cur->id;
+		__entry->next = next->id;
+		__entry->cntl = cntl;
 	),
-	TP_printk("trigger from id=%d to id=%d",
-		__entry->cur->id, __entry->next->id
+	TP_printk("trigger from id=%d to id=%d cntl=%x",
+		__entry->cur, __entry->next, __entry->cntl
 	)
 );
 
 TRACE_EVENT(adreno_preempt_done,
-	TP_PROTO(struct adreno_ringbuffer *cur, struct adreno_ringbuffer *next),
-	TP_ARGS(cur, next),
+	TP_PROTO(struct adreno_ringbuffer *cur, struct adreno_ringbuffer *next,
+		unsigned int level),
+	TP_ARGS(cur, next, level),
 	TP_STRUCT__entry(
-		__field(struct adreno_ringbuffer *, cur)
-		__field(struct adreno_ringbuffer *, next)
+		__field(unsigned int, cur)
+		__field(unsigned int, next)
+		__field(unsigned int, level)
 	),
 	TP_fast_assign(
-		__entry->cur = cur;
-		__entry->next = next;
+		__entry->cur = cur->id;
+		__entry->next = next->id;
+		__entry->level = level;
 	),
-	TP_printk("done switch to id=%d from id=%d",
-		__entry->next->id, __entry->cur->id
+	TP_printk("done switch to id=%d from id=%d level=%x",
+		__entry->next, __entry->cur, __entry->level
 	)
 );
+
+TRACE_EVENT(adreno_ifpc_count,
+	TP_PROTO(unsigned int ifpc_count),
+	TP_ARGS(ifpc_count),
+	TP_STRUCT__entry(
+		__field(unsigned int, ifpc_count)
+	),
+	TP_fast_assign(
+		__entry->ifpc_count = ifpc_count;
+	),
+	TP_printk("total times GMU entered IFPC = %d", __entry->ifpc_count)
+);
+
 #endif /* _ADRENO_TRACE_H */
 
 /* This part must be outside protection */

@@ -15,6 +15,8 @@
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <linux/sync_file.h>
+
 #include "msm_drv.h"
 #include "msm_gpu.h"
 #include "msm_gem.h"
@@ -25,14 +27,13 @@
  */
 
 /* make sure these don't conflict w/ MSM_SUBMIT_BO_x */
-#define BO_VALID    0x8000
+#define BO_VALID    0x8000   /* is current addr in cmdstream correct/valid? */
 #define BO_LOCKED   0x4000
 #define BO_PINNED   0x2000
 
 static struct msm_gem_submit *submit_create(struct drm_device *dev,
-		struct msm_gem_address_space *aspace,
-		uint32_t nr_bos, uint32_t nr_cmds,
-		struct msm_gpu_submitqueue *queue)
+		struct msm_gpu *gpu, struct msm_gpu_submitqueue *queue,
+		uint32_t nr_bos, uint32_t nr_cmds)
 {
 	struct msm_gem_submit *submit;
 	uint64_t sz = sizeof(*submit) + ((u64)nr_bos * sizeof(submit->bos[0])) +
@@ -41,32 +42,37 @@ static struct msm_gem_submit *submit_create(struct drm_device *dev,
 	if (sz > SIZE_MAX)
 		return NULL;
 
-	submit = kmalloc(sz, GFP_TEMPORARY | __GFP_NOWARN | __GFP_NORETRY);
-	if (submit) {
-		submit->dev = dev;
-		submit->aspace = aspace;
-		submit->queue = queue;
+	submit = kmalloc(sz, GFP_KERNEL | __GFP_NOWARN | __GFP_NORETRY);
+	if (!submit)
+		return NULL;
 
-		/* initially, until copy_from_user() and bo lookup succeeds: */
-		submit->nr_bos = 0;
-		submit->nr_cmds = 0;
+	submit->dev = dev;
+	submit->gpu = gpu;
+	submit->fence = NULL;
+	submit->pid = get_pid(task_pid(current));
+	submit->cmd = (void *)&submit->bos[nr_bos];
+	submit->queue = queue;
+	submit->ring = gpu->rb[queue->prio];
 
-		submit->profile_buf = NULL;
-		submit->profile_buf_iova = 0;
-		submit->cmd = (void *)&submit->bos[nr_bos];
+	/* initially, until copy_from_user() and bo lookup succeeds: */
+	submit->nr_bos = 0;
+	submit->nr_cmds = 0;
 
-		submit->secure = false;
-
-		/*
-		 * Initalize node so we can safely list_del() on it if
-		 * we fail in the submit path
-		 */
-		INIT_LIST_HEAD(&submit->node);
-		INIT_LIST_HEAD(&submit->bo_list);
-		ww_acquire_init(&submit->ticket, &reservation_ww_class);
-	}
+	INIT_LIST_HEAD(&submit->node);
+	INIT_LIST_HEAD(&submit->bo_list);
+	ww_acquire_init(&submit->ticket, &reservation_ww_class);
 
 	return submit;
+}
+
+void msm_gem_submit_free(struct msm_gem_submit *submit)
+{
+	dma_fence_put(submit->fence);
+	list_del(&submit->node);
+	put_pid(submit->pid);
+	msm_submitqueue_put(submit->queue);
+
+	kfree(submit);
 }
 
 static inline unsigned long __must_check
@@ -77,18 +83,7 @@ copy_from_user_inatomic(void *to, const void __user *from, unsigned long n)
 	return -EFAULT;
 }
 
-void msm_gem_submit_free(struct msm_gem_submit *submit)
-{
-	if (!submit)
-		return;
-
-	msm_submitqueue_put(submit->queue);
-	list_del(&submit->node);
-	kfree(submit);
-}
-
-static int submit_lookup_objects(struct msm_gpu *gpu,
-		struct msm_gem_submit *submit,
+static int submit_lookup_objects(struct msm_gem_submit *submit,
 		struct drm_msm_gem_submit *args, struct drm_file *file)
 {
 	unsigned i;
@@ -104,16 +99,18 @@ static int submit_lookup_objects(struct msm_gpu *gpu,
 		void __user *userptr =
 			u64_to_user_ptr(args->bos + (i * sizeof(submit_bo)));
 
-		if (copy_from_user_inatomic(&submit_bo, userptr,
-			sizeof(submit_bo))) {
+		/* make sure we don't have garbage flags, in case we hit
+		 * error path before flags is initialized:
+		 */
+		submit->bos[i].flags = 0;
+
+		if (copy_from_user_inatomic(&submit_bo, userptr, sizeof(submit_bo))) {
 			pagefault_enable();
 			spin_unlock(&file->table_lock);
-			if (copy_from_user(&submit_bo, userptr,
-				sizeof(submit_bo))) {
+			if (copy_from_user(&submit_bo, userptr, sizeof(submit_bo))) {
 				ret = -EFAULT;
 				goto out;
 			}
-
 			spin_lock(&file->table_lock);
 			pagefault_disable();
 		}
@@ -179,8 +176,8 @@ out:
 	return ret;
 }
 
-static void submit_unlock_unpin_bo(struct msm_gpu *gpu,
-		struct msm_gem_submit *submit, int i)
+static void submit_unlock_unpin_bo(struct msm_gem_submit *submit,
+		int i, bool backoff)
 {
 	struct msm_gem_object *msm_obj = submit->bos[i].obj;
 	struct msm_gem_address_space *aspace;
@@ -189,20 +186,19 @@ static void submit_unlock_unpin_bo(struct msm_gpu *gpu,
 			gpu->secure_aspace : submit->aspace;
 
 	if (submit->bos[i].flags & BO_PINNED)
-		msm_gem_put_iova(&msm_obj->base, aspace);
+		msm_gem_put_iova(&msm_obj->base, submit->gpu->aspace);
 
 	if (submit->bos[i].flags & BO_LOCKED)
 		ww_mutex_unlock(&msm_obj->resv->lock);
 
-	if (!(submit->bos[i].flags & BO_VALID))
+	if (backoff && !(submit->bos[i].flags & BO_VALID))
 		submit->bos[i].iova = 0;
 
 	submit->bos[i].flags &= ~(BO_LOCKED | BO_PINNED);
 }
 
 /* This is where we make sure all the bo's are reserved and pin'd: */
-static int submit_validate_objects(struct msm_gpu *gpu,
-		struct msm_gem_submit *submit)
+static int submit_lock_objects(struct msm_gem_submit *submit)
 {
 	int contended, slow_locked = -1, i, ret = 0;
 
@@ -222,19 +218,6 @@ retry:
 				goto fail;
 			submit->bos[i].flags |= BO_LOCKED;
 		}
-
-		/*
-		 * An invalid SVM object is part of
-		 * this submit's buffer list, fail.
-		 */
-		if (msm_obj->flags & MSM_BO_SVM) {
-			struct msm_gem_svm_object *msm_svm_obj =
-				to_msm_svm_obj(msm_obj);
-			if (msm_svm_obj->invalid) {
-				ret = -EINVAL;
-				goto fail;
-			}
-		}
 	}
 
 	ww_acquire_done(&submit->ticket);
@@ -243,10 +226,10 @@ retry:
 
 fail:
 	for (; i >= 0; i--)
-		submit_unlock_unpin_bo(gpu, submit, i);
+		submit_unlock_unpin_bo(submit, i, true);
 
 	if (slow_locked > 0)
-		submit_unlock_unpin_bo(gpu, submit, slow_locked);
+		submit_unlock_unpin_bo(submit, slow_locked, true);
 
 	if (ret == -EDEADLK) {
 		struct msm_gem_object *msm_obj = submit->bos[contended].obj;
@@ -263,8 +246,70 @@ fail:
 	return ret;
 }
 
-static int submit_bo(struct msm_gpu *gpu,
-		struct msm_gem_submit *submit, uint32_t idx,
+static int submit_fence_sync(struct msm_gem_submit *submit, bool no_implicit)
+{
+	int i, ret = 0;
+
+	for (i = 0; i < submit->nr_bos; i++) {
+		struct msm_gem_object *msm_obj = submit->bos[i].obj;
+		bool write = submit->bos[i].flags & MSM_SUBMIT_BO_WRITE;
+
+		if (!write) {
+			/* NOTE: _reserve_shared() must happen before
+			 * _add_shared_fence(), which makes this a slightly
+			 * strange place to call it.  OTOH this is a
+			 * convenient can-fail point to hook it in.
+			 */
+			ret = reservation_object_reserve_shared(msm_obj->resv);
+			if (ret)
+				return ret;
+		}
+
+		if (no_implicit)
+			continue;
+
+		ret = msm_gem_sync_object(&msm_obj->base, submit->ring->fctx,
+			write);
+		if (ret)
+			break;
+	}
+
+	return ret;
+}
+
+static int submit_pin_objects(struct msm_gem_submit *submit)
+{
+	int i, ret = 0;
+
+	submit->valid = true;
+
+	for (i = 0; i < submit->nr_bos; i++) {
+		struct msm_gem_object *msm_obj = submit->bos[i].obj;
+		uint64_t iova;
+
+		/* if locking succeeded, pin bo: */
+		ret = msm_gem_get_iova(&msm_obj->base,
+				submit->gpu->aspace, &iova);
+
+		if (ret)
+			break;
+
+		submit->bos[i].flags |= BO_PINNED;
+
+		if (iova == submit->bos[i].iova) {
+			submit->bos[i].flags |= BO_VALID;
+		} else {
+			submit->bos[i].iova = iova;
+			/* iova changed, so address in cmdstream is not valid: */
+			submit->bos[i].flags &= ~BO_VALID;
+			submit->valid = false;
+		}
+	}
+
+	return ret;
+}
+
+static int submit_bo(struct msm_gem_submit *submit, uint32_t idx,
 		struct msm_gem_object **obj, uint64_t *iova, bool *valid)
 {
 	struct msm_gem_object *msm_obj;
@@ -328,7 +373,7 @@ static int submit_reloc(struct msm_gpu *gpu,
 {
 	uint32_t i, last_offset = 0;
 	uint32_t *ptr;
-	int ret;
+	int ret = 0;
 
 	if (offset % 4) {
 		DRM_ERROR("non-aligned cmdstream buffer: %u\n", offset);
@@ -346,11 +391,7 @@ static int submit_reloc(struct msm_gpu *gpu,
 	/* For now, just map the entire thing.  Eventually we probably
 	 * to do it page-by-page, w/ kmap() if not vmap()d..
 	 */
-	ptr = msm_gem_vaddr(&obj->base);
-	if (!ptr) {
-		DRM_ERROR("Invalid format");
-		return -EINVAL;
-	}
+	ptr = msm_gem_get_vaddr(&obj->base);
 
 	if (IS_ERR(ptr)) {
 		ret = PTR_ERR(ptr);
@@ -362,18 +403,20 @@ static int submit_reloc(struct msm_gpu *gpu,
 		struct drm_msm_gem_submit_reloc submit_reloc;
 		void __user *userptr =
 			u64_to_user_ptr(relocs + (i * sizeof(submit_reloc)));
-		uint64_t iova;
 		uint32_t off;
+		uint64_t iova;
 		bool valid;
 
-		if (copy_from_user(&submit_reloc, userptr,
-			sizeof(submit_reloc)))
-			return -EFAULT;
+		if (copy_from_user(&submit_reloc, userptr, sizeof(submit_reloc))) {
+			ret = -EFAULT;
+			goto out;
+		}
 
 		if (submit_reloc.submit_offset % 4) {
 			DRM_ERROR("non-aligned reloc offset: %u\n",
 					submit_reloc.submit_offset);
-			return -EINVAL;
+			ret = -EINVAL;
+			goto out;
 		}
 
 		/* offset in dwords: */
@@ -382,13 +425,14 @@ static int submit_reloc(struct msm_gpu *gpu,
 		if ((off >= (obj->base.size / 4)) ||
 				(off < last_offset)) {
 			DRM_ERROR("invalid offset %u at reloc %u\n", off, i);
-			return -EINVAL;
+			ret = -EINVAL;
+			goto out;
 		}
 
 		ret = submit_bo(gpu, submit, submit_reloc.reloc_idx,
 				NULL, &iova, &valid);
 		if (ret)
-			return ret;
+			goto out;
 
 		if (valid)
 			continue;
@@ -405,11 +449,13 @@ static int submit_reloc(struct msm_gpu *gpu,
 		last_offset = off;
 	}
 
-	return 0;
+out:
+	msm_gem_put_vaddr(&obj->base);
+
+	return ret;
 }
 
-static void submit_cleanup(struct msm_gpu *gpu, struct msm_gem_submit *submit,
-		bool fail)
+static void submit_cleanup(struct msm_gem_submit *submit)
 {
 	unsigned i;
 
@@ -418,7 +464,7 @@ static void submit_cleanup(struct msm_gpu *gpu, struct msm_gem_submit *submit,
 
 	for (i = 0; i < submit->nr_bos; i++) {
 		struct msm_gem_object *msm_obj = submit->bos[i].obj;
-		submit_unlock_unpin_bo(gpu, submit, i);
+		submit_unlock_unpin_bo(submit, i, false);
 		list_del_init(&msm_obj->submit_entry);
 		drm_gem_object_unreference(&msm_obj->base);
 	}
@@ -433,10 +479,16 @@ int msm_ioctl_gem_submit(struct drm_device *dev, void *data,
 	struct drm_msm_gem_submit *args = data;
 	struct msm_file_private *ctx = file->driver_priv;
 	struct msm_gem_submit *submit;
+	struct msm_gpu *gpu = priv->gpu;
+	struct sync_file *sync_file = NULL;
 	struct msm_gpu_submitqueue *queue;
-	struct msm_gpu *gpu;
+	struct msm_ringbuffer *ring;
+	int out_fence_fd = -1;
 	unsigned i;
 	int ret;
+
+	if (!gpu)
+		return -ENXIO;
 
 	/* for now, we just have 3d pipe.. eventually this would need to
 	 * be more clever to dispatch to appropriate gpu module:
@@ -444,28 +496,76 @@ int msm_ioctl_gem_submit(struct drm_device *dev, void *data,
 	if (MSM_PIPE_ID(args->flags) != MSM_PIPE_3D0)
 		return -EINVAL;
 
-	gpu = priv->gpu;
-	if (!gpu || !ctx)
-		return -ENXIO;
+	if (MSM_PIPE_FLAGS(args->flags) & ~MSM_SUBMIT_FLAGS)
+		return -EINVAL;
+
+	if (args->flags & MSM_SUBMIT_SUDO) {
+		if (!IS_ENABLED(CONFIG_DRM_MSM_GPU_SUDO) ||
+		    !capable(CAP_SYS_RAWIO))
+			return -EINVAL;
+	}
 
 	queue = msm_submitqueue_get(ctx, args->queueid);
 	if (!queue)
 		return -ENOENT;
 
-	mutex_lock(&dev->struct_mutex);
+	ring = gpu->rb[queue->prio];
 
-	submit = submit_create(dev, ctx->aspace, args->nr_bos, args->nr_cmds,
-		queue);
-	if (!submit) {
-		ret = -ENOMEM;
-		goto out;
+	if (args->flags & MSM_SUBMIT_FENCE_FD_IN) {
+		struct dma_fence *in_fence;
+
+		in_fence = sync_file_get_fence(args->fence_fd);
+
+		if (!in_fence)
+			return -EINVAL;
+
+		/*
+		 * Wait if the fence is from a foreign context, or if the fence
+		 * array contains any fence from a foreign context.
+		 */
+		ret = 0;
+		if (!dma_fence_match_context(in_fence, ring->fctx->context))
+			ret = dma_fence_wait(in_fence, true);
+
+		dma_fence_put(in_fence);
+		if (ret)
+			return ret;
 	}
 
-	ret = submit_lookup_objects(gpu, submit, args, file);
+	ret = mutex_lock_interruptible(&dev->struct_mutex);
+	if (ret)
+		return ret;
+
+	if (args->flags & MSM_SUBMIT_FENCE_FD_OUT) {
+		out_fence_fd = get_unused_fd_flags(O_CLOEXEC);
+		if (out_fence_fd < 0) {
+			ret = out_fence_fd;
+			goto out_unlock;
+		}
+	}
+
+	submit = submit_create(dev, gpu, queue, args->nr_bos, args->nr_cmds);
+	if (!submit) {
+		ret = -ENOMEM;
+		goto out_unlock;
+	}
+
+	if (args->flags & MSM_SUBMIT_SUDO)
+		submit->in_rb = true;
+
+	ret = submit_lookup_objects(submit, args, file);
 	if (ret)
 		goto out;
 
-	ret = submit_validate_objects(gpu, submit);
+	ret = submit_lock_objects(submit);
+	if (ret)
+		goto out;
+
+	ret = submit_fence_sync(submit, !!(args->flags & MSM_SUBMIT_NO_IMPLICIT));
+	if (ret)
+		goto out;
+
+	ret = submit_pin_objects(submit);
 	if (ret)
 		goto out;
 
@@ -475,7 +575,6 @@ int msm_ioctl_gem_submit(struct drm_device *dev, void *data,
 			u64_to_user_ptr(args->cmds + (i * sizeof(submit_cmd)));
 		struct msm_gem_object *msm_obj;
 		uint64_t iova;
-		size_t size;
 
 		ret = copy_from_user(&submit_cmd, userptr, sizeof(submit_cmd));
 		if (ret) {
@@ -508,12 +607,10 @@ int msm_ioctl_gem_submit(struct drm_device *dev, void *data,
 			goto out;
 		}
 
-		size = submit_cmd.size + submit_cmd.submit_offset;
-
-		if (!submit_cmd.size || (size < submit_cmd.size) ||
-			(size > msm_obj->base.size)) {
-			DRM_ERROR("invalid cmdstream offset/size: %u/%u\n",
-				submit_cmd.submit_offset, submit_cmd.size);
+		if (!submit_cmd.size ||
+			((submit_cmd.size + submit_cmd.submit_offset) >
+				msm_obj->base.size)) {
+			DRM_ERROR("invalid cmdstream size: %u\n", submit_cmd.size);
 			ret = -EINVAL;
 			goto out;
 		}
@@ -538,17 +635,37 @@ int msm_ioctl_gem_submit(struct drm_device *dev, void *data,
 
 	submit->nr_cmds = i;
 
-	/* Clamp the user submitted ring to the range of available rings */
-	submit->ring = clamp_t(uint32_t, queue->prio, 0, gpu->nr_rings - 1);
+	submit->fence = msm_fence_alloc(ring->fctx);
+	if (IS_ERR(submit->fence)) {
+		ret = PTR_ERR(submit->fence);
+		submit->fence = NULL;
+		goto out;
+	}
 
-	ret = msm_gpu_submit(gpu, submit);
+	if (args->flags & MSM_SUBMIT_FENCE_FD_OUT) {
+		sync_file = sync_file_create(submit->fence);
+		if (!sync_file) {
+			ret = -ENOMEM;
+			goto out;
+		}
+	}
 
-	args->fence = submit->fence;
+	msm_gpu_submit(gpu, submit, ctx);
+
+	args->fence = submit->fence->seqno;
+
+	if (args->flags & MSM_SUBMIT_FENCE_FD_OUT) {
+		fd_install(out_fence_fd, sync_file->file);
+		args->fence_fd = out_fence_fd;
+	}
 
 out:
-	submit_cleanup(gpu, submit, !!ret);
+	submit_cleanup(submit);
 	if (ret)
 		msm_gem_submit_free(submit);
+out_unlock:
+	if (ret && (out_fence_fd >= 0))
+		put_unused_fd(out_fence_fd);
 	mutex_unlock(&dev->struct_mutex);
 	return ret;
 }

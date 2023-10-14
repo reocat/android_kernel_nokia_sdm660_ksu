@@ -122,6 +122,7 @@
  * @output_enabled: Set to true if MPP output logic is enabled.
  * @input_enabled: Set to true if MPP input buffer logic is enabled.
  * @paired: Pin operates in paired mode
+ * @has_pullup: Pin has support to configure pullup
  * @num_sources: Number of power-sources supported by this MPP.
  * @power_source: Current power-source used.
  * @amux_input: Set the source for analog input.
@@ -140,6 +141,7 @@ struct pmic_mpp_pad {
 	bool		output_enabled;
 	bool		input_enabled;
 	bool		paired;
+	bool		has_pullup;
 	unsigned int	num_sources;
 	unsigned int	power_source;
 	unsigned int	amux_input;
@@ -186,11 +188,6 @@ static const char *const pmic_mpp_groups[] = {
 
 static const char *const pmic_mpp_functions[] = {
 	"digital", "analog", "sink"
-};
-
-static inline struct pmic_mpp_state *to_mpp_state(struct gpio_chip *chip)
-{
-	return container_of(chip, struct pmic_mpp_state, chip);
 };
 
 static int pmic_mpp_read(struct pmic_mpp_state *state,
@@ -247,7 +244,7 @@ static const struct pinctrl_ops pmic_mpp_pinctrl_ops = {
 	.get_group_name		= pmic_mpp_get_group_name,
 	.get_group_pins		= pmic_mpp_get_group_pins,
 	.dt_node_to_map		= pinconf_generic_dt_node_to_map_group,
-	.dt_free_map		= pinctrl_utils_dt_free_map,
+	.dt_free_map		= pinctrl_utils_free_map,
 };
 
 static int pmic_mpp_get_functions_count(struct pinctrl_dev *pctldev)
@@ -510,16 +507,14 @@ static int pmic_mpp_config_set(struct pinctrl_dev *pctldev, unsigned int pin,
 	if (ret < 0)
 		return ret;
 
-	val = pad->dtest_buffer;
-	ret = pmic_mpp_write(state, pad, PMIC_MPP_REG_DIG_IN_CTL, val);
-	if (ret < 0)
-		return ret;
+	if (pad->has_pullup) {
+		val = pad->pullup << PMIC_MPP_REG_PULL_SHIFT;
 
-	val = pad->pullup << PMIC_MPP_REG_PULL_SHIFT;
-
-	ret = pmic_mpp_write(state, pad, PMIC_MPP_REG_DIG_PULL_CTL, val);
-	if (ret < 0)
-		return ret;
+		ret = pmic_mpp_write(state, pad, PMIC_MPP_REG_DIG_PULL_CTL,
+				     val);
+		if (ret < 0)
+			return ret;
+	}
 
 	val = pad->amux_input & PMIC_MPP_REG_AIN_ROUTE_MASK;
 
@@ -586,7 +581,8 @@ static void pmic_mpp_config_dbg_show(struct pinctrl_dev *pctldev,
 		seq_printf(s, " %-7s", pmic_mpp_functions[pad->function]);
 		seq_printf(s, " vin-%d", pad->power_source);
 		seq_printf(s, " %d", pad->aout_level);
-		seq_printf(s, " %-8s", biases[pad->pullup]);
+		if (pad->has_pullup)
+			seq_printf(s, " %-8s", biases[pad->pullup]);
 		seq_printf(s, " %-4s", pad->out_value ? "high" : "low");
 		if (pad->dtest)
 			seq_printf(s, " dtest%d", pad->dtest);
@@ -606,7 +602,7 @@ static const struct pinconf_ops pmic_mpp_pinconf_ops = {
 
 static int pmic_mpp_direction_input(struct gpio_chip *chip, unsigned pin)
 {
-	struct pmic_mpp_state *state = to_mpp_state(chip);
+	struct pmic_mpp_state *state = gpiochip_get_data(chip);
 	unsigned long config;
 
 	config = pinconf_to_config_packed(PIN_CONFIG_INPUT_ENABLE, 1);
@@ -617,7 +613,7 @@ static int pmic_mpp_direction_input(struct gpio_chip *chip, unsigned pin)
 static int pmic_mpp_direction_output(struct gpio_chip *chip,
 				     unsigned pin, int val)
 {
-	struct pmic_mpp_state *state = to_mpp_state(chip);
+	struct pmic_mpp_state *state = gpiochip_get_data(chip);
 	unsigned long config;
 
 	config = pinconf_to_config_packed(PIN_CONFIG_OUTPUT, val);
@@ -627,7 +623,7 @@ static int pmic_mpp_direction_output(struct gpio_chip *chip,
 
 static int pmic_mpp_get(struct gpio_chip *chip, unsigned pin)
 {
-	struct pmic_mpp_state *state = to_mpp_state(chip);
+	struct pmic_mpp_state *state = gpiochip_get_data(chip);
 	struct pmic_mpp_pad *pad;
 	int ret;
 
@@ -641,12 +637,12 @@ static int pmic_mpp_get(struct gpio_chip *chip, unsigned pin)
 		pad->out_value = ret & PMIC_MPP_REG_RT_STS_VAL_MASK;
 	}
 
-	return pad->out_value;
+	return !!pad->out_value;
 }
 
 static void pmic_mpp_set(struct gpio_chip *chip, unsigned pin, int value)
 {
-	struct pmic_mpp_state *state = to_mpp_state(chip);
+	struct pmic_mpp_state *state = gpiochip_get_data(chip);
 	unsigned long config;
 
 	config = pinconf_to_config_packed(PIN_CONFIG_OUTPUT, value);
@@ -669,7 +665,7 @@ static int pmic_mpp_of_xlate(struct gpio_chip *chip,
 
 static int pmic_mpp_to_irq(struct gpio_chip *chip, unsigned pin)
 {
-	struct pmic_mpp_state *state = to_mpp_state(chip);
+	struct pmic_mpp_state *state = gpiochip_get_data(chip);
 	struct pmic_mpp_pad *pad;
 
 	pad = state->ctrl->desc->pins[pin].drv_data;
@@ -679,7 +675,7 @@ static int pmic_mpp_to_irq(struct gpio_chip *chip, unsigned pin)
 
 static void pmic_mpp_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 {
-	struct pmic_mpp_state *state = to_mpp_state(chip);
+	struct pmic_mpp_state *state = gpiochip_get_data(chip);
 	unsigned i;
 
 	for (i = 0; i < chip->ngpio; i++) {
@@ -802,18 +798,16 @@ static int pmic_mpp_populate(struct pmic_mpp_state *state,
 	pad->power_source = val >> PMIC_MPP_REG_VIN_SHIFT;
 	pad->power_source &= PMIC_MPP_REG_VIN_MASK;
 
-	val = pmic_mpp_read(state, pad, PMIC_MPP_REG_DIG_IN_CTL);
-	if (val < 0)
-		return val;
+	if (subtype != PMIC_MPP_SUBTYPE_ULT_4CH_NO_ANA_OUT &&
+	    subtype != PMIC_MPP_SUBTYPE_ULT_4CH_NO_SINK) {
+		val = pmic_mpp_read(state, pad, PMIC_MPP_REG_DIG_PULL_CTL);
+		if (val < 0)
+			return val;
 
-	pad->dtest_buffer = val;
-
-	val = pmic_mpp_read(state, pad, PMIC_MPP_REG_DIG_PULL_CTL);
-	if (val < 0)
-		return val;
-
-	pad->pullup = val >> PMIC_MPP_REG_PULL_SHIFT;
-	pad->pullup &= PMIC_MPP_REG_PULL_MASK;
+		pad->pullup = val >> PMIC_MPP_REG_PULL_SHIFT;
+		pad->pullup &= PMIC_MPP_REG_PULL_MASK;
+		pad->has_pullup = true;
+	}
 
 	val = pmic_mpp_read(state, pad, PMIC_MPP_REG_AIN_CTL);
 	if (val < 0)
@@ -921,21 +915,21 @@ static int pmic_mpp_probe(struct platform_device *pdev)
 	}
 
 	state->chip = pmic_mpp_gpio_template;
-	state->chip.dev = dev;
+	state->chip.parent = dev;
 	state->chip.base = -1;
 	state->chip.ngpio = npins;
 	state->chip.label = dev_name(dev);
 	state->chip.of_gpio_n_cells = 2;
 	state->chip.can_sleep = false;
 
-	state->ctrl = pinctrl_register(pctrldesc, dev, state);
+	state->ctrl = devm_pinctrl_register(dev, pctrldesc, state);
 	if (IS_ERR(state->ctrl))
 		return PTR_ERR(state->ctrl);
 
-	ret = gpiochip_add(&state->chip);
+	ret = gpiochip_add_data(&state->chip, state);
 	if (ret) {
 		dev_err(state->dev, "can't add gpio chip\n");
-		goto err_chip;
+		return ret;
 	}
 
 	ret = gpiochip_add_pin_range(&state->chip, dev_name(dev), 0, 0, npins);
@@ -948,8 +942,6 @@ static int pmic_mpp_probe(struct platform_device *pdev)
 
 err_range:
 	gpiochip_remove(&state->chip);
-err_chip:
-	pinctrl_unregister(state->ctrl);
 	return ret;
 }
 
@@ -958,7 +950,6 @@ static int pmic_mpp_remove(struct platform_device *pdev)
 	struct pmic_mpp_state *state = platform_get_drvdata(pdev);
 
 	gpiochip_remove(&state->chip);
-	pinctrl_unregister(state->ctrl);
 	return 0;
 }
 
@@ -966,6 +957,7 @@ static const struct of_device_id pmic_mpp_of_match[] = {
 	{ .compatible = "qcom,pm8841-mpp" },	/* 4 MPP's */
 	{ .compatible = "qcom,pm8916-mpp" },	/* 4 MPP's */
 	{ .compatible = "qcom,pm8941-mpp" },	/* 8 MPP's */
+	{ .compatible = "qcom,pm8994-mpp" },	/* 8 MPP's */
 	{ .compatible = "qcom,pma8084-mpp" },	/* 8 MPP's */
 	{ .compatible = "qcom,spmi-mpp" },	/* Generic */
 	{ },

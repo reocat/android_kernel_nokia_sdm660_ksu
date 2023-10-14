@@ -135,11 +135,13 @@ static void acpi_dma_parse_csrt(struct acpi_device *adev, struct acpi_dma *adma)
 		if (ret < 0) {
 			dev_warn(&adev->dev,
 				 "error in parsing resource group\n");
-			return;
+			break;
 		}
 
 		grp = (struct acpi_csrt_group *)((void *)grp + grp->length);
 	}
+
+	acpi_put_table((struct acpi_table_header *)csrt);
 }
 
 /**
@@ -442,7 +444,7 @@ struct dma_chan *acpi_dma_request_slave_chan_by_name(struct device *dev,
 			return ERR_PTR(-ENODEV);
 	}
 
-	dev_dbg(dev, "found DMA channel \"%s\" at index %d\n", name, index);
+	dev_dbg(dev, "Looking for DMA channel \"%s\" at index %d...\n", name, index);
 	return acpi_dma_request_slave_chan_by_index(dev, index);
 }
 EXPORT_SYMBOL_GPL(acpi_dma_request_slave_chan_by_name);

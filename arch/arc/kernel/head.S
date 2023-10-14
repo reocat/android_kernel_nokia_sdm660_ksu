@@ -81,14 +81,14 @@ ENTRY(stext)
 	GET_CPU_ID  r5
 	cmp	r5, 0
 	mov.nz	r0, r5
-#ifdef CONFIG_ARC_SMP_HALT_ON_RESET
-	; Non-Master can proceed as system would be booted sufficiently
-	jnz	first_lines_of_secondary
-#else
+	bz	.Lmaster_proceed
+
 	; Non-Masters wait for Master to boot enough and bring them up
-	jnz	arc_platform_smp_wait_to_boot
-#endif
-	; Master falls thru
+	; when they resume, tail-call to entry point
+	mov	blink, @first_lines_of_secondary
+	j	arc_platform_smp_wait_to_boot
+
+.Lmaster_proceed:
 #endif
 
 	; Clear BSS before updating any globals
@@ -100,15 +100,14 @@ ENTRY(stext)
 	st.ab   0, [r5, 4]
 1:
 
-#ifdef CONFIG_ARC_UBOOT_SUPPORT
 	; Uboot - kernel ABI
 	;    r0 = [0] No uboot interaction, [1] cmdline in r2, [2] DTB in r2
-	;    r1 = magic number (board identity, unused as of now
+	;    r1 = magic number (always zero as of now)
 	;    r2 = pointer to uboot provided cmdline or external DTB in mem
-	; These are handled later in setup_arch()
+	; These are handled later in handle_uboot_args()
 	st	r0, [@uboot_tag]
+	st      r1, [@uboot_magic]
 	st	r2, [@uboot_arg]
-#endif
 
 	; setup "current" tsk and optionally cache it in dedicated r25
 	mov	r9, @init_task

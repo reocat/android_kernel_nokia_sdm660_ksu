@@ -36,11 +36,11 @@
 #include <linux/linkage.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
-#include <linux/module.h>
 #include <linux/smp.h>
 #include <linux/percpu.h>
 #include <linux/cpu.h>
 
+#include <asm/barrier.h>
 #include <asm/sync_bitops.h>
 #include <asm/xen/hypercall.h>
 #include <asm/xen/hypervisor.h>
@@ -113,7 +113,7 @@ static int init_control_block(int cpu,
 
 	init_control.control_gfn = virt_to_gfn(control_block);
 	init_control.offset      = 0;
-	init_control.vcpu        = cpu;
+	init_control.vcpu        = xen_vcpu_nr(cpu);
 
 	return HYPERVISOR_event_channel_op(EVTCHNOP_init_control, &init_control);
 }
@@ -285,7 +285,7 @@ static void consume_one_event(unsigned cpu, struct evtchn_loop_ctrl *ctrl,
 	 * control block.
 	 */
 	if (head == 0) {
-		rmb(); /* Ensure word is up-to-date before reading head. */
+		virt_rmb(); /* Ensure word is up-to-date before reading head. */
 		head = control_block->head[priority];
 	}
 
@@ -360,8 +360,7 @@ static void evtchn_fifo_resume(void)
 		}
 
 		ret = init_control_block(cpu, control_block);
-		if (ret < 0)
-			BUG();
+		BUG_ON(ret < 0);
 	}
 
 	/*
@@ -425,18 +424,16 @@ static const struct evtchn_ops evtchn_ops_fifo = {
 
 int __init xen_evtchn_fifo_init(void)
 {
-	int cpu = get_cpu();
+	int cpu = smp_processor_id();
 	int ret;
 
 	ret = evtchn_fifo_alloc_control_block(cpu);
 	if (ret < 0)
-		goto out;
+		return ret;
 
 	pr_info("Using FIFO-based ABI\n");
 
 	evtchn_ops = &evtchn_ops_fifo;
 
-out:
-	put_cpu();
 	return ret;
 }

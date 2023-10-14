@@ -1,4 +1,5 @@
-/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2011-2017, 2020-2021, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,18 +19,33 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 
+#include "f_qdss.h"
+
+enum bam_dmux_func_type {
+	BAM_DMUX_FUNC_RMNET,
+	BAM_DMUX_FUNC_MBIM = 0,
+	BAM_DMUX_FUNC_DPL,
+	BAM_DMUX_NUM_FUNCS,
+};
+
 struct rmnet_ctrl_pkt {
 	void	*buf;
 	int	len;
 	struct list_head	list;
 };
 
-enum qti_port_type {
-	QTI_PORT_RMNET,
-	QTI_PORT_DPL,
-	QTI_NUM_PORTS
-};
+struct data_port {
+	struct usb_composite_dev	*cdev;
+	struct usb_function		*func;
+	int				rx_buffer_size;
+	struct usb_ep			*in;
+	struct usb_ep			*out;
+	int				ipa_consumer_ep;
+	int				ipa_producer_ep;
+	const struct usb_endpoint_descriptor	*in_ep_desc_backup;
+	const struct usb_endpoint_descriptor	*out_ep_desc_backup;
 
+};
 
 struct grmnet {
 	/* to usb host, aka laptop, windows pc etc. Will
@@ -54,7 +70,26 @@ enum ctrl_client {
 	NR_CTRL_CLIENTS
 };
 
-int gqti_ctrl_connect(void *gr, enum qti_port_type qport, unsigned intf);
+enum data_xport_type {
+	BAM_DMUX,
+	BAM2BAM_IPA,
+	NR_XPORT_TYPES
+};
+
+int gbam_connect(struct data_port *gr, enum bam_dmux_func_type func);
+void gbam_disconnect(struct data_port *gr, enum bam_dmux_func_type func);
+void gbam_cleanup(enum bam_dmux_func_type func);
+int gbam_setup(enum bam_dmux_func_type func);
+int gbam_mbim_connect(struct usb_gadget *g, struct usb_ep *in,
+						struct usb_ep *out);
+
+int gbam_mbim_connect(struct usb_gadget *g, struct usb_ep *in,
+						struct usb_ep *out);
+void gbam_mbim_disconnect(void);
+int gbam_mbim_setup(void);
+
+int gqti_ctrl_connect(void *gr, enum qti_port_type qport, unsigned int intf,
+						enum data_xport_type dxport);
 void gqti_ctrl_disconnect(void *gr, enum qti_port_type qport);
 int gqti_ctrl_init(void);
 void gqti_ctrl_cleanup(void);

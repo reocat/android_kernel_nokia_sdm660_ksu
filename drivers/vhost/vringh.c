@@ -3,6 +3,7 @@
  *
  * Since these may be in userspace, we use (inline) accessors.
  */
+#include <linux/compiler.h>
 #include <linux/module.h>
 #include <linux/vringh.h>
 #include <linux/virtio_ring.h>
@@ -190,7 +191,7 @@ static int resize_iovec(struct vringh_kiov *iov, gfp_t gfp)
 	if (flag)
 		new = krealloc(iov->iov, new_num * sizeof(struct iovec), gfp);
 	else {
-		new = kmalloc(new_num * sizeof(struct iovec), gfp);
+		new = kmalloc_array(new_num, sizeof(struct iovec), gfp);
 		if (new) {
 			memcpy(new, iov->iov,
 			       iov->max_num * sizeof(struct iovec));
@@ -262,7 +263,7 @@ __vringh_iov(struct vringh *vrh, u16 i,
 	     gfp_t gfp,
 	     int (*copy)(void *dst, const void *src, size_t len))
 {
-	int err, count = 0, up_next, desc_max;
+	int err, count = 0, indirect_count = 0, up_next, desc_max;
 	struct vring_desc desc, *descs;
 	struct vringh_range range = { -1ULL, 0 }, slowrange;
 	bool slow = false;
@@ -319,7 +320,12 @@ __vringh_iov(struct vringh *vrh, u16 i,
 			continue;
 		}
 
-		if (count++ == vrh->vring.num) {
+		if (up_next == -1)
+			count++;
+		else
+			indirect_count++;
+
+		if (count > vrh->vring.num || indirect_count > desc_max) {
 			vringh_bad("Descriptor loop in %p", descs);
 			err = -ELOOP;
 			goto fail;
@@ -381,6 +387,7 @@ __vringh_iov(struct vringh *vrh, u16 i,
 				i = return_from_indirect(vrh, &up_next,
 							 &descs, &desc_max);
 				slow = false;
+				indirect_count = 0;
 			} else
 				break;
 		}
@@ -821,13 +828,13 @@ EXPORT_SYMBOL(vringh_need_notify_user);
 static inline int getu16_kern(const struct vringh *vrh,
 			      u16 *val, const __virtio16 *p)
 {
-	*val = vringh16_to_cpu(vrh, ACCESS_ONCE(*p));
+	*val = vringh16_to_cpu(vrh, READ_ONCE(*p));
 	return 0;
 }
 
 static inline int putu16_kern(const struct vringh *vrh, __virtio16 *p, u16 val)
 {
-	ACCESS_ONCE(*p) = cpu_to_vringh16(vrh, val);
+	WRITE_ONCE(*p, cpu_to_vringh16(vrh, val));
 	return 0;
 }
 

@@ -1,4 +1,5 @@
-/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2013-2018, 2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -27,6 +28,8 @@ void msm_isp_reset_framedrop(struct vfe_device *vfe_dev,
 	struct msm_vfe_axi_stream *stream_info);
 
 int msm_isp_request_axi_stream(struct vfe_device *vfe_dev, void *arg);
+void msm_isp_start_avtimer(void);
+void msm_isp_stop_avtimer(void);
 void msm_isp_get_avtimer_ts(struct msm_isp_timestamp *time_stamp);
 int msm_isp_cfg_axi_stream(struct vfe_device *vfe_dev, void *arg);
 int msm_isp_release_axi_stream(struct vfe_device *vfe_dev, void *arg);
@@ -53,7 +56,7 @@ void msm_isp_notify(struct vfe_device *vfe_dev, uint32_t event_type,
 	enum msm_vfe_input_src frame_src, struct msm_isp_timestamp *ts);
 
 void msm_isp_process_axi_irq(struct vfe_device *vfe_dev,
-	uint32_t irq_status0, uint32_t irq_status1,
+	uint32_t irq_status0, uint32_t irq_status1, uint32_t dual_irq_status,
 	uint32_t pingpong_status, struct msm_isp_timestamp *ts);
 
 void msm_isp_axi_disable_all_wm(struct vfe_device *vfe_dev);
@@ -77,6 +80,10 @@ void msm_isp_process_axi_irq_stream(struct vfe_device *vfe_dev,
 	struct msm_isp_timestamp *ts);
 
 void msm_isp_release_all_axi_stream(struct vfe_device *vfe_dev);
+void msm_isp_axi_free_wm(struct vfe_device *vfe_dev,
+	struct msm_vfe_axi_stream *stream_info);
+void msm_isp_check_for_output_error(struct vfe_device *vfe_dev,
+	struct msm_isp_timestamp *ts, struct msm_isp_sof_info *sof_info);
 
 static inline int msm_isp_get_vfe_idx_for_stream_user(
 				struct vfe_device *vfe_dev,

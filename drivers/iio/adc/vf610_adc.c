@@ -180,7 +180,11 @@ struct vf610_adc {
 	u32 sample_freq_avail[5];
 
 	struct completion completion;
-	u16 buffer[8];
+	/* Ensure the timestamp is naturally aligned */
+	struct {
+		u16 chan;
+		s64 timestamp __aligned(8);
+	} scan;
 };
 
 static const u32 vf610_hw_avgs[] = { 1, 4, 8, 16, 32 };
@@ -584,7 +588,7 @@ static int vf610_adc_read_data(struct vf610_adc *info)
 
 static irqreturn_t vf610_adc_isr(int irq, void *dev_id)
 {
-	struct iio_dev *indio_dev = (struct iio_dev *)dev_id;
+	struct iio_dev *indio_dev = dev_id;
 	struct vf610_adc *info = iio_priv(indio_dev);
 	int coco;
 
@@ -592,9 +596,10 @@ static irqreturn_t vf610_adc_isr(int irq, void *dev_id)
 	if (coco & VF610_ADC_HS_COCO0) {
 		info->value = vf610_adc_read_data(info);
 		if (iio_buffer_enabled(indio_dev)) {
-			info->buffer[0] = info->value;
+			info->scan.chan = info->value;
 			iio_push_to_buffers_with_timestamp(indio_dev,
-					info->buffer, iio_get_time_ns());
+					&info->scan,
+					iio_get_time_ns(indio_dev));
 			iio_trigger_notify_done(indio_dev->trig);
 		} else
 			complete(&info->completion);
@@ -714,19 +719,19 @@ static int vf610_write_raw(struct iio_dev *indio_dev,
 	int i;
 
 	switch (mask) {
-		case IIO_CHAN_INFO_SAMP_FREQ:
-			for (i = 0;
-				i < ARRAY_SIZE(info->sample_freq_avail);
-				i++)
-				if (val == info->sample_freq_avail[i]) {
-					info->adc_feature.sample_rate = i;
-					vf610_adc_sample_set(info);
-					return 0;
-				}
-			break;
+	case IIO_CHAN_INFO_SAMP_FREQ:
+		for (i = 0;
+			i < ARRAY_SIZE(info->sample_freq_avail);
+			i++)
+			if (val == info->sample_freq_avail[i]) {
+				info->adc_feature.sample_rate = i;
+				vf610_adc_sample_set(info);
+				return 0;
+			}
+		break;
 
-		default:
-			break;
+	default:
+		break;
 	}
 
 	return -EINVAL;
@@ -798,7 +803,6 @@ static int vf610_adc_reg_access(struct iio_dev *indio_dev,
 }
 
 static const struct iio_info vf610_adc_iio_info = {
-	.driver_module = THIS_MODULE,
 	.read_raw = &vf610_read_raw,
 	.write_raw = &vf610_write_raw,
 	.debugfs_reg_access = &vf610_adc_reg_access,

@@ -1,16 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2008 Google, Inc.
- * Copyright (C) 2010-2014, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2010-2018, 2020, The Linux Foundation. All rights reserved.
  * Author: Nick Pelly <npelly@google.com>
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #ifndef __ASM_ARCH_MSM_SERIAL_HS_H
@@ -40,15 +32,15 @@ struct msm_serial_hs_platform_data {
 	int wakeup_irq;  /* wakeup irq */
 	bool inject_rx_on_wakeup;
 	u8 rx_to_inject;
-	int (*gpio_config)(int);
+	int (*gpio_config)(int gpio_config);
 	int userid;
 
 	int uart_tx_gpio;
 	int uart_rx_gpio;
 	int uart_cts_gpio;
 	int uart_rfr_gpio;
-	unsigned bam_tx_ep_pipe_index;
-	unsigned bam_rx_ep_pipe_index;
+	unsigned int bam_tx_ep_pipe_index;
+	unsigned int bam_rx_ep_pipe_index;
 	bool no_suspend_delay;
 	bool obs;
 };

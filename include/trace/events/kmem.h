@@ -1,3 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
+ */
+
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM kmem
 
@@ -6,7 +11,7 @@
 
 #include <linux/types.h>
 #include <linux/tracepoint.h>
-#include <trace/events/gfpflags.h>
+#include <trace/events/mmflags.h>
 
 DECLARE_EVENT_CLASS(kmem_alloc,
 
@@ -140,41 +145,18 @@ DEFINE_EVENT(kmem_free, kfree,
 	TP_ARGS(call_site, ptr)
 );
 
-DEFINE_EVENT_CONDITION(kmem_free, kmem_cache_free,
+DEFINE_EVENT(kmem_free, kmem_cache_free,
 
 	TP_PROTO(unsigned long call_site, const void *ptr),
 
-	TP_ARGS(call_site, ptr),
-
-	/*
-	 * This trace can be potentially called from an offlined cpu.
-	 * Since trace points use RCU and RCU should not be used from
-	 * offline cpus, filter such calls out.
-	 * While this trace can be called from a preemptable section,
-	 * it has no impact on the condition since tasks can migrate
-	 * only from online cpus to other online cpus. Thus its safe
-	 * to use raw_smp_processor_id.
-	 */
-	TP_CONDITION(cpu_online(raw_smp_processor_id()))
+	TP_ARGS(call_site, ptr)
 );
 
-TRACE_EVENT_CONDITION(mm_page_free,
+TRACE_EVENT(mm_page_free,
 
 	TP_PROTO(struct page *page, unsigned int order),
 
 	TP_ARGS(page, order),
-
-
-	/*
-	 * This trace can be potentially called from an offlined cpu.
-	 * Since trace points use RCU and RCU should not be used from
-	 * offline cpus, filter such calls out.
-	 * While this trace can be called from a preemptable section,
-	 * it has no impact on the condition since tasks can migrate
-	 * only from online cpus to other online cpus. Thus its safe
-	 * to use raw_smp_processor_id.
-	 */
-	TP_CONDITION(cpu_online(raw_smp_processor_id())),
 
 	TP_STRUCT__entry(
 		__field(	unsigned long,	pfn		)
@@ -194,24 +176,21 @@ TRACE_EVENT_CONDITION(mm_page_free,
 
 TRACE_EVENT(mm_page_free_batched,
 
-	TP_PROTO(struct page *page, int cold),
+	TP_PROTO(struct page *page),
 
-	TP_ARGS(page, cold),
+	TP_ARGS(page),
 
 	TP_STRUCT__entry(
 		__field(	unsigned long,	pfn		)
-		__field(	int,		cold		)
 	),
 
 	TP_fast_assign(
 		__entry->pfn		= page_to_pfn(page);
-		__entry->cold		= cold;
 	),
 
-	TP_printk("page=%p pfn=%lu order=0 cold=%d",
+	TP_printk("page=%p pfn=%lu order=0",
 			pfn_to_page(__entry->pfn),
-			__entry->pfn,
-			__entry->cold)
+			__entry->pfn)
 );
 
 TRACE_EVENT(mm_page_alloc,
@@ -276,22 +255,11 @@ DEFINE_EVENT(mm_page, mm_page_alloc_zone_locked,
 	TP_ARGS(page, order, migratetype)
 );
 
-TRACE_EVENT_CONDITION(mm_page_pcpu_drain,
+TRACE_EVENT(mm_page_pcpu_drain,
 
 	TP_PROTO(struct page *page, unsigned int order, int migratetype),
 
 	TP_ARGS(page, order, migratetype),
-
-	/*
-	 * This trace can be potentially called from an offlined cpu.
-	 * Since trace points use RCU and RCU should not be used from
-	 * offline cpus, filter such calls out.
-	 * While this trace can be called from a preemptable section,
-	 * it has no impact on the condition since tasks can migrate
-	 * only from online cpus to other online cpus. Thus its safe
-	 * to use raw_smp_processor_id.
-	 */
-	TP_CONDITION(cpu_online(raw_smp_processor_id())),
 
 	TP_STRUCT__entry(
 		__field(	unsigned long,	pfn		)
@@ -632,7 +600,7 @@ DECLARE_EVENT_CLASS(smmu_map,
 		__entry->len = len;
 		),
 
-	TP_printk("v_addr=%p p_addr=%pa chunk_size=0x%lu len=%zu",
+	TP_printk("v_addr=%p p_addr=%pa chunk_size=0x%lx len=%zu",
 		(void *)__entry->va,
 		&__entry->pa,
 		__entry->chunk_size,
@@ -748,96 +716,84 @@ DECLARE_EVENT_CLASS(ion_secure_cma_allocate,
 
 	TP_PROTO(const char *heap_name,
 		unsigned long len,
-		unsigned long align,
 		unsigned long flags),
 
-	TP_ARGS(heap_name, len, align, flags),
+	TP_ARGS(heap_name, len, flags),
 
 	TP_STRUCT__entry(
 		__field(const char *, heap_name)
 		__field(unsigned long, len)
-		__field(unsigned long, align)
 		__field(unsigned long, flags)
 		),
 
 	TP_fast_assign(
 		__entry->heap_name = heap_name;
 		__entry->len = len;
-		__entry->align = align;
 		__entry->flags = flags;
 		),
 
-	TP_printk("heap_name=%s len=%lx align=%lx flags=%lx",
+	TP_printk("heap_name=%s len=%lx flags=%lx",
 		__entry->heap_name,
 		__entry->len,
-		__entry->align,
 		__entry->flags)
 	);
 
 DEFINE_EVENT(ion_secure_cma_allocate, ion_secure_cma_allocate_start,
 	TP_PROTO(const char *heap_name,
 		unsigned long len,
-		unsigned long align,
 		unsigned long flags),
 
-	TP_ARGS(heap_name, len, align, flags)
+	TP_ARGS(heap_name, len, flags)
 	);
 
 DEFINE_EVENT(ion_secure_cma_allocate, ion_secure_cma_allocate_end,
 	TP_PROTO(const char *heap_name,
 		unsigned long len,
-		unsigned long align,
 		unsigned long flags),
 
-	TP_ARGS(heap_name, len, align, flags)
+	TP_ARGS(heap_name, len, flags)
 	);
 
 DECLARE_EVENT_CLASS(ion_cp_secure_buffer,
 
 	TP_PROTO(const char *heap_name,
 		unsigned long len,
-		unsigned long align,
 		unsigned long flags),
 
-	TP_ARGS(heap_name, len, align, flags),
+	TP_ARGS(heap_name, len, flags),
 
 	TP_STRUCT__entry(
 		__field(const char *, heap_name)
 		__field(unsigned long, len)
-		__field(unsigned long, align)
 		__field(unsigned long, flags)
 		),
 
 	TP_fast_assign(
 		__entry->heap_name = heap_name;
 		__entry->len = len;
-		__entry->align = align;
 		__entry->flags = flags;
 		),
 
-	TP_printk("heap_name=%s len=%lx align=%lx flags=%lx",
+	TP_printk("heap_name=%s len=%lx flags=%lx",
 		__entry->heap_name,
 		__entry->len,
-		__entry->align,
 		__entry->flags)
 	);
 
 DEFINE_EVENT(ion_cp_secure_buffer, ion_cp_secure_buffer_start,
 	TP_PROTO(const char *heap_name,
 		unsigned long len,
-		unsigned long align,
 		unsigned long flags),
 
-	TP_ARGS(heap_name, len, align, flags)
+	TP_ARGS(heap_name, len, flags)
 	);
 
 DEFINE_EVENT(ion_cp_secure_buffer, ion_cp_secure_buffer_end,
 	TP_PROTO(const char *heap_name,
 		unsigned long len,
-		unsigned long align,
 		unsigned long flags),
 
-	TP_ARGS(heap_name, len, align, flags)
+	TP_ARGS(heap_name, len, flags)
 	);
 
 DECLARE_EVENT_CLASS(iommu_sec_ptbl_map_range,
@@ -894,6 +850,54 @@ DEFINE_EVENT(iommu_sec_ptbl_map_range, iommu_sec_ptbl_map_range_end,
 		size_t len),
 
 	TP_ARGS(sec_id, num, va, pa, len)
+	);
+
+/*
+ * Required for uniquely and securely identifying mm in rss_stat tracepoint.
+ */
+#ifndef __PTR_TO_HASHVAL
+static unsigned int __maybe_unused mm_ptr_to_hash(const void *ptr)
+{
+	int ret;
+	unsigned long hashval;
+
+	ret = ptr_to_hashval(ptr, &hashval);
+	if (ret)
+		return 0;
+
+	/* The hashed value is only 32-bit */
+	return (unsigned int)hashval;
+}
+#define __PTR_TO_HASHVAL
+#endif
+
+TRACE_EVENT(rss_stat,
+
+	TP_PROTO(struct mm_struct *mm,
+		int member,
+		long count),
+
+	TP_ARGS(mm, member, count),
+
+	TP_STRUCT__entry(
+		__field(unsigned int, mm_id)
+		__field(unsigned int, curr)
+		__field(int, member)
+		__field(long, size)
+	),
+
+	TP_fast_assign(
+		__entry->mm_id = mm_ptr_to_hash(mm);
+		__entry->curr = !!(current->mm == mm);
+		__entry->member = member;
+		__entry->size = (count << PAGE_SHIFT);
+	),
+
+	TP_printk("mm_id=%u curr=%d member=%d size=%ldB",
+		__entry->mm_id,
+		__entry->curr,
+		__entry->member,
+		__entry->size)
 	);
 #endif /* _TRACE_KMEM_H */
 

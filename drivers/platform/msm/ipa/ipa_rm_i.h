@@ -1,13 +1,6 @@
-/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _IPA_RM_I_H_
@@ -47,12 +40,10 @@
 			IPA_RM_DRV_NAME " %s:%d " fmt, ## args); \
 	} while (0)
 
-#define IPA_RM_RESOURCE_CONS_MAX \
-	(IPA_RM_RESOURCE_MAX - IPA_RM_RESOURCE_PROD_MAX)
 #define IPA_RM_RESORCE_IS_PROD(x) \
-	(x >= IPA_RM_RESOURCE_PROD && x < IPA_RM_RESOURCE_PROD_MAX)
+	(x < IPA_RM_RESOURCE_MAX && (x & 0x1) == 0)
 #define IPA_RM_RESORCE_IS_CONS(x) \
-	(x >= IPA_RM_RESOURCE_PROD_MAX && x < IPA_RM_RESOURCE_MAX)
+	(x < IPA_RM_RESOURCE_MAX && (x & 0x1) == 1)
 #define IPA_RM_INDEX_INVALID	(-1)
 #define IPA_RM_RELEASE_DELAY_IN_MSEC 1000
 

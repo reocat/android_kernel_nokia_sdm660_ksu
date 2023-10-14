@@ -1,4 +1,5 @@
-/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2011-2017, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -62,6 +63,7 @@ struct msm_spm_platform_data {
 
 	uint32_t ver_reg;
 	uint32_t vctl_port;
+	int vctl_port_ub;
 	uint32_t phase_port;
 	uint32_t pfm_port;
 
@@ -84,6 +86,7 @@ struct msm_spm_driver_data {
 	uint32_t minor;
 	uint32_t ver_reg;
 	uint32_t vctl_port;
+	int vctl_port_ub;
 	uint32_t phase_port;
 	uint32_t pfm_port;
 	void __iomem *reg_base_addr;

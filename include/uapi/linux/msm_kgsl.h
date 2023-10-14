@@ -1,3 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
+/*
+ * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ */
+
 #ifndef _UAPI_MSM_KGSL_H
 #define _UAPI_MSM_KGSL_H
 
@@ -117,6 +122,7 @@
 /* Flags for GPU command sync points */
 #define KGSL_CMD_SYNCPOINT_TYPE_TIMESTAMP 0
 #define KGSL_CMD_SYNCPOINT_TYPE_FENCE 1
+#define KGSL_CMD_SYNCPOINT_TYPE_TIMELINE 2
 
 /* --- Memory allocation flags --- */
 
@@ -143,6 +149,7 @@
 #define KGSL_MEMFLAGS_USE_CPU_MAP 0x10000000ULL
 #define KGSL_MEMFLAGS_SPARSE_PHYS 0x20000000ULL
 #define KGSL_MEMFLAGS_SPARSE_VIRT 0x40000000ULL
+#define KGSL_MEMFLAGS_IOCOHERENT  0x80000000ULL
 
 /* Memory types for which allocations are made */
 #define KGSL_MEMTYPE_MASK		0x0000FF00
@@ -184,7 +191,7 @@ enum kgsl_user_mem_type {
 	KGSL_USER_MEM_TYPE_ADDR		= 0x00000002,
 	KGSL_USER_MEM_TYPE_ION		= 0x00000003,
 	/*
-	 * ION type is retained for backwards compatibilty but Ion buffers are
+	 * ION type is retained for backwards compatibility but Ion buffers are
 	 * dma-bufs so try to use that naming if we can
 	 */
 	KGSL_USER_MEM_TYPE_DMABUF       = 0x00000003,
@@ -225,6 +232,13 @@ enum kgsl_user_mem_type {
 /* Server Side Sync Timeout in milliseconds */
 #define KGSL_SYNCOBJ_SERVER_TIMEOUT 2000
 
+/* UBWC Modes */
+#define KGSL_UBWC_NONE	0
+#define KGSL_UBWC_1_0	1
+#define KGSL_UBWC_2_0	2
+#define KGSL_UBWC_3_0	3
+#define KGSL_UBWC_4_0	4
+
 /*
  * Reset status values for context
  */
@@ -238,25 +252,20 @@ enum kgsl_ctx_reset_stat {
 #define KGSL_CONVERT_TO_MBPS(val) \
 	(val*1000*1000U)
 
-/* device id */
-enum kgsl_deviceid {
-	KGSL_DEVICE_3D0		= 0x00000000,
-	KGSL_DEVICE_MAX
-};
-
 struct kgsl_devinfo {
 
 	unsigned int device_id;
-	/* chip revision id
-	* coreid:8 majorrev:8 minorrev:8 patch:8
-	*/
+	/*
+	 * chip revision id
+	 * coreid:8 majorrev:8 minorrev:8 patch:8
+	 */
 	unsigned int chip_id;
 	unsigned int mmu_enabled;
 	unsigned long gmem_gpubaseaddr;
 	/*
-	* This field contains the adreno revision
-	* number 200, 205, 220, etc...
-	*/
+	 * This field contains the adreno revision
+	 * number 200, 205, 220, etc...
+	 */
 	unsigned int gpu_id;
 	size_t gmem_sizebytes;
 };
@@ -321,10 +330,46 @@ enum kgsl_timestamp_type {
 #define KGSL_PROP_HIGHEST_BANK_BIT	0x17
 #define KGSL_PROP_DEVICE_BITNESS	0x18
 #define KGSL_PROP_DEVICE_QDSS_STM	0x19
-#define KGSL_PROP_DEVICE_QTIMER	0x20
-#define KGSL_PROP_IB_TIMEOUT 0x21
+#define KGSL_PROP_MIN_ACCESS_LENGTH	0x1A
+#define KGSL_PROP_UBWC_MODE		0x1B
+#define KGSL_PROP_DEVICE_QTIMER		0x20
+#define KGSL_PROP_L3_PWR_CONSTRAINT     0x22
 #define KGSL_PROP_SECURE_BUFFER_ALIGNMENT 0x23
 #define KGSL_PROP_SECURE_CTXT_SUPPORT 0x24
+#define KGSL_PROP_SPEED_BIN		0x25
+#define KGSL_PROP_GAMING_BIN		0x26
+#define KGSL_PROP_QUERY_CAPABILITIES	0x27
+#define KGSL_PROP_CONTEXT_PROPERTY	0x28
+
+/*
+ * kgsl_capabilties_properties returns a list of supported properties.
+ * If the user passes 0 for 'count' the kernel will set it to the number of
+ * supported properties. The list is expected to be 'count * sizeof(uint32_t)'
+ * bytes long. The kernel will return the actual number of entries copied into
+ * list via 'count'.
+ */
+struct kgsl_capabilities_properties {
+	__u64 list;
+	__u32 count;
+};
+
+/*
+ * KGSL_QUERY_CAPS_PROPERTIES returns a list of the valid properties in the
+ * kernel.  The subtype data should be struct kgsl_capabilities_properties
+ */
+#define KGSL_QUERY_CAPS_PROPERTIES 1
+
+/*
+ * kgsl_capabilities allows the user to query kernel capabiilties. The 'data'
+ * type should be set appropriately for the querytype (see above). Pass 0 to
+ * 'size' and the kernel will set it to the expected size of 'data' that is
+ * appropriate for querytype (in bytes).
+ */
+struct kgsl_capabilities {
+	__u64 data;
+	__u64 size;
+	__u32 querytype;
+};
 
 struct kgsl_shadowprop {
 	unsigned long gpuaddr;
@@ -365,6 +410,21 @@ struct kgsl_gpmu_version {
 	unsigned int features;
 };
 
+struct kgsl_context_property {
+	__u64 data;
+	__u32 size;
+	__u32 type;
+	__u32 contextid;
+};
+
+struct kgsl_context_property_fault {
+	__s32 faults;
+	__u32 timestamp;
+};
+
+/* Context property sub types */
+#define KGSL_CONTEXT_PROP_FAULTS 1
+
 /* Performance counter groups */
 
 #define KGSL_PERFCOUNTER_GROUP_CP 0x0
@@ -403,7 +463,10 @@ struct kgsl_gpmu_version {
 #define KGSL_PERFCOUNTER_GROUP_CP_PWR 0x21
 #define KGSL_PERFCOUNTER_GROUP_GPMU_PWR 0x22
 #define KGSL_PERFCOUNTER_GROUP_ALWAYSON_PWR 0x23
-#define KGSL_PERFCOUNTER_GROUP_MAX 0x24
+#define KGSL_PERFCOUNTER_GROUP_GLC 0x24
+#define KGSL_PERFCOUNTER_GROUP_FCHE 0x25
+#define KGSL_PERFCOUNTER_GROUP_MHUB 0x26
+#define KGSL_PERFCOUNTER_GROUP_MAX 0x27
 
 #define KGSL_PERFCOUNTER_NOT_USED 0xFFFFFFFF
 #define KGSL_PERFCOUNTER_BROKEN 0xFFFFFFFE
@@ -442,16 +505,17 @@ struct kgsl_cmdbatch_profiling_buffer {
 /* ioctls */
 #define KGSL_IOC_TYPE 0x09
 
-/* get misc info about the GPU
-   type should be a value from enum kgsl_property_type
-   value points to a structure that varies based on type
-   sizebytes is sizeof() that structure
-   for KGSL_PROP_DEVICE_INFO, use struct kgsl_devinfo
-   this structure contaings hardware versioning info.
-   for KGSL_PROP_DEVICE_SHADOW, use struct kgsl_shadowprop
-   this is used to find mmap() offset and sizes for mapping
-   struct kgsl_memstore into userspace.
-*/
+/*
+ * get misc info about the GPU
+ * type should be a value from enum kgsl_property_type
+ * value points to a structure that varies based on type
+ * sizebytes is sizeof() that structure
+ * for KGSL_PROP_DEVICE_INFO, use struct kgsl_devinfo
+ * this structure contaings hardware versioning info.
+ * for KGSL_PROP_DEVICE_SHADOW, use struct kgsl_shadowprop
+ * this is used to find mmap() offset and sizes for mapping
+ * struct kgsl_memstore into userspace.
+ */
 struct kgsl_device_getproperty {
 	unsigned int type;
 	void __user *value;
@@ -493,7 +557,7 @@ struct kgsl_device_waittimestamp_ctxtid {
  * other ioctls to determine when the commands have been executed by
  * the GPU.
  *
- * This fucntion is deprecated - consider using IOCTL_KGSL_SUBMIT_COMMANDS
+ * This function is deprecated - consider using IOCTL_KGSL_SUBMIT_COMMANDS
  * instead
  */
 struct kgsl_ringbuffer_issueibcmds {
@@ -535,11 +599,12 @@ struct kgsl_cmdstream_freememontimestamp {
 #define IOCTL_KGSL_CMDSTREAM_FREEMEMONTIMESTAMP \
 	_IOW(KGSL_IOC_TYPE, 0x12, struct kgsl_cmdstream_freememontimestamp)
 
-/* Previous versions of this header had incorrectly defined
-   IOCTL_KGSL_CMDSTREAM_FREEMEMONTIMESTAMP as a read-only ioctl instead
-   of a write only ioctl.  To ensure binary compatability, the following
-   #define will be used to intercept the incorrect ioctl
-*/
+/*
+ * Previous versions of this header had incorrectly defined
+ * IOCTL_KGSL_CMDSTREAM_FREEMEMONTIMESTAMP as a read-only ioctl instead
+ * of a write only ioctl.  To ensure binary compatibility, the following
+ * #define will be used to intercept the incorrect ioctl
+ */
 
 #define IOCTL_KGSL_CMDSTREAM_FREEMEMONTIMESTAMP_OLD \
 	_IOR(KGSL_IOC_TYPE, 0x12, struct kgsl_cmdstream_freememontimestamp)
@@ -563,8 +628,10 @@ struct kgsl_drawctxt_destroy {
 #define IOCTL_KGSL_DRAWCTXT_DESTROY \
 	_IOW(KGSL_IOC_TYPE, 0x14, struct kgsl_drawctxt_destroy)
 
-/* add a block of pmem, fb, ashmem or user allocated address
- * into the GPU address space */
+/*
+ * add a block of pmem, fb, ashmem or user allocated address
+ * into the GPU address space
+ */
 struct kgsl_map_user_mem {
 	int fd;
 	unsigned long gpuaddr;   /*output param */
@@ -600,14 +667,14 @@ struct kgsl_cmdstream_freememontimestamp_ctxtid {
 
 /* add a block of pmem or fb into the GPU address space */
 struct kgsl_sharedmem_from_pmem {
-        int pmem_fd;
-        unsigned long gpuaddr;  /*output param */
-        unsigned int len;
-        unsigned int offset;
+	int pmem_fd;
+	unsigned long gpuaddr;  /*output param */
+	unsigned int len;
+	unsigned int offset;
 };
 
 #define IOCTL_KGSL_SHAREDMEM_FROM_PMEM \
-        _IOWR(KGSL_IOC_TYPE, 0x20, struct kgsl_sharedmem_from_pmem)
+	_IOWR(KGSL_IOC_TYPE, 0x20, struct kgsl_sharedmem_from_pmem)
 
 /* remove memory from the GPU's address space */
 struct kgsl_sharedmem_free {
@@ -639,12 +706,12 @@ struct kgsl_gmem_desc {
 };
 
 struct kgsl_buffer_desc {
-	void 			*hostptr;
+	void		*hostptr;
 	unsigned long	gpuaddr;
-	int				size;
+	int		size;
 	unsigned int	format;
-	unsigned int  	pitch;
-	unsigned int  	enabled;
+	unsigned int	pitch;
+	unsigned int	enabled;
 };
 
 struct kgsl_bind_gmem_shadow {
@@ -657,7 +724,7 @@ struct kgsl_bind_gmem_shadow {
 };
 
 #define IOCTL_KGSL_DRAWCTXT_BIND_GMEM_SHADOW \
-    _IOW(KGSL_IOC_TYPE, 0x22, struct kgsl_bind_gmem_shadow)
+	_IOW(KGSL_IOC_TYPE, 0x22, struct kgsl_bind_gmem_shadow)
 
 /* add a block of memory into the GPU address space */
 
@@ -1036,6 +1103,21 @@ struct kgsl_cmd_syncpoint_fence {
 	int fd;
 };
 
+/*
+ * struct kgsl_cmd_syncpoint_timeline
+ * @timelines: Address of an array of &struct kgsl_timeline_val
+ * @count: Number of entries in @timelines
+ * @timelines_size: Size of each entry in @timelines
+ *
+ * Define a syncpoint for a number of timelines.  This syncpoint will
+ * be satisfied when all of the specified timelines are signaled.
+ */
+struct kgsl_cmd_syncpoint_timeline {
+	__u64 timelines;
+	__u32 count;
+	__u32 timelines_size;
+};
+
 /**
  * struct kgsl_cmd_syncpoint - Define a sync point for a command batch
  * @type: type of sync point defined here
@@ -1108,6 +1190,10 @@ struct kgsl_device_constraint {
 /* Constraint Type*/
 #define KGSL_CONSTRAINT_NONE 0
 #define KGSL_CONSTRAINT_PWRLEVEL 1
+
+/* L3 constraint Type */
+#define KGSL_CONSTRAINT_L3_NONE	2
+#define KGSL_CONSTRAINT_L3_PWRLEVEL	3
 
 /* PWRLEVEL constraint level*/
 /* set to min frequency */
@@ -1455,7 +1541,7 @@ struct kgsl_preemption_counters_query {
 
 /**
  * struct kgsl_gpuobj_set_info - argument for IOCTL_KGSL_GPUOBJ_SET_INFO
- * @flags: Flags to indicate which paramaters to change
+ * @flags: Flags to indicate which parameters to change
  * @metadata:  If KGSL_GPUOBJ_SET_INFO_METADATA is set, a pointer to the new
  * metadata
  * @id: GPU memory object ID to change
@@ -1599,5 +1685,200 @@ struct kgsl_gpu_sparse_command {
 
 #define IOCTL_KGSL_GPU_SPARSE_COMMAND \
 	_IOWR(KGSL_IOC_TYPE, 0x55, struct kgsl_gpu_sparse_command)
+
+#define KGSL_GPU_AUX_COMMAND_TIMELINE	(1 << 1)
+/* Reuse the same flag that GPU COMMAND uses */
+#define KGSL_GPU_AUX_COMMAND_SYNC	KGSL_CMDBATCH_SYNC
+
+/**
+ * struct kgsl_aux_command_generic - Container for an AUX command
+ * @priv: Pointer to the type specific buffer
+ * @size: Size of the type specific buffer
+ * @type: type of sync point defined here
+ *
+ * Describes a generic container for GPU aux commands. @priv is a user pointer
+ * to the command struct matching @type of size @size.
+ */
+struct kgsl_gpu_aux_command_generic {
+	__u64 priv;
+	__u64 size;
+	__u32 type;
+/* private: Padding for 64 bit compatibility */
+	__u32 padding;
+};
+
+/**
+ * struct kgsl_gpu_aux_command - Argument for IOCTL_KGSL_GPU_AUX_COMMAND
+ * @flags: flags for the object
+ * @cmdlist: List of &struct kgsl_gpu_aux_command_generic objects
+ * @cmd_size: Size of each entry in @cmdlist
+ * @numcmds: Number of entries in @cmdlist
+ * @synclist: List of &struct kgsl_command_syncpoint objects
+ * @syncsize: Size of each entry in @synclist
+ * @numsyncs: Number of entries in @synclist
+ * @context_id: ID of the context submtting the aux command
+ * @timestamp: Timestamp for the command submission
+ *
+ * Describe a GPU auxiliary command. Auxiliary commands are tasks that are not
+ * performed on hardware but can be queued like normal GPU commands. Like GPU
+ * commands AUX commands are assigned a timestamp and processed in order in the
+ * queue. They can also have standard sync objects attached. The only
+ * difference is that AUX commands usually perform some sort of administrative
+ * task in the CPU and are retired in the dispatcher.
+ *
+ * For bind operations flags must have one of the KGSL_GPU_AUX_COMMAND_* flags
+ * set. If sync objects are attached KGSL_GPU_AUX_COMMAND_SYNC must be set.
+ * @cmdlist points to an array of &struct kgsl_gpu_aux_command_generic structs
+ * which in turn will have a pointer to a specific command type.
+ * @numcmds is the number of commands in the list and @cmdsize is the size
+ * of each entity in @cmdlist.
+ *
+ * If KGSL_GPU_AUX_COMMAND_SYNC is specified @synclist will point to an array of
+ * &struct kgsl_command_syncpoint items in the same fashion as a GPU hardware
+ * command. @numsyncs and @syncsize describe the list.
+ *
+ * @context_id is the context that is submitting the command and @timestamp
+ * contains the timestamp for the operation.
+ */
+struct kgsl_gpu_aux_command {
+	__u64 flags;
+	__u64 cmdlist;
+	__u32 cmdsize;
+	__u32 numcmds;
+	__u64 synclist;
+	__u32 syncsize;
+	__u32 numsyncs;
+	__u32 context_id;
+	__u32 timestamp;
+};
+
+#define IOCTL_KGSL_GPU_AUX_COMMAND \
+	_IOWR(KGSL_IOC_TYPE, 0x57, struct kgsl_gpu_aux_command)
+
+/**
+ * struct kgsl_timeline_create - Argument for IOCTL_KGSL_TIMELINE_CREATE
+ * @seqno: Initial sequence number for the timeline
+ * @id: Timeline identifier [out]
+ *
+ * Create a new semaphore timeline and return the identifier in @id.
+ * The identifier is global for the device and can be used to
+ * identify the timeline in all subsequent commands.
+ */
+struct kgsl_timeline_create {
+	__u64 seqno;
+	__u32 id;
+/* private: padding for 64 bit compatibility */
+	__u32 padding;
+};
+
+#define IOCTL_KGSL_TIMELINE_CREATE \
+	_IOWR(KGSL_IOC_TYPE, 0x58, struct kgsl_timeline_create)
+
+/**
+ * struct kgsl_timeline_val - A container to store a timeline/sequence number
+ * pair.
+ * @seqno: Sequence number to signal/query
+ * @timeline: The timeline identifier to signal/query
+ *
+ * A container to store a timeline/seqno pair used by the query and signal
+ * ioctls.
+ */
+struct kgsl_timeline_val {
+	__u64 seqno;
+	__u32 timeline;
+/* private: padding for 64 bit compatibility */
+	__u32 padding;
+};
+
+#define KGSL_TIMELINE_WAIT_ALL 1
+#define KGSL_TIMELINE_WAIT_ANY 2
+
+/**
+ * struct kgsl_timeline_wait - Argument for IOCTL_KGSL_TIMELINE_WAIT
+ * @tv_sec: Number of seconds to wait for the signal
+ * @tv_nsec: Number of nanoseconds to wait for the signal
+ * @timelines: Address of an array of &struct kgsl_timeline_val entries
+ * @count: Number of entries in @timeline
+ * @timelines_size: Size of each entry in @timelines
+ * @flags: One of KGSL_TIMELINE_WAIT_ALL or KGSL_TIMELINE_WAIT_ANY
+ *
+ * Wait for the timelines listed in @timelines to be signaled. If @flags is
+ * equal to KGSL_TIMELINE_WAIT_ALL then wait for all timelines or if
+ * KGSL_TIMELINE_WAIT_ANY is specified then wait for any of the timelines to
+ * signal. @tv_sec and @tv_nsec indicates the number of seconds and nanoseconds
+ * that the process should be blocked waiting for the signal.
+ */
+struct kgsl_timeline_wait {
+	__s64 tv_sec;
+	__s64 tv_nsec;
+	__u64 timelines;
+	__u32 count;
+	__u32 timelines_size;
+	__u32 flags;
+/* private: padding for 64 bit compatibility */
+	__u32 padding;
+};
+
+#define IOCTL_KGSL_TIMELINE_WAIT \
+	_IOW(KGSL_IOC_TYPE, 0x59, struct kgsl_timeline_wait)
+
+#define IOCTL_KGSL_TIMELINE_QUERY \
+	_IOWR(KGSL_IOC_TYPE, 0x5A, struct kgsl_timeline_val)
+
+/**
+ * struct kgsl_timeline_signal - argument for IOCTL_KGSL_TIMELINE_SIGNAL
+ * @timelines: Address of an array of &struct kgsl_timeline_val entries
+ * @count: Number of entries in @timelines
+ * @timelines_size: Size of each entry in @timelines
+ *
+ * Signal an array of timelines of type @struct kgsl_timeline_val.
+ */
+struct kgsl_timeline_signal {
+	__u64 timelines;
+	__u32 count;
+	__u32 timelines_size;
+};
+
+#define IOCTL_KGSL_TIMELINE_SIGNAL \
+	_IOW(KGSL_IOC_TYPE, 0x5B, struct kgsl_timeline_signal)
+
+/**
+ * struct kgsl_timeline_fence_get - argument for IOCTL_KGSL_TIMELINE_FENCE_GET
+ * @seqno: Sequence number for the fence
+ * @timeline: Timeline to create the fence on
+ * @handle: Contains the fence fd for a successful operation [out]
+ *
+ * Create a sync file descriptor for the seqnum on the timeline and return it in
+ * @handle.  Can be polled and queried just like any other sync file descriptor
+ */
+struct kgsl_timeline_fence_get {
+	__u64 seqno;
+	__u32 timeline;
+	int handle;
+};
+
+#define IOCTL_KGSL_TIMELINE_FENCE_GET \
+	_IOWR(KGSL_IOC_TYPE, 0x5C, struct kgsl_timeline_fence_get)
+/**
+ * IOCTL_KGSL_TIMELINE_DESTROY takes a u32 identifier for the timeline to
+ * destroy
+ */
+#define IOCTL_KGSL_TIMELINE_DESTROY _IOW(KGSL_IOC_TYPE, 0x5D, __u32)
+
+/**
+ * struct kgsl_gpu_aux_command_timeline - An aux command for timeline signals
+ * @timelines: An array of &struct kgsl_timeline_val elements
+ * @count: The number of entries in @timelines
+ * @timelines_size: The size of each element in @timelines
+ *
+ * An aux command for timeline signals that can be pointed to by
+ * &struct kgsl_aux_command_generic when the type is
+ * KGSL_GPU_AUX_COMMAND_TIMELINE.
+ */
+struct kgsl_gpu_aux_command_timeline {
+	__u64 timelines;
+	__u32 count;
+	__u32 timelines_size;
+};
 
 #endif /* _UAPI_MSM_KGSL_H */

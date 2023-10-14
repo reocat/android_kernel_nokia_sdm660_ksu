@@ -23,6 +23,7 @@ struct platform_device;
 
 #define PCIE_LTSSM	0x0404		/* PCIE Link Training and Status */
 #define PCIE_LTSSM_L0	0x16		/* L0 state */
+#define PCIE_FSL_CSR_CLASSCODE	0x474	/* FSL GPEX CSR */
 #define PCIE_IP_REV_2_2		0x02080202 /* PCIE IP block version Rev2.2 */
 #define PCIE_IP_REV_3_0		0x02080300 /* PCIE IP block version Rev3.0 */
 #define PIWAR_EN		0x80000000	/* Enable */
@@ -128,15 +129,6 @@ extern struct device_node *fsl_pci_primary;
 void fsl_pci_assign_primary(void);
 #else
 static inline void fsl_pci_assign_primary(void) {}
-#endif
-
-#ifdef CONFIG_EDAC_MPC85XX
-int mpc85xx_pci_err_probe(struct platform_device *op);
-#else
-static inline int mpc85xx_pci_err_probe(struct platform_device *op)
-{
-	return -ENOTSUPP;
-}
 #endif
 
 #ifdef CONFIG_FSL_PCI

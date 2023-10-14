@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * ld script for the c6x kernel
  *
@@ -70,6 +71,7 @@ SECTIONS
 		_stext = .;
 		TEXT_TEXT
 		SCHED_TEXT
+		CPUIDLE_TEXT
 		LOCK_TEXT
 		IRQENTRY_TEXT
 		SOFTIRQENTRY_TEXT
@@ -126,6 +128,8 @@ SECTIONS
 		*(.neardata .neardata.* .gnu.linkonce.s.*)
 		. = ALIGN(8);
 	}
+
+	BUG_TABLE
 
 	_edata = .;
 

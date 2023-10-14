@@ -54,11 +54,19 @@ static int is_wireless_rndis(struct usb_interface_descriptor *desc)
 		desc->bInterfaceProtocol == 3);
 }
 
+static int is_novatel_rndis(struct usb_interface_descriptor *desc)
+{
+	return (desc->bInterfaceClass == USB_CLASS_MISC &&
+		desc->bInterfaceSubClass == 4 &&
+		desc->bInterfaceProtocol == 1);
+}
+
 #else
 
 #define is_rndis(desc)		0
 #define is_activesync(desc)	0
 #define is_wireless_rndis(desc)	0
+#define is_novatel_rndis(desc)	0
 
 #endif
 
@@ -150,7 +158,8 @@ int usbnet_generic_cdc_bind(struct usbnet *dev, struct usb_interface *intf)
 	 */
 	rndis = (is_rndis(&intf->cur_altsetting->desc) ||
 		 is_activesync(&intf->cur_altsetting->desc) ||
-		 is_wireless_rndis(&intf->cur_altsetting->desc));
+		 is_wireless_rndis(&intf->cur_altsetting->desc) ||
+		 is_novatel_rndis(&intf->cur_altsetting->desc));
 
 	memset(info, 0, sizeof(*info));
 	info->control = intf;
@@ -317,13 +326,6 @@ skip:
 		return -ENODEV;
 	}
 
-	/* Some devices don't initialise properly. In particular
-	 * the packet filter is not reset. There are devices that
-	 * don't do reset all the way. So the packet filter should
-	 * be set to a sane initial value.
-	 */
-	usbnet_cdc_update_filter(dev);
-
 	return 0;
 
 bad_desc:
@@ -331,6 +333,30 @@ bad_desc:
 	return -ENODEV;
 }
 EXPORT_SYMBOL_GPL(usbnet_generic_cdc_bind);
+
+
+/* like usbnet_generic_cdc_bind() but handles filter initialization
+ * correctly
+ */
+int usbnet_ether_cdc_bind(struct usbnet *dev, struct usb_interface *intf)
+{
+	int rv;
+
+	rv = usbnet_generic_cdc_bind(dev, intf);
+	if (rv < 0)
+		goto bail_out;
+
+	/* Some devices don't initialise properly. In particular
+	 * the packet filter is not reset. There are devices that
+	 * don't do reset all the way. So the packet filter should
+	 * be set to a sane initial value.
+	 */
+	usbnet_cdc_update_filter(dev);
+
+bail_out:
+	return rv;
+}
+EXPORT_SYMBOL_GPL(usbnet_ether_cdc_bind);
 
 void usbnet_cdc_unbind(struct usbnet *dev, struct usb_interface *intf)
 {
@@ -424,7 +450,7 @@ int usbnet_cdc_bind(struct usbnet *dev, struct usb_interface *intf)
 	BUILD_BUG_ON((sizeof(((struct usbnet *)0)->data)
 			< sizeof(struct cdc_state)));
 
-	status = usbnet_generic_cdc_bind(dev, intf);
+	status = usbnet_ether_cdc_bind(dev, intf);
 	if (status < 0)
 		return status;
 
@@ -439,6 +465,64 @@ int usbnet_cdc_bind(struct usbnet *dev, struct usb_interface *intf)
 }
 EXPORT_SYMBOL_GPL(usbnet_cdc_bind);
 
+static int usbnet_cdc_zte_bind(struct usbnet *dev, struct usb_interface *intf)
+{
+	int status = usbnet_cdc_bind(dev, intf);
+
+	if (!status && (dev->net->dev_addr[0] & 0x02))
+		eth_hw_addr_random(dev->net);
+
+	return status;
+}
+
+/* Make sure packets have correct destination MAC address
+ *
+ * A firmware bug observed on some devices (ZTE MF823/831/910) is that the
+ * device sends packets with a static, bogus, random MAC address (event if
+ * device MAC address has been updated). Always set MAC address to that of the
+ * device.
+ */
+static int usbnet_cdc_zte_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
+{
+	if (skb->len < ETH_HLEN || !(skb->data[0] & 0x02))
+		return 1;
+
+	skb_reset_mac_header(skb);
+	ether_addr_copy(eth_hdr(skb)->h_dest, dev->net->dev_addr);
+
+	return 1;
+}
+
+/* Ensure correct link state
+ *
+ * Some devices (ZTE MF823/831/910) export two carrier on notifications when
+ * connected. This causes the link state to be incorrect. Work around this by
+ * always setting the state to off, then on.
+ */
+static void usbnet_cdc_zte_status(struct usbnet *dev, struct urb *urb)
+{
+	struct usb_cdc_notification *event;
+
+	if (urb->actual_length < sizeof(*event))
+		return;
+
+	event = urb->transfer_buffer;
+
+	if (event->bNotificationType != USB_CDC_NOTIFY_NETWORK_CONNECTION) {
+		usbnet_cdc_status(dev, urb);
+		return;
+	}
+
+	netif_dbg(dev, timer, dev->net, "CDC: carrier %s\n",
+		  event->wValue ? "on" : "off");
+
+	if (event->wValue &&
+	    netif_carrier_ok(dev->net))
+		netif_carrier_off(dev->net);
+
+	usbnet_link_change(dev, !!event->wValue, 0);
+}
+
 static const struct driver_info	cdc_info = {
 	.description =	"CDC Ethernet Device",
 	.flags =	FLAG_ETHER | FLAG_POINTTOPOINT,
@@ -447,6 +531,17 @@ static const struct driver_info	cdc_info = {
 	.status =	usbnet_cdc_status,
 	.set_rx_mode =	usbnet_cdc_update_filter,
 	.manage_power =	usbnet_manage_power,
+};
+
+static const struct driver_info	zte_cdc_info = {
+	.description =	"ZTE CDC Ethernet Device",
+	.flags =	FLAG_ETHER | FLAG_POINTTOPOINT,
+	.bind =		usbnet_cdc_zte_bind,
+	.unbind =	usbnet_cdc_unbind,
+	.status =	usbnet_cdc_zte_status,
+	.set_rx_mode =	usbnet_cdc_update_filter,
+	.manage_power =	usbnet_manage_power,
+	.rx_fixup = usbnet_cdc_zte_rx_fixup,
 };
 
 static const struct driver_info wwan_info = {
@@ -471,6 +566,9 @@ static const struct driver_info wwan_info = {
 #define LINKSYS_VENDOR_ID	0x13b1
 #define NVIDIA_VENDOR_ID	0x0955
 #define HP_VENDOR_ID		0x03f0
+#define MICROSOFT_VENDOR_ID	0x045e
+#define UBLOX_VENDOR_ID		0x1546
+#define TPLINK_VENDOR_ID	0x2357
 
 static const struct usb_device_id	products[] = {
 /* BLACKLIST !!
@@ -484,6 +582,11 @@ static const struct usb_device_id	products[] = {
 #define	ZAURUS_MASTER_INTERFACE \
 	.bInterfaceClass	= USB_CLASS_COMM, \
 	.bInterfaceSubClass	= USB_CDC_SUBCLASS_ETHERNET, \
+	.bInterfaceProtocol	= USB_CDC_PROTO_NONE
+
+#define ZAURUS_FAKE_INTERFACE \
+	.bInterfaceClass	= USB_CLASS_COMM, \
+	.bInterfaceSubClass	= USB_CDC_SUBCLASS_MDLM, \
 	.bInterfaceProtocol	= USB_CDC_PROTO_NONE
 
 /* SA-1100 based Sharp Zaurus ("collie"), or compatible;
@@ -515,6 +618,13 @@ static const struct usb_device_id	products[] = {
 	.match_flags	=   USB_DEVICE_ID_MATCH_INT_INFO
 			  | USB_DEVICE_ID_MATCH_DEVICE,
 	.idVendor		= 0x04DD,
+	.idProduct		= 0x8005,   /* A-300 */
+	ZAURUS_FAKE_INTERFACE,
+	.driver_info        = 0,
+}, {
+	.match_flags    =   USB_DEVICE_ID_MATCH_INT_INFO
+			  | USB_DEVICE_ID_MATCH_DEVICE,
+	.idVendor		= 0x04DD,
 	.idProduct		= 0x8006,	/* B-500/SL-5600 */
 	ZAURUS_MASTER_INTERFACE,
 	.driver_info		= 0,
@@ -522,9 +632,23 @@ static const struct usb_device_id	products[] = {
 	.match_flags    =   USB_DEVICE_ID_MATCH_INT_INFO
 			  | USB_DEVICE_ID_MATCH_DEVICE,
 	.idVendor		= 0x04DD,
+	.idProduct		= 0x8006,   /* B-500/SL-5600 */
+	ZAURUS_FAKE_INTERFACE,
+	.driver_info        = 0,
+}, {
+	.match_flags    =   USB_DEVICE_ID_MATCH_INT_INFO
+			  | USB_DEVICE_ID_MATCH_DEVICE,
+	.idVendor		= 0x04DD,
 	.idProduct		= 0x8007,	/* C-700 */
 	ZAURUS_MASTER_INTERFACE,
 	.driver_info		= 0,
+}, {
+	.match_flags    =   USB_DEVICE_ID_MATCH_INT_INFO
+			  | USB_DEVICE_ID_MATCH_DEVICE,
+	.idVendor		= 0x04DD,
+	.idProduct		= 0x8007,   /* C-700 */
+	ZAURUS_FAKE_INTERFACE,
+	.driver_info        = 0,
 }, {
 	.match_flags    =   USB_DEVICE_ID_MATCH_INT_INFO
 		 | USB_DEVICE_ID_MATCH_DEVICE,
@@ -538,6 +662,13 @@ static const struct usb_device_id	products[] = {
 	.idVendor               = 0x04DD,
 	.idProduct              = 0x9032,	/* SL-6000 */
 	ZAURUS_MASTER_INTERFACE,
+	.driver_info		= 0,
+}, {
+	.match_flags    =   USB_DEVICE_ID_MATCH_INT_INFO
+		 | USB_DEVICE_ID_MATCH_DEVICE,
+	.idVendor               = 0x04DD,
+	.idProduct              = 0x9032,	/* SL-6000 */
+	ZAURUS_FAKE_INTERFACE,
 	.driver_info		= 0,
 }, {
 	.match_flags    =   USB_DEVICE_ID_MATCH_INT_INFO
@@ -667,6 +798,27 @@ static const struct usb_device_id	products[] = {
 },
 #endif
 
+/* Lenovo ThinkPad OneLink+ Dock (based on Realtek RTL8153) */
+{
+	USB_DEVICE_AND_INTERFACE_INFO(LENOVO_VENDOR_ID, 0x3054, USB_CLASS_COMM,
+			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+	.driver_info = 0,
+},
+
+/* ThinkPad USB-C Dock (based on Realtek RTL8153) */
+{
+	USB_DEVICE_AND_INTERFACE_INFO(LENOVO_VENDOR_ID, 0x3062, USB_CLASS_COMM,
+			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+	.driver_info = 0,
+},
+
+/* ThinkPad Thunderbolt 3 Dock (based on Realtek RTL8153) */
+{
+	USB_DEVICE_AND_INTERFACE_INFO(LENOVO_VENDOR_ID, 0x3069, USB_CLASS_COMM,
+			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+	.driver_info = 0,
+},
+
 /* Lenovo Thinkpad USB 3.0 Ethernet Adapters (based on Realtek RTL8153) */
 {
 	USB_DEVICE_AND_INTERFACE_INFO(LENOVO_VENDOR_ID, 0x7205, USB_CLASS_COMM,
@@ -674,9 +826,65 @@ static const struct usb_device_id	products[] = {
 	.driver_info = 0,
 },
 
+/* Lenovo USB C to Ethernet Adapter (based on Realtek RTL8153) */
+{
+	USB_DEVICE_AND_INTERFACE_INFO(LENOVO_VENDOR_ID, 0x720c, USB_CLASS_COMM,
+			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+	.driver_info = 0,
+},
+
+/* Lenovo USB-C Travel Hub (based on Realtek RTL8153) */
+{
+	USB_DEVICE_AND_INTERFACE_INFO(LENOVO_VENDOR_ID, 0x7214, USB_CLASS_COMM,
+			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+	.driver_info = 0,
+},
+
+/* Lenovo Powered USB-C Travel Hub (4X90S92381, based on Realtek RTL8153) */
+{
+	USB_DEVICE_AND_INTERFACE_INFO(LENOVO_VENDOR_ID, 0x721e, USB_CLASS_COMM,
+			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+	.driver_info = 0,
+},
+
+/* ThinkPad USB-C Dock Gen 2 (based on Realtek RTL8153) */
+{
+	USB_DEVICE_AND_INTERFACE_INFO(LENOVO_VENDOR_ID, 0xa387, USB_CLASS_COMM,
+			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+	.driver_info = 0,
+},
+
 /* NVIDIA Tegra USB 3.0 Ethernet Adapters (based on Realtek RTL8153) */
 {
 	USB_DEVICE_AND_INTERFACE_INFO(NVIDIA_VENDOR_ID, 0x09ff, USB_CLASS_COMM,
+			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+	.driver_info = 0,
+},
+
+/* Microsoft Surface 2 dock (based on Realtek RTL8152) */
+{
+	USB_DEVICE_AND_INTERFACE_INFO(MICROSOFT_VENDOR_ID, 0x07ab, USB_CLASS_COMM,
+			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+	.driver_info = 0,
+},
+
+/* Microsoft Surface Ethernet Adapter (based on Realtek RTL8153) */
+{
+	USB_DEVICE_AND_INTERFACE_INFO(MICROSOFT_VENDOR_ID, 0x07c6, USB_CLASS_COMM,
+			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+	.driver_info = 0,
+},
+
+/* Microsoft Surface Ethernet Adapter (based on Realtek RTL8153B) */
+{
+	USB_DEVICE_AND_INTERFACE_INFO(MICROSOFT_VENDOR_ID, 0x0927, USB_CLASS_COMM,
+			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
+	.driver_info = 0,
+},
+
+/* TP-LINK UE300 USB 3.0 Ethernet Adapters (based on Realtek RTL8153) */
+{
+	USB_DEVICE_AND_INTERFACE_INFO(TPLINK_VENDOR_ID, 0x0601, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
 	.driver_info = 0,
 },
@@ -737,6 +945,42 @@ static const struct usb_device_id	products[] = {
 	USB_DEVICE_AND_INTERFACE_INFO(DELL_VENDOR_ID, 0x81ba, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
 	.driver_info = (kernel_ulong_t)&wwan_info,
+}, {
+	/* Huawei ME906 and ME909 */
+	USB_DEVICE_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, 0x15c1, USB_CLASS_COMM,
+				      USB_CDC_SUBCLASS_ETHERNET,
+				      USB_CDC_PROTO_NONE),
+	.driver_info = (unsigned long)&wwan_info,
+}, {
+	/* ZTE modules */
+	USB_VENDOR_AND_INTERFACE_INFO(ZTE_VENDOR_ID, USB_CLASS_COMM,
+				      USB_CDC_SUBCLASS_ETHERNET,
+				      USB_CDC_PROTO_NONE),
+	.driver_info = (unsigned long)&zte_cdc_info,
+}, {
+	/* U-blox TOBY-L2 */
+	USB_DEVICE_AND_INTERFACE_INFO(UBLOX_VENDOR_ID, 0x1143, USB_CLASS_COMM,
+				      USB_CDC_SUBCLASS_ETHERNET,
+				      USB_CDC_PROTO_NONE),
+	.driver_info = (unsigned long)&wwan_info,
+}, {
+	/* U-blox SARA-U2 */
+	USB_DEVICE_AND_INTERFACE_INFO(UBLOX_VENDOR_ID, 0x1104, USB_CLASS_COMM,
+				      USB_CDC_SUBCLASS_ETHERNET,
+				      USB_CDC_PROTO_NONE),
+	.driver_info = (unsigned long)&wwan_info,
+}, {
+	/* Cinterion PLS8 modem by GEMALTO */
+	USB_DEVICE_AND_INTERFACE_INFO(0x1e2d, 0x0061, USB_CLASS_COMM,
+				      USB_CDC_SUBCLASS_ETHERNET,
+				      USB_CDC_PROTO_NONE),
+	.driver_info = (unsigned long)&wwan_info,
+}, {
+	/* Cinterion AHS3 modem by GEMALTO */
+	USB_DEVICE_AND_INTERFACE_INFO(0x1e2d, 0x0055, USB_CLASS_COMM,
+				      USB_CDC_SUBCLASS_ETHERNET,
+				      USB_CDC_PROTO_NONE),
+	.driver_info = (unsigned long)&wwan_info,
 }, {
 	USB_INTERFACE_INFO(USB_CLASS_COMM, USB_CDC_SUBCLASS_ETHERNET,
 			USB_CDC_PROTO_NONE),

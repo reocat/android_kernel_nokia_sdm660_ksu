@@ -83,17 +83,28 @@ ecryptfs_filldir(struct dir_context *ctx, const char *lower_name,
 						  buf->sb, lower_name,
 						  lower_namelen);
 	if (rc) {
-		printk(KERN_ERR "%s: Error attempting to decode and decrypt "
-		       "filename [%s]; rc = [%d]\n", __func__, lower_name,
-		       rc);
-		goto out;
+		if (rc != -EINVAL) {
+			ecryptfs_printk(KERN_DEBUG,
+					"%s: Error attempting to decode and decrypt filename [%s]; rc = [%d]\n",
+					__func__, lower_name, rc);
+			return rc;
+		}
+
+		/* Mask -EINVAL errors as these are most likely due a plaintext
+		 * filename present in the lower filesystem despite filename
+		 * encryption being enabled. One unavoidable example would be
+		 * the "lost+found" dentry in the root directory of an Ext4
+		 * filesystem.
+		 */
+		return 0;
 	}
+
 	buf->caller->pos = buf->ctx.pos;
 	rc = !dir_emit(buf->caller, name, name_size, ino, d_type);
 	kfree(name);
 	if (!rc)
 		buf->entries_written++;
-out:
+
 	return rc;
 }
 
@@ -185,7 +196,7 @@ static int ecryptfs_mmap(struct file *file, struct vm_area_struct *vma)
 
 /**
  * ecryptfs_open
- * @inode: inode speciying file to open
+ * @inode: inode specifying file to open
  * @file: Structure to return filled in
  *
  * Opens the file specified by inode.
@@ -239,15 +250,6 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
 	}
 	ecryptfs_set_file_lower(
 		file, ecryptfs_inode_to_private(inode)->lower_file);
-	if (d_is_dir(ecryptfs_dentry)) {
-		ecryptfs_printk(KERN_DEBUG, "This is a directory\n");
-		mutex_lock(&crypt_stat->cs_mutex);
-		crypt_stat->flags &= ~(ECRYPTFS_ENCRYPTED);
-		mutex_unlock(&crypt_stat->cs_mutex);
-		rc = 0;
-		goto out;
-	}
-
 	rc = read_or_initialize_metadata(ecryptfs_dentry);
 	if (rc)
 		goto out_put;
@@ -284,7 +286,7 @@ out:
 
 /**
  * ecryptfs_dir_open
- * @inode: inode speciying file to open
+ * @inode: inode specifying file to open
  * @file: Structure to return filled in
  *
  * Opens the file specified by inode.
@@ -360,7 +362,7 @@ ecryptfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 {
 	int rc;
 
-	rc = filemap_write_and_wait(file->f_mapping);
+	rc = file_write_and_wait(file);
 	if (rc)
 		return rc;
 
@@ -428,7 +430,7 @@ ecryptfs_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 #endif
 
 const struct file_operations ecryptfs_dir_fops = {
-	.iterate = ecryptfs_readdir,
+	.iterate_shared = ecryptfs_readdir,
 	.read = generic_read_dir,
 	.unlocked_ioctl = ecryptfs_unlocked_ioctl,
 #ifdef CONFIG_COMPAT

@@ -1,13 +1,6 @@
-/* Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
@@ -19,9 +12,10 @@
 #include <linux/mutex.h>
 #include <linux/iopoll.h>
 #include <linux/types.h>
-#include <linux/switch.h>
 #include <linux/of_platform.h>
+#include <linux/extcon-provider.h>
 #include <linux/msm_ext_display.h>
+#include <linux/extcon-provider.h>
 
 struct msm_ext_disp_list {
 	struct msm_ext_disp_init_data *data;
@@ -29,75 +23,59 @@ struct msm_ext_disp_list {
 };
 
 struct msm_ext_disp {
+	struct msm_ext_disp_data ext_disp_data;
 	struct platform_device *pdev;
-	enum msm_ext_disp_type current_disp;
+	struct msm_ext_disp_codec_id current_codec;
 	struct msm_ext_disp_audio_codec_ops *ops;
-	struct switch_dev hdmi_sdev;
-	struct switch_dev audio_sdev;
-	bool ack_enabled;
+	struct extcon_dev *audio_sdev[MSM_EXT_DISP_MAX_CODECS];
 	bool audio_session_on;
 	struct list_head display_list;
 	struct mutex lock;
-	struct completion hpd_comp;
-	bool update_audio;
-	u32 flags;
 };
 
-static int msm_ext_disp_get_intf_data(struct msm_ext_disp *ext_disp,
-		enum msm_ext_disp_type type,
-		struct msm_ext_disp_init_data **data);
-static int msm_ext_disp_update_audio_ops(struct msm_ext_disp *ext_disp,
-		enum msm_ext_disp_type type,
-		enum msm_ext_disp_cable_state state, u32 flags);
+static const unsigned int msm_ext_disp_supported_cable[] = {
+	EXTCON_DISP_DP,
+	EXTCON_DISP_HDMI,
+	EXTCON_NONE,
+};
 
-static int msm_ext_disp_switch_dev_register(struct msm_ext_disp *ext_disp)
+static int msm_ext_disp_extcon_register(struct msm_ext_disp *ext_disp, int id)
 {
 	int ret = 0;
 
-	if (!ext_disp) {
-		pr_err("Invalid params\n");
-		ret = -EINVAL;
-		goto end;
+	if (!ext_disp || !ext_disp->pdev || id >= MSM_EXT_DISP_MAX_CODECS) {
+		pr_err("invalid params\n");
+		return -EINVAL;
 	}
 
-	memset(&ext_disp->hdmi_sdev, 0x0, sizeof(ext_disp->hdmi_sdev));
-	ext_disp->hdmi_sdev.name = "hdmi";
-	ret = switch_dev_register(&ext_disp->hdmi_sdev);
+	ext_disp->audio_sdev[id] = devm_extcon_dev_allocate(
+			&ext_disp->pdev->dev,
+			msm_ext_disp_supported_cable);
+	if (IS_ERR(ext_disp->audio_sdev[id]))
+		return PTR_ERR(ext_disp->audio_sdev[id]);
+
+	ret = devm_extcon_dev_register(&ext_disp->pdev->dev,
+		ext_disp->audio_sdev[id]);
 	if (ret) {
-		pr_err("hdmi switch registration failed\n");
-		goto end;
+		pr_err("audio registration failed\n");
+		return ret;
 	}
 
-	memset(&ext_disp->audio_sdev, 0x0, sizeof(ext_disp->audio_sdev));
-	ext_disp->audio_sdev.name = "hdmi_audio";
-	ret = switch_dev_register(&ext_disp->audio_sdev);
-	if (ret) {
-		pr_err("hdmi_audio switch registration failed");
-		goto hdmi_audio_failure;
-	}
+	pr_debug("extcon registration done\n");
 
-	pr_debug("Display switch registration pass\n");
-
-	return ret;
-
-hdmi_audio_failure:
-	switch_dev_unregister(&ext_disp->hdmi_sdev);
-end:
 	return ret;
 }
 
-static void msm_ext_disp_switch_dev_unregister(struct msm_ext_disp *ext_disp)
+static void msm_ext_disp_extcon_unregister(struct msm_ext_disp *ext_disp,
+		int id)
 {
-	if (!ext_disp) {
+	if (!ext_disp || !ext_disp->pdev || id >= MSM_EXT_DISP_MAX_CODECS) {
 		pr_err("Invalid params\n");
-		goto end;
+		return;
 	}
 
-	switch_dev_unregister(&ext_disp->hdmi_sdev);
-	switch_dev_unregister(&ext_disp->audio_sdev);
-
-end:
-	return;
+	devm_extcon_dev_unregister(&ext_disp->pdev->dev,
+			ext_disp->audio_sdev[id]);
 }
 
 static const char *msm_ext_disp_name(enum msm_ext_disp_type type)
@@ -114,7 +92,7 @@ static int msm_ext_disp_add_intf_data(struct msm_ext_disp *ext_disp,
 {
 	struct msm_ext_disp_list *node;
 
-	if (!ext_disp && !data) {
+	if (!ext_disp || !data) {
 		pr_err("Invalid params\n");
 		return -EINVAL;
 	}
@@ -124,24 +102,51 @@ static int msm_ext_disp_add_intf_data(struct msm_ext_disp *ext_disp,
 		return -ENOMEM;
 
 	node->data = data;
+
 	list_add(&node->list, &ext_disp->display_list);
 
-	pr_debug("Added new display (%s)\n",
-			msm_ext_disp_name(data->type));
+	pr_debug("Added new display (%s) ctld (%d) stream (%d)\n",
+		msm_ext_disp_name(data->codec.type),
+		data->codec.ctrl_id, data->codec.stream_id);
+
+	return 0;
+}
+
+static int msm_ext_disp_remove_intf_data(struct msm_ext_disp *ext_disp,
+		struct msm_ext_disp_init_data *data)
+{
+	struct msm_ext_disp_list *node;
+	struct list_head *pos = NULL;
+
+	if (!ext_disp || !data) {
+		pr_err("Invalid params\n");
+		return -EINVAL;
+	}
+
+	list_for_each(pos, &ext_disp->display_list) {
+		node = list_entry(pos, struct msm_ext_disp_list, list);
+		if (node->data == data) {
+			list_del(pos);
+			pr_debug("Deleted the intf data\n");
+			kfree(node);
+			return 0;
+		}
+	}
+
+	pr_debug("Intf data not present for delete op\n");
 
 	return 0;
 }
 
 static int msm_ext_disp_get_intf_data(struct msm_ext_disp *ext_disp,
-		enum msm_ext_disp_type type,
+		struct msm_ext_disp_codec_id *codec,
 		struct msm_ext_disp_init_data **data)
 {
 	int ret = 0;
 	struct msm_ext_disp_list *node;
 	struct list_head *position = NULL;
 
-	if (!ext_disp || !data || type < EXT_DISPLAY_TYPE_HDMI ||
-			type >=  EXT_DISPLAY_TYPE_MAX) {
+	if (!ext_disp || !data || !codec) {
 		pr_err("Invalid params\n");
 		ret = -EINVAL;
 		goto end;
@@ -150,566 +155,293 @@ static int msm_ext_disp_get_intf_data(struct msm_ext_disp *ext_disp,
 	*data = NULL;
 	list_for_each(position, &ext_disp->display_list) {
 		node = list_entry(position, struct msm_ext_disp_list, list);
-		if (node->data->type == type) {
-			pr_debug("Found display (%s)\n",
-					msm_ext_disp_name(type));
+		if (node->data->codec.type == codec->type &&
+			node->data->codec.stream_id == codec->stream_id &&
+			node->data->codec.ctrl_id == codec->ctrl_id) {
 			*data = node->data;
 			break;
 		}
 	}
 
-	if (!*data) {
-		pr_debug("Display not found (%s)\n",
-				msm_ext_disp_name(type));
+	if (!*data)
 		ret = -ENODEV;
-	}
-
 end:
 	return ret;
-}
-
-static int msm_ext_disp_send_cable_notification(struct msm_ext_disp *ext_disp,
-		enum msm_ext_disp_cable_state new_state)
-{
-	int state = EXT_DISPLAY_CABLE_STATE_MAX;
-
-	if (!ext_disp) {
-		pr_err("Invalid params\n");
-		return -EINVAL;
-	}
-
-	state = ext_disp->hdmi_sdev.state;
-	switch_set_state(&ext_disp->hdmi_sdev, !!new_state);
-
-	pr_debug("Cable state %s %d\n",
-			ext_disp->hdmi_sdev.state == state ?
-			"is same" : "switched to",
-			ext_disp->hdmi_sdev.state);
-
-	return ext_disp->hdmi_sdev.state == state ? 0 : 1;
-}
-
-static int msm_ext_disp_send_audio_notification(struct msm_ext_disp *ext_disp,
-		enum msm_ext_disp_cable_state new_state)
-{
-	int state = EXT_DISPLAY_CABLE_STATE_MAX;
-
-	if (!ext_disp) {
-		pr_err("Invalid params\n");
-		return -EINVAL;
-	}
-
-	state = ext_disp->audio_sdev.state;
-	switch_set_state(&ext_disp->audio_sdev, !!new_state);
-
-	pr_debug("Audio state %s %d\n",
-			ext_disp->audio_sdev.state == state ?
-			"is same" : "switched to",
-			ext_disp->audio_sdev.state);
-
-	return ext_disp->audio_sdev.state == state ? 0 : 1;
-}
-
-static int msm_ext_disp_process_display(struct msm_ext_disp *ext_disp,
-		enum msm_ext_disp_type type,
-		enum msm_ext_disp_cable_state state, u32 flags)
-{
-	int ret = 0;
-
-	if (!(flags & (MSM_EXT_DISP_HPD_VIDEO
-		       | MSM_EXT_DISP_HPD_ASYNC_VIDEO))) {
-		pr_debug("skipping video setup for display (%s)\n",
-			msm_ext_disp_name(type));
-		goto end;
-	}
-
-	if (state == EXT_DISPLAY_CABLE_CONNECT)
-		ext_disp->current_disp = type;
-	else
-		ext_disp->current_disp = EXT_DISPLAY_TYPE_MAX;
-
-	reinit_completion(&ext_disp->hpd_comp);
-
-	ret = msm_ext_disp_send_cable_notification(ext_disp, state);
-
-	/* positive ret value means audio node was switched */
-	if ((ret <= 0) ||
-		(flags & MSM_EXT_DISP_HPD_ASYNC_VIDEO)) {
-		pr_debug("not waiting for display\n");
-		goto end;
-	}
-
-	ret = wait_for_completion_timeout(&ext_disp->hpd_comp, HZ * 5);
-	if (!ret) {
-		pr_err("display timeout\n");
-		ret = -EINVAL;
-		goto end;
-	}
-
-end:
-	return (ret >= 0) ? 0 : -EINVAL;
 }
 
 static int msm_ext_disp_process_audio(struct msm_ext_disp *ext_disp,
-		enum msm_ext_disp_type type,
-		enum msm_ext_disp_cable_state state, u32 flags)
+		struct msm_ext_disp_codec_id *codec,
+		enum msm_ext_disp_cable_state new_state)
 {
 	int ret = 0;
+	int state;
+	struct extcon_dev *audio_sdev;
 
-	if (!(flags & (MSM_EXT_DISP_HPD_AUDIO
-		       | MSM_EXT_DISP_HPD_ASYNC_AUDIO))) {
-		pr_debug("skipping audio setup for display (%s)\n",
-			msm_ext_disp_name(type));
+	if (!ext_disp->ops) {
+		pr_err("codec not registered, skip notification\n");
+		ret = -EPERM;
 		goto end;
 	}
 
-	reinit_completion(&ext_disp->hpd_comp);
+	audio_sdev = ext_disp->audio_sdev[codec->stream_id];
 
-	ret = msm_ext_disp_send_audio_notification(ext_disp, state);
-
-	/* positive ret value means audio node was switched */
-	if ((ret <= 0) || !ext_disp->ack_enabled ||
-		(flags & MSM_EXT_DISP_HPD_ASYNC_AUDIO)) {
-		pr_debug("not waiting for audio\n");
+	state = extcon_get_state(audio_sdev, codec->type);
+	if (state == !!new_state) {
+		ret = -EEXIST;
+		pr_debug("same state\n");
 		goto end;
 	}
 
-	ret = wait_for_completion_timeout(&ext_disp->hpd_comp, HZ * 2);
-	if (!ret) {
-		pr_err("audio timeout\n");
-		ret = -EINVAL;
-		goto end;
-	}
+	ret = extcon_set_state_sync(audio_sdev,
+			codec->type, !!new_state);
+	if (ret)
+		pr_err("Failed to set state. Error = %d\n", ret);
+	else
+		pr_debug("state changed to %d\n", new_state);
 
 end:
-	return (ret >= 0) ? 0 : -EINVAL;
+	return ret;
 }
 
-static bool msm_ext_disp_validate_connect(struct msm_ext_disp *ext_disp,
-		enum msm_ext_disp_type type, u32 flags)
+static struct msm_ext_disp *msm_ext_disp_validate_and_get(
+		struct platform_device *pdev,
+		struct msm_ext_disp_codec_id *codec,
+		enum msm_ext_disp_cable_state state)
 {
-	/* allow new connections */
-	if (ext_disp->current_disp == EXT_DISPLAY_TYPE_MAX)
-		goto end;
-
-	/* if already connected, block a new connection  */
-	if (ext_disp->current_disp != type)
-		return false;
-end:
-	return true;
-}
-
-static bool msm_ext_disp_validate_disconnect(struct msm_ext_disp *ext_disp,
-		enum msm_ext_disp_type type, u32 flags)
-{
-	/* check if nothing connected */
-	if (ext_disp->current_disp == EXT_DISPLAY_TYPE_MAX)
-		return false;
-
-	/* check if a different display's request */
-	if (ext_disp->current_disp != type)
-		return false;
-
-	return true;
-}
-
-static int msm_ext_disp_hpd(struct platform_device *pdev,
-		enum msm_ext_disp_type type,
-		enum msm_ext_disp_cable_state state,
-		u32 flags)
-{
-	int ret = 0;
-	struct msm_ext_disp *ext_disp = NULL;
+	struct msm_ext_disp_data *ext_disp_data;
+	struct msm_ext_disp *ext_disp;
 
 	if (!pdev) {
-		pr_err("Invalid platform device\n");
-		return -EINVAL;
+		pr_err("invalid platform device\n");
+		goto err;
 	}
 
-	ext_disp = platform_get_drvdata(pdev);
-	if (!ext_disp) {
-		pr_err("Invalid drvdata\n");
-		return -EINVAL;
+	if (!codec ||
+		codec->type >= EXT_DISPLAY_TYPE_MAX ||
+		codec->ctrl_id != 0 ||
+		codec->stream_id >= MSM_EXT_DISP_MAX_CODECS) {
+		pr_err("invalid display codec id\n");
+		goto err;
 	}
-
-	mutex_lock(&ext_disp->lock);
-
-	pr_debug("HPD for display (%s), NEW STATE = %d, flags = %d\n",
-			msm_ext_disp_name(type), state, flags);
 
 	if (state < EXT_DISPLAY_CABLE_DISCONNECT ||
 			state >= EXT_DISPLAY_CABLE_STATE_MAX) {
-		pr_err("Invalid HPD state (%d)\n", state);
-		ret = -EINVAL;
-		goto end;
+		pr_err("invalid HPD state (%d)\n", state);
+		goto err;
 	}
 
-	ext_disp->flags = flags;
-
-	if (state == EXT_DISPLAY_CABLE_CONNECT) {
-		if (!msm_ext_disp_validate_connect(ext_disp, type, flags)) {
-			pr_err("Display interface (%s) already connected\n",
-				msm_ext_disp_name(ext_disp->current_disp));
-			ret = -EINVAL;
-			goto end;
-		}
-
-		ret = msm_ext_disp_process_display(ext_disp, type, state,
-			flags);
-		if (ret)
-			goto end;
-
-		ret = msm_ext_disp_update_audio_ops(ext_disp, type, state,
-			flags);
-		if (ret)
-			goto end;
-
-		ret = msm_ext_disp_process_audio(ext_disp, type, state,
-			flags);
-		if (ret)
-			goto end;
-	} else {
-		if (!msm_ext_disp_validate_disconnect(ext_disp, type, flags)) {
-			pr_err("Display interface (%s) not connected\n",
-				msm_ext_disp_name(type));
-			ret = -EINVAL;
-			goto end;
-		}
-
-		msm_ext_disp_process_audio(ext_disp, type, state, flags);
-		msm_ext_disp_update_audio_ops(ext_disp, type, state, flags);
-		msm_ext_disp_process_display(ext_disp, type, state, flags);
+	ext_disp_data = platform_get_drvdata(pdev);
+	if (!ext_disp_data) {
+		pr_err("invalid drvdata\n");
+		goto err;
 	}
 
-	pr_debug("Hpd (%d) for display (%s)\n", state,
-			msm_ext_disp_name(type));
+	ext_disp = container_of(ext_disp_data,
+			struct msm_ext_disp, ext_disp_data);
 
-end:
-	mutex_unlock(&ext_disp->lock);
-
-	return ret;
-}
-static int msm_ext_disp_get_intf_data_helper(struct platform_device *pdev,
-		struct msm_ext_disp_init_data **data)
-{
-	int ret = 0;
-	struct msm_ext_disp *ext_disp = NULL;
-
-	if (!pdev) {
-		pr_err("No platform device\n");
-		ret = -ENODEV;
-		goto end;
-	}
-
-	ext_disp = platform_get_drvdata(pdev);
-	if (!ext_disp) {
-		pr_err("No drvdata found\n");
-		ret = -ENODEV;
-		goto end;
-	}
-
-	if (ext_disp->current_disp == EXT_DISPLAY_TYPE_MAX) {
-		ret = -EINVAL;
-		pr_err("No display connected\n");
-		goto end;
-	}
-
-	ret = msm_ext_disp_get_intf_data(ext_disp, ext_disp->current_disp,
-			data);
-end:
-	return ret;
-}
-
-static int msm_ext_disp_cable_status(struct platform_device *pdev, u32 vote)
-{
-	int ret = 0;
-	struct msm_ext_disp_init_data *data = NULL;
-
-	ret = msm_ext_disp_get_intf_data_helper(pdev, &data);
-	if (ret || !data)
-		goto end;
-
-	ret = data->codec_ops.cable_status(data->pdev, vote);
-
-end:
-	return ret;
-}
-
-static int msm_ext_disp_get_audio_edid_blk(struct platform_device *pdev,
-	struct msm_ext_disp_audio_edid_blk *blk)
-{
-	int ret = 0;
-	struct msm_ext_disp_init_data *data = NULL;
-
-	ret = msm_ext_disp_get_intf_data_helper(pdev, &data);
-	if (ret || !data)
-		goto end;
-
-	ret = data->codec_ops.get_audio_edid_blk(data->pdev, blk);
-
-end:
-	return ret;
-}
-
-static int msm_ext_disp_audio_info_setup(struct platform_device *pdev,
-	struct msm_ext_disp_audio_setup_params *params)
-{
-	int ret = 0;
-	struct msm_ext_disp_init_data *data = NULL;
-	struct msm_ext_disp *ext_disp = NULL;
-
-	ret = msm_ext_disp_get_intf_data_helper(pdev, &data);
-	if (ret || !data)
-		goto end;
-
-	ext_disp = platform_get_drvdata(pdev);
-	if (!ext_disp) {
-		pr_err("No drvdata found\n");
-		ret = -EINVAL;
-		goto end;
-	}
-
-	ext_disp->audio_session_on = true;
-
-	ret = data->codec_ops.audio_info_setup(data->pdev, params);
-
-end:
-	return ret;
-}
-
-static void msm_ext_disp_teardown_done(struct platform_device *pdev)
-{
-	int ret = 0;
-	struct msm_ext_disp_init_data *data = NULL;
-	struct msm_ext_disp *ext_disp = NULL;
-
-	ret = msm_ext_disp_get_intf_data_helper(pdev, &data);
-	if (ret || !data) {
-		pr_err("invalid input");
-		return;
-	}
-
-	ext_disp = platform_get_drvdata(pdev);
-	if (!ext_disp) {
-		pr_err("No drvdata found\n");
-		return;
-	}
-
-	if (data->codec_ops.teardown_done)
-		data->codec_ops.teardown_done(data->pdev);
-
-	ext_disp->audio_session_on = false;
-
-	pr_debug("%s tearing down audio\n",
-		msm_ext_disp_name(ext_disp->current_disp));
-
-	complete_all(&ext_disp->hpd_comp);
-}
-
-static int msm_ext_disp_audio_ack(struct platform_device *pdev, u32 ack)
-{
-	u32 ack_hpd;
-	int ret = 0;
-	struct msm_ext_disp *ext_disp = NULL;
-
-	if (!pdev) {
-		pr_err("Invalid platform device\n");
-		return -EINVAL;
-	}
-
-	ext_disp = platform_get_drvdata(pdev);
-	if (!ext_disp) {
-		pr_err("Invalid drvdata\n");
-		return -EINVAL;
-	}
-
-	if (ack & AUDIO_ACK_SET_ENABLE) {
-		ext_disp->ack_enabled = ack & AUDIO_ACK_ENABLE ?
-			true : false;
-
-		pr_debug("audio ack feature %s\n",
-			ext_disp->ack_enabled ? "enabled" : "disabled");
-		goto end;
-	}
-
-	if (!ext_disp->ack_enabled)
-		goto end;
-
-	ack_hpd = ack & AUDIO_ACK_CONNECT;
-
-	pr_debug("%s acknowledging audio (%d)\n",
-		msm_ext_disp_name(ext_disp->current_disp), ack_hpd);
-
-	if (!ext_disp->audio_session_on)
-		complete_all(&ext_disp->hpd_comp);
-end:
-	return ret;
-}
-
-static int msm_ext_disp_get_intf_id(struct platform_device *pdev)
-{
-	int ret = 0;
-	struct msm_ext_disp *ext_disp = NULL;
-
-	if (!pdev) {
-		pr_err("No platform device\n");
-		ret = -ENODEV;
-		goto end;
-	}
-
-	ext_disp = platform_get_drvdata(pdev);
-	if (!ext_disp) {
-		pr_err("No drvdata found\n");
-		ret = -ENODEV;
-		goto end;
-	}
-
-	ret = ext_disp->current_disp;
-
-end:
-	return ret;
+	return ext_disp;
+err:
+	return ERR_PTR(-EINVAL);
 }
 
 static int msm_ext_disp_update_audio_ops(struct msm_ext_disp *ext_disp,
-		enum msm_ext_disp_type type,
-		enum msm_ext_disp_cable_state state, u32 flags)
+		struct msm_ext_disp_codec_id *codec)
 {
 	int ret = 0;
-	struct msm_ext_disp_audio_codec_ops *ops = ext_disp->ops;
-	ext_disp->update_audio = false;
+	struct msm_ext_disp_init_data *data = NULL;
 
-	if (!(flags & MSM_EXT_DISP_HPD_AUDIO)) {
-		pr_debug("skipping audio ops setup for display (%s)\n",
-			msm_ext_disp_name(type));
+	ret = msm_ext_disp_get_intf_data(ext_disp, codec, &data);
+	if (ret || !data) {
+		pr_err("Display not found (%s) ctld (%d) stream (%d)\n",
+			msm_ext_disp_name(codec->type),
+			codec->ctrl_id, codec->stream_id);
 		goto end;
 	}
 
-	if (!ops) {
-		pr_err("Invalid audio ops\n");
-		if (state == EXT_DISPLAY_CABLE_CONNECT) {
-			/* update audio ops once audio codec gets registered */
-			ext_disp->update_audio = true;
-		}
-		ret = -EINVAL;
+	if (ext_disp->ops) {
+		*ext_disp->ops = data->codec_ops;
+		ext_disp->current_codec = *codec;
+
+		/* update pdev for interface to use */
+		ext_disp->ext_disp_data.intf_pdev = data->pdev;
+		ext_disp->ext_disp_data.intf_data = data->intf_data;
+	}
+
+end:
+	return ret;
+}
+
+static int msm_ext_disp_audio_config(struct platform_device *pdev,
+		struct msm_ext_disp_codec_id *codec,
+		enum msm_ext_disp_cable_state state)
+{
+	int ret = 0;
+	struct msm_ext_disp *ext_disp;
+
+	ext_disp = msm_ext_disp_validate_and_get(pdev, codec, state);
+	if (IS_ERR(ext_disp)) {
+		ret = PTR_ERR(ext_disp);
 		goto end;
 	}
 
 	if (state == EXT_DISPLAY_CABLE_CONNECT) {
-		ops->audio_info_setup = msm_ext_disp_audio_info_setup;
-		ops->get_audio_edid_blk = msm_ext_disp_get_audio_edid_blk;
-		ops->cable_status = msm_ext_disp_cable_status;
-		ops->get_intf_id = msm_ext_disp_get_intf_id;
-		ops->teardown_done = msm_ext_disp_teardown_done;
-		ops->acknowledge = msm_ext_disp_audio_ack;
+		ret = msm_ext_disp_select_audio_codec(pdev, codec);
+		if (ret)
+			pr_err("error setting audio codec\n");
 	} else {
-		ops->audio_info_setup = NULL;
-		ops->get_audio_edid_blk = NULL;
-		ops->cable_status = NULL;
-		ops->get_intf_id = NULL;
-		ops->teardown_done = NULL;
-		ops->acknowledge = NULL;
+		mutex_lock(&ext_disp->lock);
+		if (ext_disp->ops)
+			memset(ext_disp->ops, 0, sizeof(*ext_disp->ops));
+
+		pr_debug("codec ops cleared for %s\n",
+			msm_ext_disp_name(ext_disp->current_codec.type));
+
+		ext_disp->current_codec.type = EXT_DISPLAY_TYPE_MAX;
+		mutex_unlock(&ext_disp->lock);
 	}
 end:
 	return ret;
 }
 
-static int msm_ext_disp_notify(struct platform_device *pdev,
+static int msm_ext_disp_audio_notify(struct platform_device *pdev,
+		struct msm_ext_disp_codec_id *codec,
 		enum msm_ext_disp_cable_state state)
 {
 	int ret = 0;
-	struct msm_ext_disp *ext_disp = NULL;
+	struct msm_ext_disp *ext_disp;
 
-	if (!pdev) {
-		pr_err("Invalid platform device\n");
-		ret = -EINVAL;
+	ext_disp = msm_ext_disp_validate_and_get(pdev, codec, state);
+	if (IS_ERR(ext_disp)) {
+		ret = PTR_ERR(ext_disp);
 		goto end;
 	}
 
-	ext_disp = platform_get_drvdata(pdev);
-	if (!ext_disp) {
-		pr_err("Invalid drvdata\n");
-		ret = -EINVAL;
-		goto end;
-	}
-
-	if (state < EXT_DISPLAY_CABLE_DISCONNECT ||
-	    state >= EXT_DISPLAY_CABLE_STATE_MAX) {
-		pr_err("Invalid state (%d)\n", state);
-		ret = -EINVAL;
-		goto end;
-	}
-
-	pr_debug("%s notifying hpd (%d)\n",
-		msm_ext_disp_name(ext_disp->current_disp), state);
-
-	complete_all(&ext_disp->hpd_comp);
+	mutex_lock(&ext_disp->lock);
+	ret = msm_ext_disp_process_audio(ext_disp, codec, state);
+	mutex_unlock(&ext_disp->lock);
 end:
 	return ret;
 }
 
+static void msm_ext_disp_ready_for_display(struct msm_ext_disp *ext_disp)
+{
+	int ret;
+	struct msm_ext_disp_init_data *data = NULL;
+
+	if (!ext_disp) {
+		pr_err("invalid input\n");
+		return;
+	}
+
+	ret = msm_ext_disp_get_intf_data(ext_disp,
+			&ext_disp->current_codec, &data);
+	if (ret) {
+		pr_err("%s not found\n",
+			msm_ext_disp_name(ext_disp->current_codec.type));
+		return;
+	}
+
+	*ext_disp->ops = data->codec_ops;
+	data->codec_ops.ready(ext_disp->pdev);
+}
+
 int msm_hdmi_register_audio_codec(struct platform_device *pdev,
-	struct msm_ext_disp_audio_codec_ops *ops)
+		struct msm_ext_disp_audio_codec_ops *ops)
 {
 	return msm_ext_disp_register_audio_codec(pdev, ops);
 }
 
+/**
+ * Register audio codec ops to display driver
+ * for HDMI/Display Port usecase support.
+ *
+ * @return 0 on success, negative value on error
+ *
+ */
 int msm_ext_disp_register_audio_codec(struct platform_device *pdev,
 		struct msm_ext_disp_audio_codec_ops *ops)
 {
 	int ret = 0;
 	struct msm_ext_disp *ext_disp = NULL;
-	struct msm_ext_disp_list *node = NULL;
+	struct msm_ext_disp_data *ext_disp_data = NULL;
 
 	if (!pdev || !ops) {
 		pr_err("Invalid params\n");
 		return -EINVAL;
 	}
 
-	ext_disp = platform_get_drvdata(pdev);
-	if (!ext_disp) {
+	ext_disp_data = platform_get_drvdata(pdev);
+	if (!ext_disp_data) {
 		pr_err("Invalid drvdata\n");
 		return -EINVAL;
 	}
 
+	ext_disp = container_of(ext_disp_data, struct msm_ext_disp,
+				ext_disp_data);
+
 	mutex_lock(&ext_disp->lock);
 
-	if ((ext_disp->current_disp != EXT_DISPLAY_TYPE_MAX)
-			&& ext_disp->ops) {
+	if (ext_disp->ops) {
 		pr_err("Codec already registered\n");
-		mutex_unlock(&ext_disp->lock);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto end;
 	}
 
 	ext_disp->ops = ops;
 
-	mutex_unlock(&ext_disp->lock);
-
-	list_for_each_entry(node, &ext_disp->display_list, list) {
-		struct msm_ext_disp_init_data *data = node->data;
-
-		if (data->codec_ops.codec_ready)
-			data->codec_ops.codec_ready(data->pdev);
-	}
-
 	pr_debug("audio codec registered\n");
 
-	mutex_lock(&ext_disp->lock);
-	if (ext_disp->update_audio) {
-		msm_ext_disp_update_audio_ops(ext_disp, ext_disp->current_disp,
-				EXT_DISPLAY_CABLE_CONNECT, ext_disp->flags);
+end:
+	mutex_unlock(&ext_disp->lock);
+	if (ext_disp->current_codec.type != EXT_DISPLAY_TYPE_MAX)
+		msm_ext_disp_ready_for_display(ext_disp);
 
-		msm_ext_disp_process_audio(ext_disp, ext_disp->current_disp,
-				EXT_DISPLAY_CABLE_CONNECT, ext_disp->flags);
+	return ret;
+}
+EXPORT_SYMBOL(msm_ext_disp_register_audio_codec);
 
-		ext_disp->update_audio = false;
+int msm_ext_disp_select_audio_codec(struct platform_device *pdev,
+		struct msm_ext_disp_codec_id *codec)
+{
+	int ret = 0;
+	struct msm_ext_disp *ext_disp = NULL;
+	struct msm_ext_disp_data *ext_disp_data = NULL;
+
+	if (!pdev || !codec) {
+		pr_err("Invalid params\n");
+		return -EINVAL;
 	}
+
+	ext_disp_data = platform_get_drvdata(pdev);
+	if (!ext_disp_data) {
+		pr_err("Invalid drvdata\n");
+		return -EINVAL;
+	}
+
+	ext_disp = container_of(ext_disp_data, struct msm_ext_disp,
+				ext_disp_data);
+
+	mutex_lock(&ext_disp->lock);
+
+	if (!ext_disp->ops) {
+		pr_err("Codec is not registered\n");
+		ret = -EINVAL;
+		goto end;
+	}
+
+	ret = msm_ext_disp_update_audio_ops(ext_disp, codec);
+
+end:
 	mutex_unlock(&ext_disp->lock);
 
 	return ret;
 }
+EXPORT_SYMBOL(msm_ext_disp_select_audio_codec);
 
 static int msm_ext_disp_validate_intf(struct msm_ext_disp_init_data *init_data)
 {
+	struct msm_ext_disp_audio_codec_ops *ops;
+
 	if (!init_data) {
 		pr_err("Invalid init_data\n");
 		return -EINVAL;
@@ -720,9 +452,25 @@ static int msm_ext_disp_validate_intf(struct msm_ext_disp_init_data *init_data)
 		return -EINVAL;
 	}
 
-	if (!init_data->codec_ops.get_audio_edid_blk ||
-			!init_data->codec_ops.cable_status ||
-			!init_data->codec_ops.audio_info_setup) {
+	if (init_data->codec.type >= EXT_DISPLAY_TYPE_MAX ||
+		init_data->codec.ctrl_id != 0 ||
+		init_data->codec.stream_id >= MSM_EXT_DISP_MAX_CODECS) {
+		pr_err("Invalid codec info type(%d), ctrl(%d) stream(%d)\n",
+				init_data->codec.type,
+				init_data->codec.ctrl_id,
+				init_data->codec.stream_id);
+		return -EINVAL;
+	}
+
+	ops = &init_data->codec_ops;
+
+	if (!ops->audio_info_setup   ||
+	    !ops->get_audio_edid_blk ||
+	    !ops->cable_status       ||
+	    !ops->get_intf_id        ||
+	    !ops->teardown_done      ||
+	    !ops->acknowledge        ||
+	    !ops->ready) {
 		pr_err("Invalid codec operation pointers\n");
 		return -EINVAL;
 	}
@@ -736,17 +484,21 @@ int msm_ext_disp_register_intf(struct platform_device *pdev,
 	int ret = 0;
 	struct msm_ext_disp_init_data *data = NULL;
 	struct msm_ext_disp *ext_disp = NULL;
+	struct msm_ext_disp_data *ext_disp_data = NULL;
 
 	if (!pdev || !init_data) {
 		pr_err("Invalid params\n");
 		return -EINVAL;
 	}
 
-	ext_disp = platform_get_drvdata(pdev);
-	if (!ext_disp) {
+	ext_disp_data = platform_get_drvdata(pdev);
+	if (!ext_disp_data) {
 		pr_err("Invalid drvdata\n");
 		return -EINVAL;
 	}
+
+	ext_disp = container_of(ext_disp_data, struct msm_ext_disp,
+				ext_disp_data);
 
 	mutex_lock(&ext_disp->lock);
 
@@ -754,10 +506,12 @@ int msm_ext_disp_register_intf(struct platform_device *pdev,
 	if (ret)
 		goto end;
 
-	ret = msm_ext_disp_get_intf_data(ext_disp, init_data->type, &data);
+	ret = msm_ext_disp_get_intf_data(ext_disp, &init_data->codec, &data);
 	if (!ret) {
-		pr_debug("Display (%s) already registered\n",
-				msm_ext_disp_name(init_data->type));
+		pr_err("%s already registered. ctrl(%d) stream(%d)\n",
+			msm_ext_disp_name(init_data->codec.type),
+			init_data->codec.ctrl_id,
+			init_data->codec.stream_id);
 		goto end;
 	}
 
@@ -765,16 +519,50 @@ int msm_ext_disp_register_intf(struct platform_device *pdev,
 	if (ret)
 		goto end;
 
-	init_data->intf_ops.hpd = msm_ext_disp_hpd;
-	init_data->intf_ops.notify = msm_ext_disp_notify;
+	init_data->intf_ops.audio_config = msm_ext_disp_audio_config;
+	init_data->intf_ops.audio_notify = msm_ext_disp_audio_notify;
 
-	pr_debug("Display (%s) registered\n",
-			msm_ext_disp_name(init_data->type));
-
+	pr_debug("%s registered. ctrl(%d) stream(%d)\n",
+			msm_ext_disp_name(init_data->codec.type),
+			init_data->codec.ctrl_id,
+			init_data->codec.stream_id);
+end:
 	mutex_unlock(&ext_disp->lock);
-
 	return ret;
+}
 
+int msm_ext_disp_deregister_intf(struct platform_device *pdev,
+		struct msm_ext_disp_init_data *init_data)
+{
+	int ret = 0;
+	struct msm_ext_disp *ext_disp = NULL;
+	struct msm_ext_disp_data *ext_disp_data = NULL;
+
+	if (!pdev || !init_data) {
+		pr_err("Invalid params\n");
+		return -EINVAL;
+	}
+
+	ext_disp_data = platform_get_drvdata(pdev);
+	if (!ext_disp_data) {
+		pr_err("Invalid drvdata\n");
+		return -EINVAL;
+	}
+
+	ext_disp = container_of(ext_disp_data, struct msm_ext_disp,
+				ext_disp_data);
+
+	mutex_lock(&ext_disp->lock);
+
+	ret = msm_ext_disp_remove_intf_data(ext_disp, init_data);
+	if (ret)
+		goto end;
+
+	init_data->intf_ops.audio_config = NULL;
+	init_data->intf_ops.audio_notify = NULL;
+
+	pr_debug("%s deregistered\n",
+			msm_ext_disp_name(init_data->codec.type));
 end:
 	mutex_unlock(&ext_disp->lock);
 
@@ -783,7 +571,7 @@ end:
 
 static int msm_ext_disp_probe(struct platform_device *pdev)
 {
-	int ret = 0;
+	int ret = 0, id;
 	struct device_node *of_node = NULL;
 	struct msm_ext_disp *ext_disp = NULL;
 
@@ -806,12 +594,14 @@ static int msm_ext_disp_probe(struct platform_device *pdev)
 		goto end;
 	}
 
-	platform_set_drvdata(pdev, ext_disp);
+	platform_set_drvdata(pdev, &ext_disp->ext_disp_data);
 	ext_disp->pdev = pdev;
 
-	ret = msm_ext_disp_switch_dev_register(ext_disp);
-	if (ret)
-		goto switch_dev_failure;
+	for (id = 0; id < MSM_EXT_DISP_MAX_CODECS; id++) {
+		ret = msm_ext_disp_extcon_register(ext_disp, id);
+		if (ret)
+			goto child_node_failure;
+	}
 
 	ret = of_platform_populate(of_node, NULL, NULL, &pdev->dev);
 	if (ret) {
@@ -824,16 +614,14 @@ static int msm_ext_disp_probe(struct platform_device *pdev)
 	mutex_init(&ext_disp->lock);
 
 	INIT_LIST_HEAD(&ext_disp->display_list);
-	init_completion(&ext_disp->hpd_comp);
-	ext_disp->current_disp = EXT_DISPLAY_TYPE_MAX;
-	ext_disp->flags = 0;
-	ext_disp->update_audio = false;
+	ext_disp->current_codec.type = EXT_DISPLAY_TYPE_MAX;
 
 	return ret;
 
 child_node_failure:
-	msm_ext_disp_switch_dev_unregister(ext_disp);
-switch_dev_failure:
+	for (id = 0; id < MSM_EXT_DISP_MAX_CODECS; id++)
+		msm_ext_disp_extcon_unregister(ext_disp, id);
+
 	devm_kfree(&ext_disp->pdev->dev, ext_disp);
 end:
 	return ret;
@@ -841,8 +629,9 @@ end:
 
 static int msm_ext_disp_remove(struct platform_device *pdev)
 {
-	int ret = 0;
+	int ret = 0, id;
 	struct msm_ext_disp *ext_disp = NULL;
+	struct msm_ext_disp_data *ext_disp_data = NULL;
 
 	if (!pdev) {
 		pr_err("No platform device\n");
@@ -850,14 +639,18 @@ static int msm_ext_disp_remove(struct platform_device *pdev)
 		goto end;
 	}
 
-	ext_disp = platform_get_drvdata(pdev);
-	if (!ext_disp) {
+	ext_disp_data = platform_get_drvdata(pdev);
+	if (!ext_disp_data) {
 		pr_err("No drvdata found\n");
 		ret = -ENODEV;
 		goto end;
 	}
 
-	msm_ext_disp_switch_dev_unregister(ext_disp);
+	ext_disp = container_of(ext_disp_data, struct msm_ext_disp,
+				ext_disp_data);
+
+	for (id = 0; id < MSM_EXT_DISP_MAX_CODECS; id++)
+		msm_ext_disp_extcon_unregister(ext_disp, id);
 
 	mutex_destroy(&ext_disp->lock);
 	devm_kfree(&ext_disp->pdev->dev, ext_disp);
@@ -902,4 +695,3 @@ module_exit(msm_ext_disp_exit);
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("MSM External Display");
-

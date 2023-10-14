@@ -1,17 +1,8 @@
-/* Copyright (c) 2002,2008-2011,2013,2015,2017 The Linux Foundation.
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (c) 2002,2008-2011,2013,2015,2017 The Linux Foundation.
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  */
-
 #ifndef _KGSL_DEBUGFS_H
 #define _KGSL_DEBUGFS_H
 
@@ -31,7 +22,7 @@ static inline struct dentry *kgsl_get_debugfs_dir(void)
 	return kgsl_debugfs_dir;
 }
 
-void kgsl_process_init_debugfs(struct kgsl_process_private *);
+void kgsl_process_init_debugfs(struct kgsl_process_private *priv);
 #else
 static inline void kgsl_core_debugfs_init(void) { }
 static inline void kgsl_device_debugfs_init(struct kgsl_device *device) { }

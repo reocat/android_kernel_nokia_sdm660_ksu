@@ -17,6 +17,8 @@
 #include <asm/hwcap.h>
 #include <asm/pgtable-hwdef.h>
 #include <asm/pgtable.h>
+#include <asm/memory.h>
+#include <asm/cache.h>
 
 #include "proc-macros.S"
 
@@ -39,13 +41,14 @@ ENTRY(cpu_v7_proc_fin)
 ENDPROC(cpu_v7_proc_fin)
 
 /*
- *	cpu_v7_reset(loc)
+ *	cpu_v7_reset(loc, hyp)
  *
  *	Perform a soft reset of the system.  Put the CPU into the
  *	same state as it would be if it had been reset, and branch
  *	to what would be the reset vector.
  *
  *	- loc   - location to jump to for soft reset
+ *	- hyp   - indicate if restart occurs in HYP mode
  *
  *	This code must be executed using a flat identity mapping with
  *      caches disabled.
@@ -53,11 +56,15 @@ ENDPROC(cpu_v7_proc_fin)
 	.align	5
 	.pushsection	.idmap.text, "ax"
 ENTRY(cpu_v7_reset)
-	mrc	p15, 0, r1, c1, c0, 0		@ ctrl register
-	bic	r1, r1, #0x1			@ ...............m
- THUMB(	bic	r1, r1, #1 << 30 )		@ SCTLR.TE (Thumb exceptions)
-	mcr	p15, 0, r1, c1, c0, 0		@ disable MMU
+	mrc	p15, 0, r2, c1, c0, 0		@ ctrl register
+	bic	r2, r2, #0x1			@ ...............m
+ THUMB(	bic	r2, r2, #1 << 30 )		@ SCTLR.TE (Thumb exceptions)
+	mcr	p15, 0, r2, c1, c0, 0		@ disable MMU
 	isb
+#ifdef CONFIG_ARM_VIRT_EXT
+	teq	r1, #0
+	bne	__hyp_soft_restart
+#endif
 	bx	r0
 ENDPROC(cpu_v7_reset)
 	.popsection
@@ -273,6 +280,7 @@ ENDPROC(cpu_pj4b_do_resume)
 __v7_ca5mp_setup:
 __v7_ca9mp_setup:
 __v7_cr7mp_setup:
+__v7_cr8mp_setup:
 	mov	r10, #(1 << 0)			@ Cache/TLB ops broadcasting
 	b	1f
 __v7_ca7mp_setup:
@@ -281,17 +289,19 @@ __v7_ca15mp_setup:
 __v7_b15mp_setup:
 __v7_ca17mp_setup:
 	mov	r10, #0
-1:	adr	r12, __v7_setup_stack		@ the local stack
-	stmia	r12, {r0-r5, lr}		@ v7_invalidate_l1 touches r0-r6
+1:	adr	r0, __v7_setup_stack_ptr
+	ldr	r12, [r0]
+	add	r12, r12, r0			@ the local stack
+	stmia	r12, {r1-r6, lr}		@ v7_invalidate_l1 touches r0-r6
 	bl      v7_invalidate_l1
-	ldmia	r12, {r0-r5, lr}
+	ldmia	r12, {r1-r6, lr}
 #ifdef CONFIG_SMP
+	orr	r10, r10, #(1 << 6)		@ Enable SMP/nAMP mode
 	ALT_SMP(mrc	p15, 0, r0, c1, c0, 1)
-	ALT_UP(mov	r0, #(1 << 6))		@ fake it for UP
-	tst	r0, #(1 << 6)			@ SMP/nAMP mode enabled?
-	orreq	r0, r0, #(1 << 6)		@ Enable SMP/nAMP mode
-	orreq	r0, r0, r10			@ Enable CPU-specific SMP bits
-	mcreq	p15, 0, r0, c1, c0, 1
+	ALT_UP(mov	r0, r10)		@ fake it for UP
+	orr	r10, r10, r0			@ Set required bits
+	teq	r10, r0				@ Were they already set?
+	mcrne	p15, 0, r10, c1, c0, 1		@ No, update register
 #endif
 	b	__v7_setup_cont
 
@@ -367,6 +377,39 @@ __ca15_errata:
 #endif
 	b	__errata_finish
 
+__ca12_errata:
+#ifdef CONFIG_ARM_ERRATA_818325_852422
+	mrc	p15, 0, r10, c15, c0, 1		@ read diagnostic register
+	orr	r10, r10, #1 << 12		@ set bit #12
+	mcr	p15, 0, r10, c15, c0, 1		@ write diagnostic register
+#endif
+#ifdef CONFIG_ARM_ERRATA_821420
+	mrc	p15, 0, r10, c15, c0, 2		@ read internal feature reg
+	orr	r10, r10, #1 << 1		@ set bit #1
+	mcr	p15, 0, r10, c15, c0, 2		@ write internal feature reg
+#endif
+#ifdef CONFIG_ARM_ERRATA_825619
+	mrc	p15, 0, r10, c15, c0, 1		@ read diagnostic register
+	orr	r10, r10, #1 << 24		@ set bit #24
+	mcr	p15, 0, r10, c15, c0, 1		@ write diagnostic register
+#endif
+	b	__errata_finish
+
+__ca17_errata:
+#ifdef CONFIG_ARM_ERRATA_852421
+	cmp	r6, #0x12			@ only present up to r1p2
+	mrcle	p15, 0, r10, c15, c0, 1		@ read diagnostic register
+	orrle	r10, r10, #1 << 24		@ set bit #24
+	mcrle	p15, 0, r10, c15, c0, 1		@ write diagnostic register
+#endif
+#ifdef CONFIG_ARM_ERRATA_852423
+	cmp	r6, #0x12			@ only present up to r1p2
+	mrcle	p15, 0, r10, c15, c0, 1		@ read diagnostic register
+	orrle	r10, r10, #1 << 12		@ set bit #12
+	mcrle	p15, 0, r10, c15, c0, 1		@ write diagnostic register
+#endif
+	b	__errata_finish
+
 __v7_pj4b_setup:
 #ifdef CONFIG_CPU_PJ4B
 
@@ -422,10 +465,12 @@ __v7_pj4b_setup:
 #endif /* CONFIG_CPU_PJ4B */
 
 __v7_setup:
-	adr	r12, __v7_setup_stack		@ the local stack
-	stmia	r12, {r0-r5, lr}		@ v7_invalidate_l1 touches r0-r6
+	adr	r0, __v7_setup_stack_ptr
+	ldr	r12, [r0]
+	add	r12, r12, r0			@ the local stack
+	stmia	r12, {r1-r6, lr}		@ v7_invalidate_l1 touches r0-r6
 	bl      v7_invalidate_l1
-	ldmia	r12, {r0-r5, lr}
+	ldmia	r12, {r1-r6, lr}
 
 __v7_setup_cont:
 	and	r0, r9, #0xff000000		@ ARM?
@@ -445,6 +490,16 @@ __v7_setup_cont:
 	ldr	r10, =0x00000c09		@ Cortex-A9 primary part number
 	teq	r0, r10
 	beq	__ca9_errata
+
+	/* Cortex-A12 Errata */
+	ldr	r10, =0x00000c0d		@ Cortex-A12 primary part number
+	teq	r0, r10
+	beq	__ca12_errata
+
+	/* Cortex-A17 Errata */
+	ldr	r10, =0x00000c0e		@ Cortex-A17 primary part number
+	teq	r0, r10
+	beq	__ca17_errata
 
 	/* Cortex-A15 Errata */
 	ldr	r10, =0x00000c0f		@ Cortex-A15 primary part number
@@ -487,12 +542,17 @@ __errata_finish:
 	orr	r0, r0, r6			@ set them
  THUMB(	orr	r0, r0, #1 << 30	)	@ Thumb exceptions
 	ret	lr				@ return to head.S:__ret
-ENDPROC(__v7_setup)
 
 	.align	2
-__v7_setup_stack:
-	.space	4 * 7				@ 12 registers
+__v7_setup_stack_ptr:
+	.word	PHYS_RELATIVE(__v7_setup_stack, .)
+ENDPROC(__v7_setup)
 
+	.bss
+	.align	L1_CACHE_SHIFT
+__v7_setup_stack:
+	.space	4 * 7				@ 7 registers
+	.align	L1_CACHE_SHIFT
 	__INITDATA
 
 	.weak cpu_v7_bugs_init
@@ -583,7 +643,7 @@ __v7_setup_stack:
 	/*
 	 * Standard v7 proc info content
 	 */
-.macro __v7_proc name, initfunc, mm_mmuflags = 0, io_mmuflags = 0, hwcaps = 0, proc_fns = v7_processor_functions
+.macro __v7_proc name, initfunc, mm_mmuflags = 0, io_mmuflags = 0, hwcaps = 0, proc_fns = v7_processor_functions, cache_fns = v7_cache_fns
 	ALT_SMP(.long	PMD_TYPE_SECT | PMD_SECT_AP_WRITE | PMD_SECT_AP_READ | \
 			PMD_SECT_AF | PMD_FLAGS_SMP | \mm_mmuflags)
 	ALT_UP(.long	PMD_TYPE_SECT | PMD_SECT_AP_WRITE | PMD_SECT_AP_READ | \
@@ -599,7 +659,7 @@ __v7_setup_stack:
 	.long	\proc_fns
 	.long	v7wbi_tlb_fns
 	.long	v6_user_fns
-	.long	v7_cache_fns
+	.long	\cache_fns
 .endm
 
 #ifndef CONFIG_ARM_LPAE
@@ -658,6 +718,16 @@ __v7_cr7mp_proc_info:
 	.size	__v7_cr7mp_proc_info, . - __v7_cr7mp_proc_info
 
 	/*
+	 * ARM Ltd. Cortex R8 processor.
+	 */
+	.type	__v7_cr8mp_proc_info, #object
+__v7_cr8mp_proc_info:
+	.long	0x410fc180
+	.long	0xff0ffff0
+	__v7_proc __v7_cr8mp_proc_info, __v7_cr8mp_setup
+	.size	__v7_cr8mp_proc_info, . - __v7_cr8mp_proc_info
+
+	/*
 	 * ARM Ltd. Cortex A7 processor.
 	 */
 	.type	__v7_ca7mp_proc_info, #object
@@ -694,7 +764,7 @@ __v7_ca15mp_proc_info:
 __v7_b15mp_proc_info:
 	.long	0x420f00f0
 	.long	0xff0ffff0
-	__v7_proc __v7_b15mp_proc_info, __v7_b15mp_setup, proc_fns = ca15_processor_functions
+	__v7_proc __v7_b15mp_proc_info, __v7_b15mp_setup, proc_fns = ca15_processor_functions, cache_fns = b15_cache_fns
 	.size	__v7_b15mp_proc_info, . - __v7_b15mp_proc_info
 
 	/*

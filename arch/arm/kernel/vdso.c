@@ -56,8 +56,26 @@ static const struct vm_special_mapping vdso_data_mapping = {
 	.pages = &vdso_data_page,
 };
 
+static int vdso_mremap(const struct vm_special_mapping *sm,
+		struct vm_area_struct *new_vma)
+{
+	unsigned long new_size = new_vma->vm_end - new_vma->vm_start;
+	unsigned long vdso_size;
+
+	/* without VVAR page */
+	vdso_size = (vdso_total_pages - 1) << PAGE_SHIFT;
+
+	if (vdso_size != new_size)
+		return -EINVAL;
+
+	current->mm->context.vdso = new_vma->vm_start;
+
+	return 0;
+}
+
 static struct vm_special_mapping vdso_text_mapping __ro_after_init = {
 	.name = "[vdso]",
+	.mremap = vdso_mremap,
 };
 
 struct elfinfo {
@@ -189,7 +207,6 @@ static int __init vdso_init(void)
 	}
 
 	text_pages = (vdso_end - vdso_start) >> PAGE_SHIFT;
-	pr_debug("vdso: %i text pages at base %pK\n", text_pages, vdso_start);
 
 	/* Allocate the VDSO text pagelist */
 	vdso_text_pagelist = kcalloc(text_pages, sizeof(struct page *),
@@ -275,7 +292,7 @@ static bool tk_is_cntvct(const struct timekeeper *tk)
 	if (!IS_ENABLED(CONFIG_ARM_ARCH_TIMER))
 		return false;
 
-	if (strcmp(tk->tkr_mono.clock->name, "arch_sys_counter") != 0)
+	if (!tk->tkr_mono.clock->archdata.vdso_direct)
 		return false;
 
 	return true;

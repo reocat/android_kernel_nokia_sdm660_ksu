@@ -1,13 +1,5 @@
-/* Copyright (c) 2013-2015, 2018-2019 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0 */
+/* Copyright (c) 2013-2015, 2017-2019 The Linux Foundation. All rights reserved.
  */
 
 #ifndef DIAG_MASKS_H
@@ -21,6 +13,8 @@ struct diag_log_mask_t {
 	uint32_t num_items_tools;
 	uint32_t range;
 	uint32_t range_tools;
+	uint8_t id_valid;
+	uint32_t sub_id;
 	struct mutex lock;
 	uint8_t *ptr;
 };
@@ -36,6 +30,8 @@ struct diag_msg_mask_t {
 	uint32_t ssid_last_tools;
 	uint32_t range;
 	uint32_t range_tools;
+	uint8_t id_valid;
+	uint32_t sub_id;
 	struct mutex lock;
 	uint32_t *ptr;
 };
@@ -143,6 +139,10 @@ struct diag_log_mask_userspace_t {
 #define MSG_MASK_CTRL_HEADER_LEN	11
 #define EVENT_MASK_CTRL_HEADER_LEN	7
 
+#define LOG_MASK_CTRL_HEADER_LEN_SUB	18
+#define MSG_MASK_CTRL_HEADER_LEN_SUB	18
+#define EVENT_MASK_CTRL_HEADER_LEN_SUB	14
+
 #define LOG_STATUS_SUCCESS	0
 #define LOG_STATUS_INVALID	1
 #define LOG_STATUS_FAIL		2
@@ -163,6 +163,113 @@ extern struct diag_mask_info msg_bt_mask;
 extern struct diag_mask_info log_mask;
 extern struct diag_mask_info event_mask;
 
+#define MAX_SIM_NUM 2
+#define INVALID_INDEX -1
+#define LEGACY_MASK_CMD 0
+#define SUBID_CMD 1
+
+struct diag_build_mask_req_sub_t {
+	struct diag_pkt_header_t header;
+	uint8_t version;
+	uint8_t id_valid;
+	uint32_t sub_id;
+	uint8_t sub_cmd;
+	uint16_t ssid_first;
+	uint16_t ssid_last;
+} __packed;
+
+struct diag_msg_build_mask_sub_t {
+	struct diag_pkt_header_t header;
+	uint8_t version;
+	uint8_t id_valid;
+	uint32_t sub_id;
+	uint8_t sub_cmd;
+	uint8_t reserved;
+	uint8_t status;
+	uint16_t ssid_first;
+	uint16_t ssid_last;
+} __packed;
+
+struct diag_msg_ssid_query_sub_t {
+	struct diag_pkt_header_t header;
+	uint8_t version;
+	uint8_t id_valid;
+	uint32_t sub_id;
+	uint8_t sub_cmd;
+	uint8_t status;
+	uint8_t reserved;
+	uint32_t count;
+} __packed;
+
+struct diag_msg_config_rsp_sub_t {
+	struct diag_pkt_header_t header;
+	uint8_t version;
+	uint8_t id_valid;
+	uint32_t sub_id;
+	uint8_t sub_cmd;
+	uint8_t preset_id;
+	uint8_t status;
+	uint32_t rt_mask;
+} __packed;
+
+struct diag_msg_config_set_sub_t {
+	struct diag_pkt_header_t header;
+	uint8_t version;
+	uint8_t id_valid;
+	uint32_t sub_id;
+	uint8_t sub_cmd;
+	uint8_t preset_id;
+	uint8_t status;
+	uint16_t ssid_first;
+	uint16_t ssid_last;
+	uint32_t rt_mask;
+} __packed;
+
+struct diag_log_config_req_sub_t {
+	struct diag_pkt_header_t header;
+	uint8_t version;
+	uint8_t id_valid;
+	uint32_t sub_id;
+	uint8_t operation_code;
+} __packed;
+
+struct diag_log_config_rsp_sub_t {
+	struct diag_pkt_header_t header;
+	uint8_t version;
+	uint8_t id_valid;
+	uint32_t sub_id;
+	uint8_t operation_code;
+	uint8_t preset_id;
+	uint8_t status;
+} __packed;
+
+struct diag_logging_range_t {
+	uint32_t equip_id;
+	uint32_t num_items;
+} __packed;
+
+struct diag_event_mask_config_sub_t {
+	struct diag_pkt_header_t header;
+	uint8_t version;
+	uint8_t id_valid;
+	uint32_t sub_id;
+	uint8_t sub_cmd;
+	uint8_t preset_id;
+	uint8_t status;
+	uint16_t num_bits;
+} __packed;
+
+struct diag_event_mask_req_sub_t {
+	struct diag_pkt_header_t header;
+	uint8_t version;
+	uint8_t id_valid;
+	uint32_t sub_id;
+	uint8_t sub_cmd;
+	uint8_t preset_id;
+	uint8_t status;
+} __packed;
+
+int diag_check_subid_mask_index(uint32_t subid, int pid);
 int diag_masks_init(void);
 void diag_masks_exit(void);
 int diag_log_mask_copy(struct diag_mask_info *dest,
@@ -179,7 +286,7 @@ int diag_process_apps_masks(unsigned char *buf, int len, int pid);
 void diag_send_updates_peripheral(uint8_t peripheral);
 
 extern int diag_create_msg_mask_table_entry(struct diag_msg_mask_t *msg_mask,
-					    struct diag_ssid_range_t *range);
+			struct diag_ssid_range_t *range, int subid_index);
 extern int diag_copy_to_user_msg_mask(char __user *buf, size_t count,
 				      struct diag_md_session_t *info);
 extern int diag_copy_to_user_log_mask(char __user *buf, size_t count,

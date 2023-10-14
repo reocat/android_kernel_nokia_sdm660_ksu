@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 #ifndef __ASM_GENERIC_IOCTLS_H
 #define __ASM_GENERIC_IOCTLS_H
 
@@ -77,9 +78,11 @@
 #define TIOCGPKT	_IOR('T', 0x38, int) /* Get packet mode state */
 #define TIOCGPTLCK	_IOR('T', 0x39, int) /* Get Pty lock state */
 #define TIOCGEXCL	_IOR('T', 0x40, int) /* Get exclusive mode state */
-#define TIOCPMGET	0x5441	/* PM get */
-#define TIOCPMPUT	0x5442	/* PM put */
-#define TIOCPMACT	0x5443	/* PM is active */
+#define TIOCGPTPEER	_IO('T', 0x41) /* Safely open the slave */
+#define TIOCFAULT	0x54EC	/* Uart fault */
+#define TIOCPMGET	0x544D	/* PM get */
+#define TIOCPMPUT	0x544E	/* PM put */
+#define TIOCPMACT	0x544F	/* PM is active */
 
 #define FIONCLEX	0x5450
 #define FIOCLEX		0x5451

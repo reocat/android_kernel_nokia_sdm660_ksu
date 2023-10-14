@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: ((GPL-2.0 WITH Linux-syscall-note) AND MIT) */
 /*
  *  compress_params.h - codec types and parameters for compressed data
  *  streaming interface
@@ -53,7 +54,8 @@
 
 #include <linux/types.h>
 
-#define SND_DEC_DDP_MAX_PARAMS 18
+/* Maximum PCM channels */
+#define MAX_PCM_DECODE_CHANNELS 32
 
 /* AUDIO CODECS SUPPORTED */
 #define MAX_NUM_CODECS 32
@@ -75,6 +77,11 @@
 /* Bit-0 - 0 : Disable Timestamp mode */
 #define COMPRESSED_TIMESTAMP_FLAG 0x0001
 
+/* Perf mode flag */
+/* Bit-1 - 1 : Enable perf mode */
+/* Bit-1 - 0 : Disable perf mode */
+#define COMPRESSED_PERF_MODE_FLAG 0x0002
+
 /* Codecs are listed linearly to allow for extensibility */
 #define SND_AUDIOCODEC_PCM                   ((__u32) 0x00000001)
 #define SND_AUDIOCODEC_MP3                   ((__u32) 0x00000002)
@@ -89,24 +96,27 @@
 #define SND_AUDIOCODEC_IEC61937              ((__u32) 0x0000000B)
 #define SND_AUDIOCODEC_G723_1                ((__u32) 0x0000000C)
 #define SND_AUDIOCODEC_G729                  ((__u32) 0x0000000D)
-#define SND_AUDIOCODEC_DTS_PASS_THROUGH      ((__u32) 0x0000000E)
-#define SND_AUDIOCODEC_DTS_LBR               ((__u32) 0x0000000F)
-#define SND_AUDIOCODEC_DTS_TRANSCODE_LOOPBACK ((__u32) 0x00000010)
-#define SND_AUDIOCODEC_PASS_THROUGH          ((__u32) 0x00000011)
-#define SND_AUDIOCODEC_MP2                   ((__u32) 0x00000012)
-#define SND_AUDIOCODEC_DTS_LBR_PASS_THROUGH  ((__u32) 0x00000013)
-#define SND_AUDIOCODEC_AC3                   ((__u32) 0x00000014)
-#define SND_AUDIOCODEC_AC3_PASS_THROUGH      ((__u32) 0x00000015)
-#define SND_AUDIOCODEC_WMA_PRO               ((__u32) 0x00000016)
-#define SND_AUDIOCODEC_DTS             	     ((__u32) 0x00000017)
-#define SND_AUDIOCODEC_EAC3                  ((__u32) 0x00000018)
-#define SND_AUDIOCODEC_ALAC                  ((__u32) 0x00000019)
-#define SND_AUDIOCODEC_APE                   ((__u32) 0x00000020)
-#define SND_AUDIOCODEC_DSD                   ((__u32) 0x00000021)
-#define SND_AUDIOCODEC_APTX                  ((__u32) 0x00000022)
-#define SND_AUDIOCODEC_TRUEHD                ((__u32) 0x00000023)
-#define SND_AUDIOCODEC_APTXHD                ((__u32) 0x00000024)
-#define SND_AUDIOCODEC_MAX                   SND_AUDIOCODEC_APTXHD
+#define SND_AUDIOCODEC_BESPOKE               ((__u32) 0x0000000E)
+#define SND_AUDIOCODEC_DTS_PASS_THROUGH      ((__u32) 0x0000000F)
+#define SND_AUDIOCODEC_DTS_LBR               ((__u32) 0x00000010)
+#define SND_AUDIOCODEC_DTS_TRANSCODE_LOOPBACK ((__u32) 0x00000011)
+#define SND_AUDIOCODEC_PASS_THROUGH          ((__u32) 0x00000012)
+#define SND_AUDIOCODEC_MP2                   ((__u32) 0x00000013)
+#define SND_AUDIOCODEC_DTS_LBR_PASS_THROUGH  ((__u32) 0x00000014)
+#define SND_AUDIOCODEC_AC3                   ((__u32) 0x00000015)
+#define SND_AUDIOCODEC_AC3_PASS_THROUGH      ((__u32) 0x00000016)
+#define SND_AUDIOCODEC_WMA_PRO               ((__u32) 0x00000017)
+#define SND_AUDIOCODEC_DTS                   ((__u32) 0x00000018)
+#define SND_AUDIOCODEC_EAC3                  ((__u32) 0x00000019)
+#define SND_AUDIOCODEC_ALAC                  ((__u32) 0x00000020)
+#define SND_AUDIOCODEC_APE                   ((__u32) 0x00000021)
+#define SND_AUDIOCODEC_DSD                   ((__u32) 0x00000022)
+#define SND_AUDIOCODEC_APTX                  ((__u32) 0x00000023)
+#define SND_AUDIOCODEC_TRUEHD                ((__u32) 0x00000024)
+#define SND_AUDIOCODEC_MAT                   ((__u32) 0x00000025)
+#define SND_AUDIOCODEC_THD                   ((__u32) 0x00000026)
+#define SND_AUDIOCODEC_MAX                   SND_AUDIOCODEC_THD
+
 /*
  * Profile and modes are listed with bit masks. This allows for a
  * more compact representation of fields that will not evolve
@@ -279,6 +289,7 @@ struct snd_enc_wma {
 	__u32 avg_bit_rate;
 };
 
+#define SND_ENC_WMA_EXTENTED_SUPPORT
 
 /**
  * struct snd_enc_vorbis
@@ -350,13 +361,14 @@ struct snd_enc_flac {
 
 struct snd_enc_generic {
 	__u32 bw;	/* encoder bandwidth */
-	__s32 reserved[15];
+	__s32 reserved[15];	/* Can be used for SND_AUDIOCODEC_BESPOKE */
 } __attribute__((packed, aligned(4)));
 
-struct snd_dec_ddp {
+#define SND_DEC_THD_MAX_PARAMS 8
+struct snd_dec_thd {
 	__u32 params_length;
-	__u32 params_id[SND_DEC_DDP_MAX_PARAMS];
-	__u32 params_value[SND_DEC_DDP_MAX_PARAMS];
+	__u32 params_id[SND_DEC_THD_MAX_PARAMS];
+	__u32 params_value[SND_DEC_THD_MAX_PARAMS];
 } __attribute__((packed, aligned(4)));
 
 struct snd_dec_flac {
@@ -366,6 +378,8 @@ struct snd_dec_flac {
 	__u16 min_frame_size;
 	__u16 max_frame_size;
 } __attribute__((packed, aligned(4)));
+
+#define SND_DEC_FLAC_SUPPORTED
 
 struct snd_dec_vorbis {
 	__u32 bit_stream_fmt;
@@ -405,18 +419,40 @@ struct snd_dec_aptx {
 	__u32 nap;
 };
 
+/** struct snd_dec_dsd - codec for DSD format
+ * @blk_size - dsd channel block size
+ */
+struct snd_dec_dsd {
+	__u32 blk_size;
+};
+
+/** struct snd_dec_pcm - codec options for PCM format
+ * @num_channels: Number of channels
+ * @ch_map: Channel map for the above corresponding channels
+ */
+struct snd_dec_pcm {
+	__u32 num_channels;
+	__u8 ch_map[MAX_PCM_DECODE_CHANNELS];
+} __attribute__((packed, aligned(4)));
+
+struct snd_dec_amrwb_plus {
+	__u32 bit_stream_fmt;
+};
 union snd_codec_options {
 	struct snd_enc_wma wma;
 	struct snd_enc_vorbis vorbis;
 	struct snd_enc_real real;
 	struct snd_enc_flac flac;
 	struct snd_enc_generic generic;
-	struct snd_dec_ddp ddp;
 	struct snd_dec_flac flac_dec;
 	struct snd_dec_vorbis vorbis_dec;
 	struct snd_dec_alac alac;
 	struct snd_dec_ape ape;
 	struct snd_dec_aptx aptx_dec;
+	struct snd_dec_thd truehd;
+	struct snd_dec_pcm pcm_dec;
+	struct snd_dec_amrwb_plus amrwbplus;
+	struct snd_dec_dsd dsd_dec;
 };
 
 /** struct snd_codec_desc - description of codec capabilities
@@ -478,6 +514,7 @@ struct snd_codec_desc {
  * @align: Block alignment in bytes of an audio sample.
  *		Only required for PCM or IEC formats.
  * @options: encoder-specific settings
+ * @compr_passthr: compressed bitstream passthrough
  * @reserved: reserved for future use
  */
 
@@ -495,10 +532,12 @@ struct snd_codec {
 	__u32 align;
 	__u32 compr_passthr;
 	union snd_codec_options options;
+	__u32 compr_passthr;
 	__u32 flags;
-	__u32 reserved[2];
+	__u32 reserved[1];
 } __attribute__((packed, aligned(4)));
 
+#define SND_CODEC_COMPRESS_PASSTHROUGH
 
 /** struct snd_codec_metadata
  * @length: Length of the encoded buffer.

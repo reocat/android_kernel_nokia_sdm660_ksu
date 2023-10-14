@@ -1,14 +1,5 @@
-/* Copyright (c) 2015-2016, 2018 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2015-2016, 2018, 2020, The Linux Foundation. All rights reserved. */
 
 #include "mdss_dsi_phy.h"
 
@@ -206,7 +197,7 @@ static int calc_clk_prepare(struct dsi_phy_t_clk_param *clk_params,
 	div_s64_rem(temp_multiple, clk_params->bitclk_mbps, &frac);
 	clk_prep_actual = div_s64((intermediate + frac), multiplier);
 
-	pr_debug("CLK_PREPARE:mipi_min=%d, mipi_max=%d, rec_min=%d, rec_max=%d",
+	pr_debug("CLK_PREPARE:mipi_min=%d, mipi_max=%d, rec_min=%d, rec_max=%d\n",
 		 t->mipi_min, t->mipi_max, t->rec_min, t->rec_max);
 	pr_debug(" program_value=%d, actual=%lld\n",
 		 t->program_value, clk_prep_actual);

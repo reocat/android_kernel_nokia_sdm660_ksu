@@ -1,13 +1,6 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2016-2018,2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"io-pgtable-msm-secure: " fmt
@@ -19,10 +12,13 @@
 #include <linux/slab.h>
 #include <linux/types.h>
 #include <soc/qcom/scm.h>
+#include <linux/dma-mapping.h>
 #include <asm/cacheflush.h>
 
-#include "io-pgtable.h"
+#include <linux/io-pgtable.h>
 
+#define IOMMU_SECURE_PTBL_SIZE  3
+#define IOMMU_SECURE_PTBL_INIT  4
 #define IOMMU_SECURE_MAP2_FLAT 0x12
 #define IOMMU_SECURE_UNMAP2_FLAT 0x13
 #define IOMMU_TLBINVAL_FLAG 0x00000001
@@ -38,12 +34,120 @@
 
 struct msm_secure_io_pgtable {
 	struct io_pgtable iop;
+	/* lock required while operating on page tables */
+	struct mutex pgtbl_lock;
 };
+
+int msm_iommu_sec_pgtbl_init(void)
+{
+	int psize[2] = {0, 0};
+	unsigned int spare = 0;
+	int ret, ptbl_ret = 0;
+	struct device dev = {0};
+	void *cpu_addr;
+	dma_addr_t paddr;
+	unsigned long attrs = 0;
+
+	if (is_scm_armv8()) {
+		struct scm_desc desc = {0};
+
+		desc.args[0] = spare;
+		desc.arginfo = SCM_ARGS(1);
+		ret = scm_call2(SCM_SIP_FNID(SCM_SVC_MP,
+				IOMMU_SECURE_PTBL_SIZE), &desc);
+		psize[0] = desc.ret[0];
+		psize[1] = desc.ret[1];
+		if (ret || psize[1]) {
+			pr_err("scm call IOMMU_SECURE_PTBL_SIZE failed\n");
+			return ret;
+		}
+	}
+
+	/* Now allocate memory for the secure page tables */
+	attrs = DMA_ATTR_NO_KERNEL_MAPPING;
+	dev.coherent_dma_mask = DMA_BIT_MASK(sizeof(dma_addr_t) * 8);
+	arch_setup_dma_ops(&dev, 0, 0, NULL, 0);
+	cpu_addr = dma_alloc_attrs(&dev, psize[0], &paddr, GFP_KERNEL, attrs);
+	if (!cpu_addr) {
+		pr_err("%s: Failed to allocate %d bytes for PTBL\n",
+				__func__, psize[0]);
+		return -ENOMEM;
+	}
+
+	if (is_scm_armv8()) {
+		struct scm_desc desc = {0};
+
+		desc.args[0] = paddr;
+		desc.args[1] = psize[0];
+		desc.args[2] = 0;
+		desc.arginfo = SCM_ARGS(3, SCM_RW, SCM_VAL, SCM_VAL);
+
+		ret = scm_call2(SCM_SIP_FNID(SCM_SVC_MP,
+				IOMMU_SECURE_PTBL_INIT), &desc);
+		ptbl_ret = desc.ret[0];
+
+		if (ret) {
+			pr_err("scm call IOMMU_SECURE_PTBL_INIT failed\n");
+			return ret;
+		}
+
+		if (ptbl_ret) {
+			pr_err("scm call IOMMU_SECURE_PTBL_INIT extended ret fail\n");
+			return ret;
+		}
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(msm_iommu_sec_pgtbl_init);
 
 static int msm_secure_map(struct io_pgtable_ops *ops, unsigned long iova,
 			phys_addr_t paddr, size_t size, int iommu_prot)
 {
-	return -EINVAL;
+	struct msm_secure_io_pgtable *data = io_pgtable_ops_to_data(ops);
+	struct io_pgtable_cfg *cfg = &data->iop.cfg;
+	void *flush_va, *flush_va_end;
+	struct scm_desc desc = {0};
+	int ret = -EINVAL;
+	u32 resp;
+
+	if (!IS_ALIGNED(iova, SZ_1M) || !IS_ALIGNED(paddr, SZ_1M) ||
+			!IS_ALIGNED(size, SZ_1M))
+		return -EINVAL;
+
+	desc.args[0] = virt_to_phys(&paddr);
+	desc.args[1] = 1;
+	desc.args[2] = size;
+	desc.args[3] = cfg->arm_msm_secure_cfg.sec_id;
+	desc.args[4] = cfg->arm_msm_secure_cfg.cbndx;
+	desc.args[5] = iova;
+	desc.args[6] = size;
+	desc.args[7] = 0;
+
+	flush_va = &paddr;
+	flush_va_end = (void *)
+		(((unsigned long) flush_va) + sizeof(phys_addr_t));
+
+	mutex_lock(&data->pgtbl_lock);
+	/*
+	 * Ensure that the buffer is in RAM by the time it gets to TZ
+	 */
+	dmac_clean_range(flush_va, flush_va_end);
+
+	desc.arginfo = SCM_ARGS(8, SCM_RW, SCM_VAL, SCM_VAL, SCM_VAL, SCM_VAL,
+				SCM_VAL, SCM_VAL, SCM_VAL);
+
+	if (is_scm_armv8()) {
+		ret = scm_call2(SCM_SIP_FNID(SCM_SVC_MP,
+				IOMMU_SECURE_MAP2_FLAT), &desc);
+		resp = desc.ret[0];
+	}
+	mutex_unlock(&data->pgtbl_lock);
+
+	if (ret || resp)
+		return -EINVAL;
+
+	return 0;
 }
 
 static dma_addr_t msm_secure_get_phys_addr(struct scatterlist *sg)
@@ -151,18 +255,21 @@ static int msm_secure_map_sg(struct io_pgtable_ops *ops, unsigned long iova,
 
 	flush_va_end = (void *) (((unsigned long) flush_va) +
 			(cnt * sizeof(*pa_list)));
+
+	mutex_lock(&data->pgtbl_lock);
 	dmac_clean_range(flush_va, flush_va_end);
 
 	if (is_scm_armv8()) {
 		ret = scm_call2(SCM_SIP_FNID(SCM_SVC_MP,
-					 IOMMU_SECURE_MAP2_FLAT), &desc);
+				IOMMU_SECURE_MAP2_FLAT), &desc);
 		resp = desc.ret[0];
 
 		if (ret || resp)
 			ret = -EINVAL;
 		else
 			ret = len;
-	 }
+	}
+	mutex_unlock(&data->pgtbl_lock);
 
 	kfree(pa_list);
 	return ret;
@@ -186,13 +293,15 @@ static size_t msm_secure_unmap(struct io_pgtable_ops *ops, unsigned long iova,
 	desc.args[4] = IOMMU_TLBINVAL_FLAG;
 	desc.arginfo = SCM_ARGS(5);
 
+	mutex_lock(&data->pgtbl_lock);
 	if (is_scm_armv8()) {
 		ret = scm_call2(SCM_SIP_FNID(SCM_SVC_MP,
-			IOMMU_SECURE_UNMAP2_FLAT), &desc);
+				IOMMU_SECURE_UNMAP2_FLAT), &desc);
 
 		if (!ret)
 			ret = len;
 	}
+	mutex_unlock(&data->pgtbl_lock);
 	return ret;
 }
 
@@ -217,6 +326,7 @@ msm_secure_alloc_pgtable_data(struct io_pgtable_cfg *cfg)
 		.unmap		= msm_secure_unmap,
 		.iova_to_phys	= msm_secure_iova_to_phys,
 	};
+	mutex_init(&data->pgtbl_lock);
 
 	return data;
 }

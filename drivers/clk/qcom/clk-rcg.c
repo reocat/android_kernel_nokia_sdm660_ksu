@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013, 2019, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -422,6 +422,8 @@ static int _freq_tbl_determine_rate(struct clk_hw *hw, const struct freq_tbl *f,
 
 	clk_flags = clk_hw_get_flags(hw);
 	p = clk_hw_get_parent_by_index(hw, index);
+	if (!p)
+		return -EINVAL;
 	if (clk_flags & CLK_SET_RATE_PARENT) {
 		rate = rate * f->pre_div;
 		if (f->n) {
@@ -473,6 +475,8 @@ static int clk_rcg_bypass_determine_rate(struct clk_hw *hw,
 	int index = qcom_find_src_index(hw, rcg->s.parent_map, f->src);
 
 	req->best_parent_hw = p = clk_hw_get_parent_by_index(hw, index);
+	if (!p)
+		return -EINVAL;
 	req->best_parent_rate = clk_hw_round_rate(p, req->rate);
 	req->rate = req->best_parent_rate;
 
@@ -638,7 +642,6 @@ static int clk_rcg_pixel_set_rate(struct clk_hw *hw, unsigned long rate,
 		return ret;
 
 	src = ns_to_src(&rcg->s, ns);
-	f.pre_div = ns_to_pre_div(&rcg->p, ns) + 1;
 
 	for (i = 0; i < num_parents; i++) {
 		if (src == rcg->s.parent_map[i].cfg) {
@@ -646,6 +649,9 @@ static int clk_rcg_pixel_set_rate(struct clk_hw *hw, unsigned long rate,
 			break;
 		}
 	}
+
+	/* bypass the pre divider */
+	f.pre_div = 1;
 
 	/* let us find appropriate m/n values for this */
 	for (; frac->num; frac++) {

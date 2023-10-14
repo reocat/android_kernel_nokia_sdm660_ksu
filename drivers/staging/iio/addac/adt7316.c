@@ -246,7 +246,6 @@ static ssize_t _adt7316_store_enabled(struct adt7316_chip_info *chip,
 	chip->config1 = config1;
 
 	return ret;
-
 }
 
 static ssize_t adt7316_store_enabled(struct device *dev,
@@ -269,7 +268,7 @@ static ssize_t adt7316_store_enabled(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(enabled, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(enabled, 0644,
 		adt7316_show_enabled,
 		adt7316_store_enabled,
 		0);
@@ -313,7 +312,7 @@ static ssize_t adt7316_store_select_ex_temp(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(select_ex_temp, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(select_ex_temp, 0644,
 		adt7316_show_select_ex_temp,
 		adt7316_store_select_ex_temp,
 		0);
@@ -354,7 +353,7 @@ static ssize_t adt7316_store_mode(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(mode, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(mode, 0644,
 		adt7316_show_mode,
 		adt7316_store_mode,
 		0);
@@ -366,7 +365,7 @@ static ssize_t adt7316_show_all_modes(struct device *dev,
 	return sprintf(buf, "single_channel\nround_robin\n");
 }
 
-static IIO_DEVICE_ATTR(all_modes, S_IRUGO, adt7316_show_all_modes, NULL, 0);
+static IIO_DEVICE_ATTR(all_modes, 0444, adt7316_show_all_modes, NULL, 0);
 
 static ssize_t adt7316_show_ad_channel(struct device *dev,
 		struct device_attribute *attr,
@@ -436,7 +435,6 @@ static ssize_t adt7316_store_ad_channel(struct device *dev,
 		config2 = chip->config2 & (~ADT7316_AD_SINGLE_CH_MASK);
 	}
 
-
 	config2 |= data;
 
 	ret = chip->bus.write(chip->bus.client, ADT7316_CONFIG2, config2);
@@ -448,7 +446,7 @@ static ssize_t adt7316_store_ad_channel(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(ad_channel, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(ad_channel, 0644,
 		adt7316_show_ad_channel,
 		adt7316_store_ad_channel,
 		0);
@@ -467,12 +465,11 @@ static ssize_t adt7316_show_all_ad_channels(struct device *dev,
 		return sprintf(buf, "0 - VDD\n1 - Internal Temperature\n"
 				"2 - External Temperature or AIN1\n"
 				"3 - AIN2\n4 - AIN3\n5 - AIN4\n");
-	else
-		return sprintf(buf, "0 - VDD\n1 - Internal Temperature\n"
-				"2 - External Temperature\n");
+	return sprintf(buf, "0 - VDD\n1 - Internal Temperature\n"
+			"2 - External Temperature\n");
 }
 
-static IIO_DEVICE_ATTR(all_ad_channels, S_IRUGO,
+static IIO_DEVICE_ATTR(all_ad_channels, 0444,
 		adt7316_show_all_ad_channels, NULL, 0);
 
 static ssize_t adt7316_show_disable_averaging(struct device *dev,
@@ -509,7 +506,7 @@ static ssize_t adt7316_store_disable_averaging(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(disable_averaging, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(disable_averaging, 0644,
 		adt7316_show_disable_averaging,
 		adt7316_store_disable_averaging,
 		0);
@@ -548,7 +545,7 @@ static ssize_t adt7316_store_enable_smbus_timeout(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(enable_smbus_timeout, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(enable_smbus_timeout, 0644,
 		adt7316_show_enable_smbus_timeout,
 		adt7316_store_enable_smbus_timeout,
 		0);
@@ -586,7 +583,7 @@ static ssize_t adt7316_store_powerdown(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(powerdown, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(powerdown, 0644,
 		adt7316_show_powerdown,
 		adt7316_store_powerdown,
 		0);
@@ -624,7 +621,7 @@ static ssize_t adt7316_store_fast_ad_clock(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(fast_ad_clock, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(fast_ad_clock, 0644,
 		adt7316_show_fast_ad_clock,
 		adt7316_store_fast_ad_clock,
 		0);
@@ -639,7 +636,7 @@ static ssize_t adt7316_show_da_high_resolution(struct device *dev,
 	if (chip->config3 & ADT7316_DA_HIGH_RESOLUTION) {
 		if (chip->id == ID_ADT7316 || chip->id == ID_ADT7516)
 			return sprintf(buf, "1 (12 bits)\n");
-		else if (chip->id == ID_ADT7317 || chip->id == ID_ADT7517)
+		if (chip->id == ID_ADT7317 || chip->id == ID_ADT7517)
 			return sprintf(buf, "1 (10 bits)\n");
 	}
 
@@ -664,8 +661,9 @@ static ssize_t adt7316_store_da_high_resolution(struct device *dev,
 			chip->dac_bits = 12;
 		else if (chip->id == ID_ADT7317 || chip->id == ID_ADT7517)
 			chip->dac_bits = 10;
-	} else
+	} else {
 		config3 = chip->config3 & (~ADT7316_DA_HIGH_RESOLUTION);
+	}
 
 	ret = chip->bus.write(chip->bus.client, ADT7316_CONFIG3, config3);
 	if (ret)
@@ -676,7 +674,7 @@ static ssize_t adt7316_store_da_high_resolution(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(da_high_resolution, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(da_high_resolution, 0644,
 		adt7316_show_da_high_resolution,
 		adt7316_store_da_high_resolution,
 		0);
@@ -722,11 +720,10 @@ static ssize_t adt7316_store_AIN_internal_Vref(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(AIN_internal_Vref, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(AIN_internal_Vref, 0644,
 		adt7316_show_AIN_internal_Vref,
 		adt7316_store_AIN_internal_Vref,
 		0);
-
 
 static ssize_t adt7316_show_enable_prop_DACA(struct device *dev,
 		struct device_attribute *attr,
@@ -762,7 +759,7 @@ static ssize_t adt7316_store_enable_prop_DACA(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(enable_proportion_DACA, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(enable_proportion_DACA, 0644,
 		adt7316_show_enable_prop_DACA,
 		adt7316_store_enable_prop_DACA,
 		0);
@@ -801,7 +798,7 @@ static ssize_t adt7316_store_enable_prop_DACB(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(enable_proportion_DACB, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(enable_proportion_DACB, 0644,
 		adt7316_show_enable_prop_DACB,
 		adt7316_store_enable_prop_DACB,
 		0);
@@ -844,7 +841,7 @@ static ssize_t adt7316_store_DAC_2Vref_ch_mask(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(DAC_2Vref_channels_mask, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(DAC_2Vref_channels_mask, 0644,
 		adt7316_show_DAC_2Vref_ch_mask,
 		adt7316_store_DAC_2Vref_ch_mask,
 		0);
@@ -904,7 +901,7 @@ static ssize_t adt7316_store_DAC_update_mode(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(DAC_update_mode, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(DAC_update_mode, 0644,
 		adt7316_show_DAC_update_mode,
 		adt7316_store_DAC_update_mode,
 		0);
@@ -921,13 +918,11 @@ static ssize_t adt7316_show_all_DAC_update_modes(struct device *dev,
 				"1 - auto at MSB DAC AB and CD writing\n"
 				"2 - auto at MSB DAC ABCD writing\n"
 				"3 - manual\n");
-	else
-		return sprintf(buf, "manual\n");
+	return sprintf(buf, "manual\n");
 }
 
-static IIO_DEVICE_ATTR(all_DAC_update_modes, S_IRUGO,
+static IIO_DEVICE_ATTR(all_DAC_update_modes, 0444,
 		adt7316_show_all_DAC_update_modes, NULL, 0);
-
 
 static ssize_t adt7316_store_update_DAC(struct device *dev,
 		struct device_attribute *attr,
@@ -964,7 +959,7 @@ static ssize_t adt7316_store_update_DAC(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(update_DAC, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(update_DAC, 0644,
 		NULL,
 		adt7316_store_update_DAC,
 		0);
@@ -1009,7 +1004,7 @@ static ssize_t adt7316_store_DA_AB_Vref_bypass(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(DA_AB_Vref_bypass, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(DA_AB_Vref_bypass, 0644,
 		adt7316_show_DA_AB_Vref_bypass,
 		adt7316_store_DA_AB_Vref_bypass,
 		0);
@@ -1054,7 +1049,7 @@ static ssize_t adt7316_store_DA_CD_Vref_bypass(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(DA_CD_Vref_bypass, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(DA_CD_Vref_bypass, 0644,
 		adt7316_show_DA_CD_Vref_bypass,
 		adt7316_store_DA_CD_Vref_bypass,
 		0);
@@ -1070,9 +1065,8 @@ static ssize_t adt7316_show_DAC_internal_Vref(struct device *dev,
 		return sprintf(buf, "0x%x\n",
 			(chip->dac_config & ADT7516_DAC_IN_VREF_MASK) >>
 			ADT7516_DAC_IN_VREF_OFFSET);
-	else
-		return sprintf(buf, "%d\n",
-			!!(chip->dac_config & ADT7316_DAC_IN_VREF));
+	return sprintf(buf, "%d\n",
+		       !!(chip->dac_config & ADT7316_DAC_IN_VREF));
 }
 
 static ssize_t adt7316_store_DAC_internal_Vref(struct device *dev,
@@ -1116,7 +1110,7 @@ static ssize_t adt7316_store_DAC_internal_Vref(struct device *dev,
 	return len;
 }
 
-static IIO_DEVICE_ATTR(DAC_internal_Vref, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(DAC_internal_Vref, 0644,
 		adt7316_show_DAC_internal_Vref,
 		adt7316_store_DAC_internal_Vref,
 		0);
@@ -1205,7 +1199,7 @@ static ssize_t adt7316_show_VDD(struct device *dev,
 
 	return adt7316_show_ad(chip, ADT7316_AD_SINGLE_CH_VDD, buf);
 }
-static IIO_DEVICE_ATTR(VDD, S_IRUGO, adt7316_show_VDD, NULL, 0);
+static IIO_DEVICE_ATTR(VDD, 0444, adt7316_show_VDD, NULL, 0);
 
 static ssize_t adt7316_show_in_temp(struct device *dev,
 		struct device_attribute *attr,
@@ -1217,7 +1211,7 @@ static ssize_t adt7316_show_in_temp(struct device *dev,
 	return adt7316_show_ad(chip, ADT7316_AD_SINGLE_CH_IN, buf);
 }
 
-static IIO_DEVICE_ATTR(in_temp, S_IRUGO, adt7316_show_in_temp, NULL, 0);
+static IIO_DEVICE_ATTR(in_temp, 0444, adt7316_show_in_temp, NULL, 0);
 
 static ssize_t adt7316_show_ex_temp_AIN1(struct device *dev,
 		struct device_attribute *attr,
@@ -1229,9 +1223,9 @@ static ssize_t adt7316_show_ex_temp_AIN1(struct device *dev,
 	return adt7316_show_ad(chip, ADT7316_AD_SINGLE_CH_EX, buf);
 }
 
-static IIO_DEVICE_ATTR(ex_temp_AIN1, S_IRUGO, adt7316_show_ex_temp_AIN1,
+static IIO_DEVICE_ATTR(ex_temp_AIN1, 0444, adt7316_show_ex_temp_AIN1,
 		NULL, 0);
-static IIO_DEVICE_ATTR(ex_temp, S_IRUGO, adt7316_show_ex_temp_AIN1, NULL, 0);
+static IIO_DEVICE_ATTR(ex_temp, 0444, adt7316_show_ex_temp_AIN1, NULL, 0);
 
 static ssize_t adt7316_show_AIN2(struct device *dev,
 		struct device_attribute *attr,
@@ -1242,7 +1236,7 @@ static ssize_t adt7316_show_AIN2(struct device *dev,
 
 	return adt7316_show_ad(chip, ADT7516_AD_SINGLE_CH_AIN2, buf);
 }
-static IIO_DEVICE_ATTR(AIN2, S_IRUGO, adt7316_show_AIN2, NULL, 0);
+static IIO_DEVICE_ATTR(AIN2, 0444, adt7316_show_AIN2, NULL, 0);
 
 static ssize_t adt7316_show_AIN3(struct device *dev,
 		struct device_attribute *attr,
@@ -1253,7 +1247,7 @@ static ssize_t adt7316_show_AIN3(struct device *dev,
 
 	return adt7316_show_ad(chip, ADT7516_AD_SINGLE_CH_AIN3, buf);
 }
-static IIO_DEVICE_ATTR(AIN3, S_IRUGO, adt7316_show_AIN3, NULL, 0);
+static IIO_DEVICE_ATTR(AIN3, 0444, adt7316_show_AIN3, NULL, 0);
 
 static ssize_t adt7316_show_AIN4(struct device *dev,
 		struct device_attribute *attr,
@@ -1264,7 +1258,7 @@ static ssize_t adt7316_show_AIN4(struct device *dev,
 
 	return adt7316_show_ad(chip, ADT7516_AD_SINGLE_CH_AIN4, buf);
 }
-static IIO_DEVICE_ATTR(AIN4, S_IRUGO, adt7316_show_AIN4, NULL, 0);
+static IIO_DEVICE_ATTR(AIN4, 0444, adt7316_show_AIN4, NULL, 0);
 
 static ssize_t adt7316_show_temp_offset(struct adt7316_chip_info *chip,
 		int offset_addr, char *buf)
@@ -1329,7 +1323,7 @@ static ssize_t adt7316_store_in_temp_offset(struct device *dev,
 			len);
 }
 
-static IIO_DEVICE_ATTR(in_temp_offset, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_temp_offset, 0644,
 		adt7316_show_in_temp_offset,
 		adt7316_store_in_temp_offset, 0);
 
@@ -1355,7 +1349,7 @@ static ssize_t adt7316_store_ex_temp_offset(struct device *dev,
 			len);
 }
 
-static IIO_DEVICE_ATTR(ex_temp_offset, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(ex_temp_offset, 0644,
 		adt7316_show_ex_temp_offset,
 		adt7316_store_ex_temp_offset, 0);
 
@@ -1382,7 +1376,7 @@ static ssize_t adt7316_store_in_analog_temp_offset(struct device *dev,
 			ADT7316_IN_ANALOG_TEMP_OFFSET, buf, len);
 }
 
-static IIO_DEVICE_ATTR(in_analog_temp_offset, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(in_analog_temp_offset, 0644,
 		adt7316_show_in_analog_temp_offset,
 		adt7316_store_in_analog_temp_offset, 0);
 
@@ -1409,7 +1403,7 @@ static ssize_t adt7316_store_ex_analog_temp_offset(struct device *dev,
 			ADT7316_EX_ANALOG_TEMP_OFFSET, buf, len);
 }
 
-static IIO_DEVICE_ATTR(ex_analog_temp_offset, S_IRUGO | S_IWUSR,
+static IIO_DEVICE_ATTR(ex_analog_temp_offset, 0644,
 		adt7316_show_ex_analog_temp_offset,
 		adt7316_store_ex_analog_temp_offset, 0);
 
@@ -1512,7 +1506,7 @@ static ssize_t adt7316_store_DAC_A(struct device *dev,
 	return adt7316_store_DAC(chip, 0, buf, len);
 }
 
-static IIO_DEVICE_ATTR(DAC_A, S_IRUGO | S_IWUSR, adt7316_show_DAC_A,
+static IIO_DEVICE_ATTR(DAC_A, 0644, adt7316_show_DAC_A,
 		adt7316_store_DAC_A, 0);
 
 static ssize_t adt7316_show_DAC_B(struct device *dev,
@@ -1536,7 +1530,7 @@ static ssize_t adt7316_store_DAC_B(struct device *dev,
 	return adt7316_store_DAC(chip, 1, buf, len);
 }
 
-static IIO_DEVICE_ATTR(DAC_B, S_IRUGO | S_IWUSR, adt7316_show_DAC_B,
+static IIO_DEVICE_ATTR(DAC_B, 0644, adt7316_show_DAC_B,
 		adt7316_store_DAC_B, 0);
 
 static ssize_t adt7316_show_DAC_C(struct device *dev,
@@ -1560,7 +1554,7 @@ static ssize_t adt7316_store_DAC_C(struct device *dev,
 	return adt7316_store_DAC(chip, 2, buf, len);
 }
 
-static IIO_DEVICE_ATTR(DAC_C, S_IRUGO | S_IWUSR, adt7316_show_DAC_C,
+static IIO_DEVICE_ATTR(DAC_C, 0644, adt7316_show_DAC_C,
 		adt7316_store_DAC_C, 0);
 
 static ssize_t adt7316_show_DAC_D(struct device *dev,
@@ -1584,7 +1578,7 @@ static ssize_t adt7316_store_DAC_D(struct device *dev,
 	return adt7316_store_DAC(chip, 3, buf, len);
 }
 
-static IIO_DEVICE_ATTR(DAC_D, S_IRUGO | S_IWUSR, adt7316_show_DAC_D,
+static IIO_DEVICE_ATTR(DAC_D, 0644, adt7316_show_DAC_D,
 		adt7316_store_DAC_D, 0);
 
 static ssize_t adt7316_show_device_id(struct device *dev,
@@ -1603,7 +1597,7 @@ static ssize_t adt7316_show_device_id(struct device *dev,
 	return sprintf(buf, "%d\n", id);
 }
 
-static IIO_DEVICE_ATTR(device_id, S_IRUGO, adt7316_show_device_id, NULL, 0);
+static IIO_DEVICE_ATTR(device_id, 0444, adt7316_show_device_id, NULL, 0);
 
 static ssize_t adt7316_show_manufactorer_id(struct device *dev,
 		struct device_attribute *attr,
@@ -1621,7 +1615,7 @@ static ssize_t adt7316_show_manufactorer_id(struct device *dev,
 	return sprintf(buf, "%d\n", id);
 }
 
-static IIO_DEVICE_ATTR(manufactorer_id, S_IRUGO,
+static IIO_DEVICE_ATTR(manufactorer_id, 0444,
 		adt7316_show_manufactorer_id, NULL, 0);
 
 static ssize_t adt7316_show_device_rev(struct device *dev,
@@ -1640,7 +1634,7 @@ static ssize_t adt7316_show_device_rev(struct device *dev,
 	return sprintf(buf, "%d\n", rev);
 }
 
-static IIO_DEVICE_ATTR(device_rev, S_IRUGO, adt7316_show_device_rev, NULL, 0);
+static IIO_DEVICE_ATTR(device_rev, 0444, adt7316_show_device_rev, NULL, 0);
 
 static ssize_t adt7316_show_bus_type(struct device *dev,
 		struct device_attribute *attr,
@@ -1661,7 +1655,7 @@ static ssize_t adt7316_show_bus_type(struct device *dev,
 	return sprintf(buf, "i2c\n");
 }
 
-static IIO_DEVICE_ATTR(bus_type, S_IRUGO, adt7316_show_bus_type, NULL, 0);
+static IIO_DEVICE_ATTR(bus_type, 0444, adt7316_show_bus_type, NULL, 0);
 
 static struct attribute *adt7316_attributes[] = {
 	&iio_dev_attr_all_modes.dev_attr.attr,
@@ -1765,7 +1759,7 @@ static irqreturn_t adt7316_event_handler(int irq, void *private)
 		if ((chip->id & ID_FAMILY_MASK) != ID_ADT75XX)
 			stat1 &= 0x1F;
 
-		time = iio_get_time_ns();
+		time = iio_get_time_ns(indio_dev);
 		if (stat1 & BIT(0))
 			iio_push_event(indio_dev,
 				       IIO_UNMOD_EVENT_CODE(IIO_TEMP, 0,
@@ -1817,7 +1811,7 @@ static irqreturn_t adt7316_event_handler(int irq, void *private)
 							    0,
 							    IIO_EV_TYPE_THRESH,
 							    IIO_EV_DIR_RISING),
-				       iio_get_time_ns());
+				       iio_get_time_ns(indio_dev));
 	}
 
 	return IRQ_HANDLED;
@@ -1879,6 +1873,7 @@ static ssize_t adt7316_set_int_mask(struct device *dev,
 
 	return len;
 }
+
 static inline ssize_t adt7316_show_ad_bound(struct device *dev,
 		struct device_attribute *attr,
 		char *buf)
@@ -1984,61 +1979,61 @@ static ssize_t adt7316_set_int_enabled(struct device *dev,
 }
 
 static IIO_DEVICE_ATTR(int_mask,
-		       S_IRUGO | S_IWUSR,
+		       0644,
 		       adt7316_show_int_mask, adt7316_set_int_mask,
 		       0);
 static IIO_DEVICE_ATTR(in_temp_high_value,
-		       S_IRUGO | S_IWUSR,
+		       0644,
 		       adt7316_show_ad_bound, adt7316_set_ad_bound,
 		       ADT7316_IN_TEMP_HIGH);
 static IIO_DEVICE_ATTR(in_temp_low_value,
-		       S_IRUGO | S_IWUSR,
+		       0644,
 		       adt7316_show_ad_bound, adt7316_set_ad_bound,
 		       ADT7316_IN_TEMP_LOW);
 static IIO_DEVICE_ATTR(ex_temp_high_value,
-		       S_IRUGO | S_IWUSR,
+		       0644,
 		       adt7316_show_ad_bound, adt7316_set_ad_bound,
 		       ADT7316_EX_TEMP_HIGH);
 static IIO_DEVICE_ATTR(ex_temp_low_value,
-		       S_IRUGO | S_IWUSR,
+		       0644,
 		       adt7316_show_ad_bound, adt7316_set_ad_bound,
 		       ADT7316_EX_TEMP_LOW);
 
 /* NASTY duplication to be fixed */
 static IIO_DEVICE_ATTR(ex_temp_ain1_high_value,
-		       S_IRUGO | S_IWUSR,
+		       0644,
 		       adt7316_show_ad_bound, adt7316_set_ad_bound,
 		       ADT7316_EX_TEMP_HIGH);
 static IIO_DEVICE_ATTR(ex_temp_ain1_low_value,
-		       S_IRUGO | S_IWUSR,
+		       0644,
 		       adt7316_show_ad_bound, adt7316_set_ad_bound,
 		       ADT7316_EX_TEMP_LOW);
 static IIO_DEVICE_ATTR(ain2_high_value,
-		       S_IRUGO | S_IWUSR,
+		       0644,
 		       adt7316_show_ad_bound, adt7316_set_ad_bound,
 		       ADT7516_AIN2_HIGH);
 static IIO_DEVICE_ATTR(ain2_low_value,
-		       S_IRUGO | S_IWUSR,
+		       0644,
 		       adt7316_show_ad_bound, adt7316_set_ad_bound,
 		       ADT7516_AIN2_LOW);
 static IIO_DEVICE_ATTR(ain3_high_value,
-		       S_IRUGO | S_IWUSR,
+		       0644,
 		       adt7316_show_ad_bound, adt7316_set_ad_bound,
 		       ADT7516_AIN3_HIGH);
 static IIO_DEVICE_ATTR(ain3_low_value,
-		       S_IRUGO | S_IWUSR,
+		       0644,
 		       adt7316_show_ad_bound, adt7316_set_ad_bound,
 		       ADT7516_AIN3_LOW);
 static IIO_DEVICE_ATTR(ain4_high_value,
-		       S_IRUGO | S_IWUSR,
+		       0644,
 		       adt7316_show_ad_bound, adt7316_set_ad_bound,
 		       ADT7516_AIN4_HIGH);
 static IIO_DEVICE_ATTR(ain4_low_value,
-		       S_IRUGO | S_IWUSR,
+		       0644,
 		       adt7316_show_ad_bound, adt7316_set_ad_bound,
 		       ADT7516_AIN4_LOW);
 static IIO_DEVICE_ATTR(int_enabled,
-		       S_IRUGO | S_IWUSR,
+		       0644,
 		       adt7316_show_int_enabled,
 		       adt7316_set_int_enabled, 0);
 
@@ -2052,7 +2047,7 @@ static struct attribute *adt7316_event_attributes[] = {
 	NULL,
 };
 
-static struct attribute_group adt7316_event_attribute_group = {
+static const struct attribute_group adt7316_event_attribute_group = {
 	.attrs = adt7316_event_attributes,
 	.name = "events",
 };
@@ -2073,7 +2068,7 @@ static struct attribute *adt7516_event_attributes[] = {
 	NULL,
 };
 
-static struct attribute_group adt7516_event_attribute_group = {
+static const struct attribute_group adt7516_event_attribute_group = {
 	.attrs = adt7516_event_attributes,
 	.name = "events",
 };
@@ -2094,21 +2089,18 @@ static int adt7316_enable(struct device *dev)
 
 	return _adt7316_store_enabled(chip, 1);
 }
-
-SIMPLE_DEV_PM_OPS(adt7316_pm_ops, adt7316_disable, adt7316_enable);
 EXPORT_SYMBOL_GPL(adt7316_pm_ops);
+SIMPLE_DEV_PM_OPS(adt7316_pm_ops, adt7316_disable, adt7316_enable);
 #endif
 
 static const struct iio_info adt7316_info = {
 	.attrs = &adt7316_attribute_group,
 	.event_attrs = &adt7316_event_attribute_group,
-	.driver_module = THIS_MODULE,
 };
 
 static const struct iio_info adt7516_info = {
 	.attrs = &adt7516_attribute_group,
 	.event_attrs = &adt7516_event_attribute_group,
-	.driver_module = THIS_MODULE,
 };
 
 /*

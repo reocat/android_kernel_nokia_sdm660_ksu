@@ -174,7 +174,7 @@ static irqreturn_t gpio_event_input_irq_handler(int irq, void *dev_id)
 
 	key_entry = &ds->info->keymap[keymap_index];
 
-	if (ds->info->debounce_time.tv64) {
+	if (ds->info->debounce_time) {
 		spin_lock_irqsave(&ds->irq_lock, irqflags);
 		if (ks->debounce & DEBOUNCE_WAIT_IRQ) {
 			ks->debounce = DEBOUNCE_UNKNOWN;
@@ -302,7 +302,8 @@ int gpio_event_input_func(struct gpio_event_input_devs *input_devs,
 				   input_devs->dev[0]->name,
 				   (input_devs->count > 1) ? "..." : "");
 
-		ds->ws = wakeup_source_register(wlname);
+		ds->ws = wakeup_source_register(&input_devs->dev[0]->dev,
+						wlname);
 		kfree(wlname);
 		if (!ds->ws) {
 			ret = -ENOMEM;

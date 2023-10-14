@@ -25,13 +25,16 @@
 #include <linux/bug.h>
 #include <linux/delay.h>
 #include <linux/init.h>
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
+#include <linux/sched/debug.h>
+#include <linux/sched/task_stack.h>
 #include <linux/irq.h>
 
 #include <linux/atomic.h>
 #include <asm/arch_timer.h>
 #include <asm/cacheflush.h>
 #include <asm/exception.h>
+#include <asm/spectre.h>
 #include <asm/unistd.h>
 #include <asm/traps.h>
 #include <asm/ptrace.h>
@@ -66,14 +69,36 @@ static void dump_mem(const char *, const char *, unsigned long, unsigned long);
 
 void dump_backtrace_entry(unsigned long where, unsigned long from, unsigned long frame)
 {
+	unsigned long end = frame + 4 + sizeof(struct pt_regs);
+
 #ifdef CONFIG_KALLSYMS
 	printk("[<%08lx>] (%ps) from [<%08lx>] (%pS)\n", where, (void *)where, from, (void *)from);
 #else
 	printk("Function entered at [<%08lx>] from [<%08lx>]\n", where, from);
 #endif
 
-	if (in_exception_text(where))
-		dump_mem("", "Exception stack", frame + 4, frame + 4 + sizeof(struct pt_regs));
+	if (in_entry_text(from) && end <= ALIGN(frame, THREAD_SIZE))
+		dump_mem("", "Exception stack", frame + 4, end);
+}
+
+void dump_backtrace_stm(u32 *stack, u32 instruction)
+{
+	char str[80], *p;
+	unsigned int x;
+	int reg;
+
+	for (reg = 10, x = 0, p = str; reg >= 0; reg--) {
+		if (instruction & BIT(reg)) {
+			p += sprintf(p, " r%d:%08x", reg, *stack--);
+			if (++x == 6) {
+				x = 0;
+				p = str;
+				printk("%s\n", str);
+			}
+		}
+	}
+	if (p != str)
+		printk("%s\n", str);
 }
 
 #ifndef CONFIG_ARM_UNWIND
@@ -320,7 +345,7 @@ static void oops_end(unsigned long flags, struct pt_regs *regs, int signr)
 	if (panic_on_oops)
 		panic("Fatal exception");
 	if (signr)
-		do_exit(signr);
+		make_task_dead(signr);
 }
 
 /*
@@ -414,12 +439,13 @@ int call_undef_hook(struct pt_regs *regs, unsigned int instr)
 	return fn ? fn(regs, instr) : 1;
 }
 
-asmlinkage void __exception do_undefinstr(struct pt_regs *regs)
+asmlinkage void do_undefinstr(struct pt_regs *regs)
 {
 	unsigned int instr;
 	siginfo_t info;
 	void __user *pc;
 
+	clear_siginfo(&info);
 	pc = (void __user *)instruction_pointer(regs);
 
 	if (processor_mode(regs) == SVC_MODE) {
@@ -519,6 +545,7 @@ static int bad_syscall(int n, struct pt_regs *regs)
 {
 	siginfo_t info;
 
+	clear_siginfo(&info);
 	if ((current->personality & PER_MASK) != PER_LINUX) {
 		send_sig(SIGSEGV, current, 1);
 		return regs->ARM_r0;
@@ -586,6 +613,7 @@ asmlinkage int arm_syscall(int no, struct pt_regs *regs)
 {
 	siginfo_t info;
 
+	clear_siginfo(&info);
 	if ((no >> 16) != (__ARM_NR_BASE>> 16))
 		return bad_syscall(no, regs);
 
@@ -636,6 +664,9 @@ asmlinkage int arm_syscall(int no, struct pt_regs *regs)
 	case NR(set_tls):
 		set_tls(regs->ARM_r0);
 		return 0;
+
+	case NR(get_tls):
+		return current_thread_info()->tp_value[0];
 
 	default:
 		/* Calls 9f00xx..9f07ff are defined to return -ENOSYS
@@ -709,9 +740,9 @@ late_initcall(arm_mrc_hook_init);
 
 #endif
 
-static int get_pct_trap(struct pt_regs *regs, unsigned int instr)
+static int get_timer_count_trap(struct pt_regs *regs, unsigned int instr)
 {
-	u64 cntpct;
+	u64 cval;
 	unsigned int res;
 	int rd = (instr >> 12) & 0xF;
 	int rn =  (instr >> 16) & 0xF;
@@ -724,26 +755,61 @@ static int get_pct_trap(struct pt_regs *regs, unsigned int instr)
 
 	if (rd == 15 || rn == 15)
 		return 1;
-	cntpct = arch_counter_get_cntpct();
-	regs->uregs[rd] = cntpct;
-	regs->uregs[rn] = cntpct >> 32;
+	cval = arch_counter_get_cntvct();
+	regs->uregs[rd] = cval;
+	regs->uregs[rn] = cval >> 32;
 	regs->ARM_pc += 4;
 	return 0;
 }
 
-static struct undef_hook get_pct_hook = {
+static struct undef_hook get_timer_count_hook = {
 	.instr_mask	= 0x0ff00fff,
-	.instr_val	= 0x0c500f0e,
+	.instr_val	= 0x0c500f1e,
 	.cpsr_mask	= MODE_MASK,
 	.cpsr_val	= USR_MODE,
-	.fn		= get_pct_trap,
+	.fn		= get_timer_count_trap,
 };
 
-void get_pct_hook_init(void)
+void get_timer_count_hook_init(void)
 {
-	register_undef_hook(&get_pct_hook);
+	register_undef_hook(&get_timer_count_hook);
 }
-EXPORT_SYMBOL(get_pct_hook_init);
+EXPORT_SYMBOL(get_timer_count_hook_init);
+
+static int get_freq_trap(struct pt_regs *regs, unsigned int instr)
+{
+	u32 fval;
+	unsigned int res;
+	int rd = (instr >> 12) & 0xF;
+
+	res = arm_check_condition(instr, regs->ARM_cpsr);
+	if (res == ARM_OPCODE_CONDTEST_FAIL) {
+		regs->ARM_pc += 4;
+		return 0;
+	}
+
+	if (rd == 15)
+		return 1;
+
+	fval = arch_timer_get_cntfrq();
+	regs->uregs[rd] = fval;
+	regs->ARM_pc += 4;
+	return 0;
+}
+
+static struct undef_hook get_freq_hook = {
+	.instr_mask	= 0x0fff0fff,
+	.instr_val	= 0x0e1e0f10,
+	.cpsr_mask	= MODE_MASK,
+	.cpsr_val	= USR_MODE,
+	.fn		= get_freq_trap,
+};
+
+void get_timer_freq_hook_init(void)
+{
+	register_undef_hook(&get_freq_hook);
+}
+EXPORT_SYMBOL(get_timer_freq_hook_init);
 
 /*
  * A data abort trap was taken, but we did not handle the instruction.
@@ -754,6 +820,8 @@ baddataabort(int code, unsigned long instr, struct pt_regs *regs)
 {
 	unsigned long addr = instruction_pointer(regs);
 	siginfo_t info;
+
+	clear_siginfo(&info);
 
 #ifdef CONFIG_DEBUG_USER
 	if (user_debug & UDBG_BADABORT) {
@@ -808,7 +876,6 @@ void abort(void)
 	/* if that doesn't kill us, halt */
 	panic("Oops failed to kill thread");
 }
-EXPORT_SYMBOL(abort);
 
 void __init trap_init(void)
 {
@@ -836,10 +903,59 @@ static inline void __init kuser_init(void *vectors)
 }
 #endif
 
+#ifndef CONFIG_CPU_V7M
+static void copy_from_lma(void *vma, void *lma_start, void *lma_end)
+{
+	memcpy(vma, lma_start, lma_end - lma_start);
+}
+
+static void flush_vectors(void *vma, size_t offset, size_t size)
+{
+	unsigned long start = (unsigned long)vma + offset;
+	unsigned long end = start + size;
+
+	flush_icache_range(start, end);
+}
+
+#ifdef CONFIG_HARDEN_BRANCH_HISTORY
+int spectre_bhb_update_vectors(unsigned int method)
+{
+	extern char __vectors_bhb_bpiall_start[], __vectors_bhb_bpiall_end[];
+	extern char __vectors_bhb_loop8_start[], __vectors_bhb_loop8_end[];
+	void *vec_start, *vec_end;
+
+	if (system_state > SYSTEM_SCHEDULING) {
+		pr_err("CPU%u: Spectre BHB workaround too late - system vulnerable\n",
+		       smp_processor_id());
+		return SPECTRE_VULNERABLE;
+	}
+
+	switch (method) {
+	case SPECTRE_V2_METHOD_LOOP8:
+		vec_start = __vectors_bhb_loop8_start;
+		vec_end = __vectors_bhb_loop8_end;
+		break;
+
+	case SPECTRE_V2_METHOD_BPIALL:
+		vec_start = __vectors_bhb_bpiall_start;
+		vec_end = __vectors_bhb_bpiall_end;
+		break;
+
+	default:
+		pr_err("CPU%u: unknown Spectre BHB state %d\n",
+		       smp_processor_id(), method);
+		return SPECTRE_VULNERABLE;
+	}
+
+	copy_from_lma(vectors_page, vec_start, vec_end);
+	flush_vectors(vectors_page, 0, vec_end - vec_start);
+
+	return SPECTRE_MITIGATED;
+}
+#endif
+
 void __init early_trap_init(void *vectors_base)
 {
-#ifndef CONFIG_CPU_V7M
-	unsigned long vectors = (unsigned long)vectors_base;
 	extern char __stubs_start[], __stubs_end[];
 	extern char __vectors_start[], __vectors_end[];
 	unsigned i;
@@ -860,17 +976,20 @@ void __init early_trap_init(void *vectors_base)
 	 * into the vector page, mapped at 0xffff0000, and ensure these
 	 * are visible to the instruction stream.
 	 */
-	memcpy((void *)vectors, __vectors_start, __vectors_end - __vectors_start);
-	memcpy((void *)vectors + 0x1000, __stubs_start, __stubs_end - __stubs_start);
+	copy_from_lma(vectors_base, __vectors_start, __vectors_end);
+	copy_from_lma(vectors_base + 0x1000, __stubs_start, __stubs_end);
 
 	kuser_init(vectors_base);
 
-	flush_icache_range(vectors, vectors + PAGE_SIZE * 2);
+	flush_vectors(vectors_base, 0, PAGE_SIZE * 2);
+}
 #else /* ifndef CONFIG_CPU_V7M */
+void __init early_trap_init(void *vectors_base)
+{
 	/*
 	 * on V7-M there is no need to copy the vector table to a dedicated
 	 * memory area. The address is configurable and so a table in the kernel
 	 * image can be used.
 	 */
-#endif
 }
+#endif

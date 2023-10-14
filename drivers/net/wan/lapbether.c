@@ -35,7 +35,7 @@
 #include <linux/if_arp.h>
 #include <linux/skbuff.h>
 #include <net/sock.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/mm.h>
 #include <linux/interrupt.h>
 #include <linux/notifier.h>
@@ -326,7 +326,7 @@ static const struct net_device_ops lapbeth_netdev_ops = {
 static void lapbeth_setup(struct net_device *dev)
 {
 	dev->netdev_ops	     = &lapbeth_netdev_ops;
-	dev->destructor	     = free_netdev;
+	dev->needs_free_netdev = true;
 	dev->type            = ARPHRD_X25;
 	dev->hard_header_len = 0;
 	dev->mtu             = 1000;
@@ -343,6 +343,9 @@ static int lapbeth_new_device(struct net_device *dev)
 	int rc = -ENOMEM;
 
 	ASSERT_RTNL();
+
+	if (dev->type != ARPHRD_ETHER)
+		return -EINVAL;
 
 	ndev = alloc_netdev(sizeof(*lapbeth), "lapb%d", NET_NAME_UNKNOWN,
 			    lapbeth_setup);
@@ -379,7 +382,6 @@ out:
 fail:
 	dev_put(dev);
 	free_netdev(ndev);
-	kfree(lapbeth);
 	goto out;
 }
 
@@ -407,7 +409,7 @@ static int lapbeth_device_event(struct notifier_block *this,
 	if (dev_net(dev) != &init_net)
 		return NOTIFY_DONE;
 
-	if (!dev_is_ethdev(dev))
+	if (!dev_is_ethdev(dev) && !lapbeth_get_x25_dev(dev))
 		return NOTIFY_DONE;
 
 	switch (event) {

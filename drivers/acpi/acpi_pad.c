@@ -20,12 +20,14 @@
 #include <linux/init.h>
 #include <linux/types.h>
 #include <linux/kthread.h>
+#include <uapi/linux/sched/types.h>
 #include <linux/freezer.h>
 #include <linux/cpu.h>
 #include <linux/tick.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
 #include <asm/mwait.h>
+#include <xen/xen.h>
 
 #define ACPI_PROCESSOR_AGGREGATOR_CLASS	"acpi_pad"
 #define ACPI_PROCESSOR_AGGREGATOR_DEVICE_NAME "Processor Aggregator"
@@ -93,7 +95,7 @@ static void round_robin_cpu(unsigned int tsk_index)
 	cpumask_var_t tmp;
 	int cpu;
 	unsigned long min_weight = -1;
-	unsigned long uninitialized_var(preferred_cpu);
+	unsigned long preferred_cpu;
 
 	if (!alloc_cpumask_var(&tmp, GFP_KERNEL))
 		return;
@@ -480,6 +482,10 @@ static struct acpi_driver acpi_pad_driver = {
 
 static int __init acpi_pad_init(void)
 {
+	/* Xen ACPI PAD is used when running as Xen Dom0. */
+	if (xen_initial_domain())
+		return -ENODEV;
+
 	power_saving_mwait_init();
 	if (power_saving_mwait_eax == 0)
 		return -EINVAL;

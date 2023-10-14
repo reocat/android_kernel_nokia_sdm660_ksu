@@ -1,13 +1,5 @@
-/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2016-2017, 2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "TADC: %s: " fmt, __func__
@@ -464,7 +456,7 @@ static int tadc_get_raw_therm(const struct tadc_chan_data *chan_data,
 	rc = tadc_lerp(chan_data->table, chan_data->tablesize, true, mdegc,
 								&rtherm);
 	if (rc < 0) {
-		pr_err("Couldn't interpolate %d\n rc=%d", mdegc, rc);
+		pr_err("Couldn't interpolate %d\n rc=%d\n", mdegc, rc);
 		return rc;
 	}
 
@@ -1032,7 +1024,7 @@ static int tadc_parse_dt(struct tadc_chip *chip)
 	for_each_available_child_of_node(node, child) {
 		rc = of_property_read_u32(child, "reg", &chan_id);
 		if (rc < 0) {
-			pr_err("Couldn't find channel for %s rc=%d",
+			pr_err("Couldn't find channel for %s rc=%d\n",
 							child->name, rc);
 			return rc;
 		}
@@ -1177,7 +1169,6 @@ static int tadc_init_hw(struct tadc_chip *chip)
 static const struct iio_info tadc_info = {
 	.read_raw		= &tadc_read_raw,
 	.write_raw		= &tadc_write_raw,
-	.driver_module		= THIS_MODULE,
 };
 
 static int tadc_probe(struct platform_device *pdev)

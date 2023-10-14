@@ -249,7 +249,7 @@ static int lpc18xx_pwm_enable(struct pwm_chip *chip, struct pwm_device *pwm)
 			   LPC18XX_PWM_EVSTATEMSK(lpc18xx_data->duty_event),
 			   LPC18XX_PWM_EVSTATEMSK_ALL);
 
-	if (pwm->polarity == PWM_POLARITY_NORMAL) {
+	if (pwm_get_polarity(pwm) == PWM_POLARITY_NORMAL) {
 		set_event = lpc18xx_pwm->period_event;
 		clear_event = lpc18xx_data->duty_event;
 		res_action = LPC18XX_PWM_RES_SET;
@@ -360,6 +360,11 @@ static int lpc18xx_pwm_probe(struct platform_device *pdev)
 	}
 
 	lpc18xx_pwm->clk_rate = clk_get_rate(lpc18xx_pwm->pwm_clk);
+	if (!lpc18xx_pwm->clk_rate) {
+		dev_err(&pdev->dev, "pwm clock has no frequency\n");
+		ret = -EINVAL;
+		goto disable_pwmclk;
+	}
 
 	mutex_init(&lpc18xx_pwm->res_lock);
 	mutex_init(&lpc18xx_pwm->period_lock);
@@ -401,24 +406,20 @@ static int lpc18xx_pwm_probe(struct platform_device *pdev)
 	lpc18xx_pwm_writel(lpc18xx_pwm, LPC18XX_PWM_LIMIT,
 			   BIT(lpc18xx_pwm->period_event));
 
-	ret = pwmchip_add(&lpc18xx_pwm->chip);
-	if (ret < 0) {
-		dev_err(&pdev->dev, "pwmchip_add failed: %d\n", ret);
-		goto disable_pwmclk;
-	}
-
 	for (i = 0; i < lpc18xx_pwm->chip.npwm; i++) {
-		pwm = &lpc18xx_pwm->chip.pwms[i];
-		pwm->chip_data = devm_kzalloc(lpc18xx_pwm->dev,
-					      sizeof(struct lpc18xx_pwm_data),
-					      GFP_KERNEL);
-		if (!pwm->chip_data) {
-			ret = -ENOMEM;
-			goto remove_pwmchip;
-		}
-	}
+		struct lpc18xx_pwm_data *data;
 
-	platform_set_drvdata(pdev, lpc18xx_pwm);
+		pwm = &lpc18xx_pwm->chip.pwms[i];
+
+		data = devm_kzalloc(lpc18xx_pwm->dev, sizeof(*data),
+				    GFP_KERNEL);
+		if (!data) {
+			ret = -ENOMEM;
+			goto disable_pwmclk;
+		}
+
+		pwm_set_chip_data(pwm, data);
+	}
 
 	val = lpc18xx_pwm_readl(lpc18xx_pwm, LPC18XX_PWM_CTRL);
 	val &= ~LPC18XX_PWM_BIDIR;
@@ -427,10 +428,16 @@ static int lpc18xx_pwm_probe(struct platform_device *pdev)
 	val |= LPC18XX_PWM_PRE(0);
 	lpc18xx_pwm_writel(lpc18xx_pwm, LPC18XX_PWM_CTRL, val);
 
+	ret = pwmchip_add(&lpc18xx_pwm->chip);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "pwmchip_add failed: %d\n", ret);
+		goto disable_pwmclk;
+	}
+
+	platform_set_drvdata(pdev, lpc18xx_pwm);
+
 	return 0;
 
-remove_pwmchip:
-	pwmchip_remove(&lpc18xx_pwm->chip);
 disable_pwmclk:
 	clk_disable_unprepare(lpc18xx_pwm->pwm_clk);
 	return ret;

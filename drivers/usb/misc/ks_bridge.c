@@ -1,14 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2012-2014, 2017-2019, Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2022, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 /* add additional information to our printk's */
@@ -123,7 +116,7 @@ struct ks_bridge *__ksb[NO_BRIDGE_INSTANCES];
 
 /* by default debugging is enabled */
 static unsigned int enable_dbg = 1;
-module_param(enable_dbg, uint, S_IRUGO | S_IWUSR);
+module_param(enable_dbg, uint, 0644);
 
 static void
 dbg_log_event(struct ks_bridge *ksb, char *event, int d1, int d2)
@@ -319,7 +312,7 @@ static void ksb_tomdm_work(struct work_struct *w)
 		atomic_inc(&ksb->tx_pending_cnt);
 		ret = usb_submit_urb(urb, GFP_KERNEL);
 		if (ret) {
-			dev_err(&ksb->udev->dev, "out urb submission failed");
+			dev_err(&ksb->udev->dev, "out urb submission failed\n");
 			usb_unanchor_urb(urb);
 			usb_free_urb(urb);
 			ksb_free_data_pkt(pkt);
@@ -353,14 +346,14 @@ static ssize_t ksb_fs_write(struct file *fp, const char __user *buf,
 	pkt = ksb_alloc_data_pkt(count, GFP_KERNEL, ksb);
 	if (IS_ERR(pkt)) {
 		dev_err(ksb->device,
-				"unable to allocate data packet");
+				"unable to allocate data packet\n");
 		return PTR_ERR(pkt);
 	}
 
 	ret = copy_from_user(pkt->buf, buf, count);
 	if (ret) {
 		dev_err(ksb->device,
-				"copy_from_user failed: err:%d", ret);
+				"copy_from_user failed: err:%d\n", ret);
 		ksb_free_data_pkt(pkt);
 		return ret;
 	}
@@ -382,7 +375,7 @@ static int ksb_fs_open(struct inode *ip, struct file *fp)
 			container_of(ip->i_cdev, struct ks_bridge, cdev);
 
 	if (IS_ERR(ksb)) {
-		pr_err("ksb device not found");
+		pr_err("ksb device not found\n");
 		return -ENODEV;
 	}
 
@@ -534,7 +527,7 @@ submit_one_urb(struct ks_bridge *ksb, gfp_t flags, struct data_pkt *pkt)
 
 	urb = usb_alloc_urb(0, flags);
 	if (!urb) {
-		dev_err(&ksb->udev->dev, "unable to allocate urb");
+		dev_err(&ksb->udev->dev, "unable to allocate urb\n");
 		ksb_free_data_pkt(pkt);
 		return;
 	}
@@ -560,7 +553,7 @@ submit_one_urb(struct ks_bridge *ksb, gfp_t flags, struct data_pkt *pkt)
 	atomic_inc(&ksb->rx_pending_cnt);
 	ret = usb_submit_urb(urb, flags);
 	if (ret) {
-		dev_err(&ksb->udev->dev, "in urb submission failed");
+		dev_err(&ksb->udev->dev, "in urb submission failed\n");
 		usb_unanchor_urb(urb);
 		usb_free_urb(urb);
 		ksb_free_data_pkt(pkt);
@@ -653,13 +646,13 @@ static void ksb_start_rx_work(struct work_struct *w)
 
 		pkt = ksb_alloc_data_pkt(MAX_DATA_PKT_SIZE, GFP_KERNEL, ksb);
 		if (IS_ERR(pkt)) {
-			dev_err(&ksb->udev->dev, "unable to allocate data pkt");
+			dev_err(&ksb->udev->dev, "unable to allocate data pkt\n");
 			break;
 		}
 
 		urb = usb_alloc_urb(0, GFP_KERNEL);
 		if (!urb) {
-			dev_err(&ksb->udev->dev, "unable to allocate urb");
+			dev_err(&ksb->udev->dev, "unable to allocate urb\n");
 			ksb_free_data_pkt(pkt);
 			break;
 		}
@@ -680,7 +673,7 @@ static void ksb_start_rx_work(struct work_struct *w)
 		atomic_inc(&ksb->rx_pending_cnt);
 		ret = usb_submit_urb(urb, GFP_KERNEL);
 		if (ret) {
-			dev_err(&ksb->udev->dev, "in urb submission failed");
+			dev_err(&ksb->udev->dev, "in urb submission failed\n");
 			usb_unanchor_urb(urb);
 			usb_free_urb(urb);
 			ksb_free_data_pkt(pkt);
@@ -792,7 +785,7 @@ ksb_usb_probe(struct usb_interface *ifc, const struct usb_device_id *id)
 	}
 
 	if (!ksb) {
-		pr_err("ksb is not initialized");
+		pr_err("ksb is not initialized\n");
 		return -ENODEV;
 	}
 
@@ -820,7 +813,7 @@ ksb_usb_probe(struct usb_interface *ifc, const struct usb_device_id *id)
 
 	if (!(ksb->in_epAddr && ksb->out_epAddr)) {
 		dev_err(&udev->dev,
-			"could not find bulk in and bulk out endpoints");
+			"could not find bulk in and bulk out endpoints\n");
 		usb_put_dev(ksb->udev);
 		ksb->ifc = NULL;
 		if (free_mdev)
@@ -1056,12 +1049,11 @@ static int __init ksb_init(void)
 
 	dbg_dir = debugfs_create_dir("ks_bridge", NULL);
 	if (IS_ERR(dbg_dir))
-		pr_err("unable to create debug dir");
+		pr_err("unable to create debug dir\n");
 
 	for (i = 0; i < NO_BRIDGE_INSTANCES; i++) {
 		ksb = kzalloc(sizeof(struct ks_bridge), GFP_KERNEL);
 		if (!ksb) {
-			pr_err("unable to allocat mem for ks_bridge");
 			ret =  -ENOMEM;
 			goto dev_free;
 		}
@@ -1069,7 +1061,7 @@ static int __init ksb_init(void)
 
 		ksb->name = kasprintf(GFP_KERNEL, "ks_usb_bridge.%i", i);
 		if (!ksb->name) {
-			pr_info("unable to allocate name");
+			pr_info("unable to allocate name\n");
 			kfree(ksb);
 			ret = -ENOMEM;
 			goto dev_free;
@@ -1082,7 +1074,7 @@ static int __init ksb_init(void)
 		init_waitqueue_head(&ksb->pending_urb_wait);
 		ksb->wq = create_singlethread_workqueue(ksb->name);
 		if (!ksb->wq) {
-			pr_err("unable to allocate workqueue");
+			pr_err("unable to allocate workqueue\n");
 			kfree(ksb->name);
 			kfree(ksb);
 			ret = -ENOMEM;
@@ -1097,7 +1089,7 @@ static int __init ksb_init(void)
 		ksb->dbg_lock = __RW_LOCK_UNLOCKED(lck);
 
 		if (!IS_ERR(dbg_dir))
-			debugfs_create_file(ksb->name, S_IRUGO, dbg_dir,
+			debugfs_create_file(ksb->name, 0444, dbg_dir,
 					ksb, &dbg_fops);
 
 		num_instances++;
@@ -1105,11 +1097,11 @@ static int __init ksb_init(void)
 
 	ret = usb_register(&ksb_usb_driver);
 	if (ret) {
-		pr_err("unable to register ks bridge driver");
+		pr_err("unable to register ks bridge driver\n");
 		goto dev_free;
 	}
 
-	pr_info("init done");
+	pr_info("init done\n");
 
 	return 0;
 

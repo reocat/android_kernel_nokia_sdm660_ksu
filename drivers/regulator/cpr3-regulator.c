@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "%s: " fmt, __func__
@@ -1443,8 +1435,7 @@ static int cpr3_regulator_init_ctrl(struct cpr3_controller *ctrl)
 			for (k = 0; k < ctrl->thread[i].vreg[j].corner_count;
 			     k++)
 				for (m = 0; m < CPR3_RO_COUNT; m++)
-					if (ctrl->thread[i].vreg[j].corner[k].
-					    target_quot[m])
+					if (ctrl->thread[i].vreg[j].corner[k].target_quot[m])
 						ro_used |= BIT(m);
 
 	/* Configure the GCNT of the RO's that will be used */
@@ -2878,7 +2869,7 @@ static int cpr3_regulator_max_sdelta_diff(const struct cpr4_sdelta *sdelta,
 /**
  * cpr3_regulator_aggregate_sdelta() - check open-loop voltages of current
  *		aggregated corner and current corner of a given regulator
- *		and adjust the sdelta strucuture data of aggregate corner.
+ *		and adjust the sdelta structure data of aggregate corner.
  * @aggr_corner:	Pointer to accumulated aggregated corner which
  *			is both an input and an output
  * @corner:		Pointer to the corner to be aggregated with
@@ -4351,7 +4342,7 @@ static int cpr3_regulator_enable(struct regulator_dev *rdev)
 	struct cpr3_controller *ctrl = vreg->thread->ctrl;
 	int rc = 0;
 
-	if (vreg->vreg_enabled == true)
+	if (vreg->vreg_enabled)
 		return 0;
 
 	mutex_lock(&ctrl->lock);
@@ -4411,7 +4402,7 @@ static int cpr3_regulator_disable(struct regulator_dev *rdev)
 	struct cpr3_controller *ctrl = vreg->thread->ctrl;
 	int rc, rc2;
 
-	if (vreg->vreg_enabled == false)
+	if (!vreg->vreg_enabled)
 		return 0;
 
 	mutex_lock(&ctrl->lock);
@@ -4957,9 +4948,9 @@ static int debugfs_int_get(void *data, u64 *val)
 	*val = *(int *)data;
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(fops_int, debugfs_int_get, debugfs_int_set, "%lld\n");
-DEFINE_SIMPLE_ATTRIBUTE(fops_int_ro, debugfs_int_get, NULL, "%lld\n");
-DEFINE_SIMPLE_ATTRIBUTE(fops_int_wo, NULL, debugfs_int_set, "%lld\n");
+DEFINE_DEBUGFS_ATTRIBUTE(fops_int, debugfs_int_get, debugfs_int_set, "%lld\n");
+DEFINE_DEBUGFS_ATTRIBUTE(fops_int_ro, debugfs_int_get, NULL, "%lld\n");
+DEFINE_DEBUGFS_ATTRIBUTE(fops_int_wo, NULL, debugfs_int_set, "%lld\n");
 
 /**
  * debugfs_create_int - create a debugfs file that is used to read and write a
@@ -5002,7 +4993,7 @@ static int debugfs_bool_get(void *data, u64 *val)
 	*val = *(bool *)data;
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(fops_bool_ro, debugfs_bool_get, NULL, "%lld\n");
+DEFINE_DEBUGFS_ATTRIBUTE(fops_bool_ro, debugfs_bool_get, NULL, "%lld\n");
 
 /**
  * cpr3_debug_ldo_mode_allowed_set() - debugfs callback used to change the
@@ -5077,7 +5068,7 @@ static int cpr3_debug_ldo_mode_allowed_get(void *data, u64 *val)
 
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(cpr3_debug_ldo_mode_allowed_fops,
+DEFINE_DEBUGFS_ATTRIBUTE(cpr3_debug_ldo_mode_allowed_fops,
 			cpr3_debug_ldo_mode_allowed_get,
 			cpr3_debug_ldo_mode_allowed_set,
 			"%llu\n");
@@ -5100,7 +5091,7 @@ static int cpr3_debug_ldo_mode_get(void *data, u64 *val)
 
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(cpr3_debug_ldo_mode_fops, cpr3_debug_ldo_mode_get,
+DEFINE_DEBUGFS_ATTRIBUTE(cpr3_debug_ldo_mode_fops, cpr3_debug_ldo_mode_get,
 			NULL, "%llu\n");
 
 /**
@@ -5137,7 +5128,7 @@ static int cpr3_debug_corner_int_get(void *data, u64 *val)
 
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(cpr3_debug_corner_int_fops, cpr3_debug_corner_int_get,
+DEFINE_DEBUGFS_ATTRIBUTE(cpr3_debug_corner_int_fops, cpr3_debug_corner_int_get,
 			NULL, "%lld\n");
 
 /**
@@ -5336,7 +5327,7 @@ static int cpr3_debug_corner_index_get(void *data, u64 *val)
 
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(cpr3_debug_corner_index_fops,
+DEFINE_DEBUGFS_ATTRIBUTE(cpr3_debug_corner_index_fops,
 			cpr3_debug_corner_index_get,
 			cpr3_debug_corner_index_set,
 			"%llu\n");
@@ -5359,7 +5350,7 @@ static int cpr3_debug_current_corner_index_get(void *data, u64 *val)
 
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(cpr3_debug_current_corner_index_fops,
+DEFINE_DEBUGFS_ATTRIBUTE(cpr3_debug_current_corner_index_fops,
 			cpr3_debug_current_corner_index_get,
 			NULL, "%llu\n");
 
@@ -5635,7 +5626,7 @@ static int cpr3_debug_closed_loop_enable_get(void *data, u64 *val)
 
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(cpr3_debug_closed_loop_enable_fops,
+DEFINE_DEBUGFS_ATTRIBUTE(cpr3_debug_closed_loop_enable_fops,
 			cpr3_debug_closed_loop_enable_get,
 			cpr3_debug_closed_loop_enable_set,
 			"%llu\n");
@@ -5810,7 +5801,7 @@ static int cpr3_debug_hw_closed_loop_enable_get(void *data, u64 *val)
 
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(cpr3_debug_hw_closed_loop_enable_fops,
+DEFINE_DEBUGFS_ATTRIBUTE(cpr3_debug_hw_closed_loop_enable_fops,
 			cpr3_debug_hw_closed_loop_enable_get,
 			cpr3_debug_hw_closed_loop_enable_set,
 			"%llu\n");
@@ -5858,7 +5849,7 @@ done:
 	mutex_unlock(&ctrl->lock);
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(cpr3_debug_trigger_aging_measurement_fops,
+DEFINE_DEBUGFS_ATTRIBUTE(cpr3_debug_trigger_aging_measurement_fops,
 			NULL,
 			cpr3_debug_trigger_aging_measurement_set,
 			"%llu\n");
@@ -6168,31 +6159,6 @@ int cpr3_regulator_resume(struct cpr3_controller *ctrl)
 }
 
 /**
- * cpr3_regulator_cpu_hotplug_callback() - reset CPR IRQ affinity when a CPU is
- *		brought online via hotplug
- * @nb:			Pointer to the notifier block
- * @action:		hotplug action
- * @hcpu:		long value corresponding to the CPU number
- *
- * Return: NOTIFY_OK
- */
-static int cpr3_regulator_cpu_hotplug_callback(struct notifier_block *nb,
-					    unsigned long action, void *hcpu)
-{
-	struct cpr3_controller *ctrl = container_of(nb, struct cpr3_controller,
-					cpu_hotplug_notifier);
-	int cpu = (long)hcpu;
-
-	action &= ~CPU_TASKS_FROZEN;
-
-	if (action == CPU_ONLINE
-	    && cpumask_test_cpu(cpu, &ctrl->irq_affinity_mask))
-		irq_set_affinity(ctrl->irq, &ctrl->irq_affinity_mask);
-
-	return NOTIFY_OK;
-}
-
-/**
  * cpr3_regulator_validate_controller() - verify the data passed in via the
  *		cpr3_controller data structure
  * @ctrl:		Pointer to the CPR3 controller
@@ -6437,14 +6403,6 @@ int cpr3_regulator_register(struct platform_device *pdev,
 		}
 	}
 
-	if (ctrl->irq && !cpumask_empty(&ctrl->irq_affinity_mask)) {
-		irq_set_affinity(ctrl->irq, &ctrl->irq_affinity_mask);
-
-		ctrl->cpu_hotplug_notifier.notifier_call
-			= cpr3_regulator_cpu_hotplug_callback;
-		register_hotcpu_notifier(&ctrl->cpu_hotplug_notifier);
-	}
-
 	mutex_lock(&cpr3_controller_list_mutex);
 	cpr3_regulator_debugfs_ctrl_add(ctrl);
 	list_add(&ctrl->list, &cpr3_controller_list);
@@ -6484,15 +6442,11 @@ int cpr3_regulator_unregister(struct cpr3_controller *ctrl)
 	cpr3_regulator_debugfs_ctrl_remove(ctrl);
 	mutex_unlock(&cpr3_controller_list_mutex);
 
-	if (ctrl->irq && !cpumask_empty(&ctrl->irq_affinity_mask))
-		unregister_hotcpu_notifier(&ctrl->cpu_hotplug_notifier);
-
-	if (ctrl->ctrl_type == CPR_CTRL_TYPE_CPR4) {
+	if (ctrl->ctrl_type == CPR_CTRL_TYPE_CPR4)
 		rc = cpr3_ctrl_clear_cpr4_config(ctrl);
 		if (rc)
 			cpr3_err(ctrl, "failed to clear CPR4 configuration,rc=%d\n",
 				rc);
-	}
 
 	cpr3_ctrl_loop_disable(ctrl);
 

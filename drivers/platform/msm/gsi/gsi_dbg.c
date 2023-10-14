@@ -1,15 +1,7 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
-#ifdef CONFIG_DEBUG_FS
 
 #include <linux/completion.h>
 #include <linux/debugfs.h>
@@ -27,7 +19,9 @@
 #define PRT_STAT(fmt, args...) \
 		pr_err(fmt, ## args)
 
+#ifdef CONFIG_DEBUG_FS
 static struct dentry *dent;
+#endif
 static char dbg_buff[4096];
 static void *gsi_ipc_logbuf_low;
 
@@ -47,8 +41,8 @@ static ssize_t gsi_dump_evt(struct file *file,
 	struct gsi_evt_ctx *ctx;
 	uint16_t i;
 
-	if (sizeof(dbg_buff) < count + 1)
-		return -EFAULT;
+	if (count >= sizeof(dbg_buff))
+		return -EINVAL;
 
 	missing = copy_from_user(dbg_buff, buf, count);
 	if (missing)
@@ -74,7 +68,7 @@ static ssize_t gsi_dump_evt(struct file *file,
 
 	if (arg1 >= gsi_ctx->max_ev) {
 		TERR("invalid evt ring id %u\n", arg1);
-		return -EFAULT;
+		return -EINVAL;
 	}
 
 	val = gsi_readl(gsi_ctx->base +
@@ -160,8 +154,8 @@ static ssize_t gsi_dump_ch(struct file *file,
 	struct gsi_chan_ctx *ctx;
 	uint16_t i;
 
-	if (sizeof(dbg_buff) < count + 1)
-		return -EFAULT;
+	if (count >= sizeof(dbg_buff))
+		return -EINVAL;
 
 	missing = copy_from_user(dbg_buff, buf, count);
 	if (missing)
@@ -187,7 +181,7 @@ static ssize_t gsi_dump_ch(struct file *file,
 
 	if (arg1 >= gsi_ctx->max_ch) {
 		TERR("invalid chan id %u\n", arg1);
-		return -EFAULT;
+		return -EINVAL;
 	}
 
 	val = gsi_readl(gsi_ctx->base +
@@ -222,8 +216,13 @@ static ssize_t gsi_dump_ch(struct file *file,
 		GSI_EE_n_GSI_CH_k_RE_FETCH_WRITE_PTR_OFFS(arg1,
 			gsi_ctx->per.ee));
 	TERR("CH%2d REFWP 0x%x\n", arg1, val);
-	val = gsi_readl(gsi_ctx->base +
-		GSI_EE_n_GSI_CH_k_QOS_OFFS(arg1, gsi_ctx->per.ee));
+	if (gsi_ctx->per.ver >= GSI_VER_2_5) {
+		val = gsi_readl(gsi_ctx->base +
+			GSI_V2_5_EE_n_GSI_CH_k_QOS_OFFS(arg1, gsi_ctx->per.ee));
+	} else {
+		val = gsi_readl(gsi_ctx->base +
+			GSI_EE_n_GSI_CH_k_QOS_OFFS(arg1, gsi_ctx->per.ee));
+	}
 	TERR("CH%2d QOS   0x%x\n", arg1, val);
 	val = gsi_readl(gsi_ctx->base +
 		GSI_EE_n_GSI_CH_k_SCRATCH_0_OFFS(arg1, gsi_ctx->per.ee));
@@ -270,9 +269,10 @@ static void gsi_dump_ch_stats(struct gsi_chan_ctx *ctx)
 	PRT_STAT("queued=%lu compl=%lu\n",
 		ctx->stats.queued,
 		ctx->stats.completed);
-	PRT_STAT("cb->poll=%lu poll->cb=%lu\n",
+	PRT_STAT("cb->poll=%lu poll->cb=%lu poll_pend_irq=%lu\n",
 		ctx->stats.callback_to_poll,
-		ctx->stats.poll_to_callback);
+		ctx->stats.poll_to_callback,
+		ctx->stats.poll_pending_irq);
 	PRT_STAT("invalid_tre_error=%lu\n",
 		ctx->stats.invalid_tre_error);
 	PRT_STAT("poll_ok=%lu poll_empty=%lu\n",
@@ -280,6 +280,7 @@ static void gsi_dump_ch_stats(struct gsi_chan_ctx *ctx)
 	if (ctx->evtr)
 		PRT_STAT("compl_evt=%lu\n",
 			ctx->evtr->stats.completed);
+	PRT_STAT("userdata_in_use=%lu\n", ctx->stats.userdata_in_use);
 
 	PRT_STAT("ch_below_lo=%lu\n", ctx->stats.dp.ch_below_lo);
 	PRT_STAT("ch_below_hi=%lu\n", ctx->stats.dp.ch_below_hi);
@@ -292,18 +293,11 @@ static ssize_t gsi_dump_stats(struct file *file,
 		const char __user *buf, size_t count, loff_t *ppos)
 {
 	int ch_id;
-	int min, max;
+	int min, max, ret;
 
-	if (sizeof(dbg_buff) < count + 1)
-		goto error;
-
-	if (copy_from_user(dbg_buff, buf, count))
-		goto error;
-
-	dbg_buff[count] = '\0';
-
-	if (kstrtos32(dbg_buff, 0, &ch_id))
-		goto error;
+	ret = kstrtos32_from_user(buf, count, 0, &ch_id);
+	if (ret)
+		return ret;
 
 	if (ch_id == -1) {
 		min = 0;
@@ -322,7 +316,7 @@ static ssize_t gsi_dump_stats(struct file *file,
 	return count;
 error:
 	TERR("Usage: echo ch_id > stats. Use -1 for all\n");
-	return -EFAULT;
+	return -EINVAL;
 }
 
 static int gsi_dbg_create_stats_wq(void)
@@ -353,7 +347,7 @@ static ssize_t gsi_enable_dp_stats(struct file *file,
 	bool enable;
 	int ret;
 
-	if (sizeof(dbg_buff) < count + 1)
+	if (count >= sizeof(dbg_buff))
 		goto error;
 
 	if (copy_from_user(dbg_buff, buf, count))
@@ -374,14 +368,9 @@ static ssize_t gsi_enable_dp_stats(struct file *file,
 		goto error;
 	}
 
-	if (gsi_ctx->chan[ch_id].props.prot == GSI_CHAN_PROT_GPI) {
-		TERR("valid for non GPI channels only\n");
-		goto error;
-	}
-
 	if (gsi_ctx->chan[ch_id].enable_dp_stats == enable) {
 		TERR("ch_%d: already enabled/disabled\n", ch_id);
-		return -EFAULT;
+		return -EINVAL;
 	}
 	gsi_ctx->chan[ch_id].enable_dp_stats = enable;
 
@@ -406,7 +395,7 @@ static ssize_t gsi_enable_dp_stats(struct file *file,
 	return count;
 error:
 	TERR("Usage: echo [+-]ch_id > enable_dp_stats\n");
-	return -EFAULT;
+	return -EINVAL;
 }
 
 static ssize_t gsi_set_max_elem_dp_stats(struct file *file,
@@ -418,7 +407,7 @@ static ssize_t gsi_set_max_elem_dp_stats(struct file *file,
 	char *sptr, *token;
 
 
-	if (sizeof(dbg_buff) < count + 1)
+	if (count >= sizeof(dbg_buff))
 		goto error;
 
 	missing = copy_from_user(dbg_buff, buf, count);
@@ -470,7 +459,7 @@ static ssize_t gsi_set_max_elem_dp_stats(struct file *file,
 error:
 	TERR("Usage: (set) echo <ch_id> <max_elem> > max_elem_dp_stats\n");
 	TERR("Usage: (get) echo <ch_id> > max_elem_dp_stats\n");
-	return -EFAULT;
+	return -EINVAL;
 }
 
 static void gsi_wq_print_dp_stats(struct work_struct *work)
@@ -515,7 +504,7 @@ static void gsi_dbg_update_ch_dp_stats(struct gsi_chan_ctx *ctx)
 	else
 		used_hw = ctx->ring.max_num_elem + 1 - (start_hw - end_hw);
 
-	TERR("ch %d used %d\n", ctx->props.ch_id, used_hw);
+	TDBG("ch %d used %d\n", ctx->props.ch_id, used_hw);
 	gsi_update_ch_dp_stats(ctx, used_hw);
 }
 
@@ -525,7 +514,6 @@ static void gsi_wq_update_dp_stats(struct work_struct *work)
 
 	for (ch_id = 0; ch_id < gsi_ctx->max_ch; ch_id++) {
 		if (gsi_ctx->chan[ch_id].allocated &&
-		    gsi_ctx->chan[ch_id].props.prot != GSI_CHAN_PROT_GPI &&
 		    gsi_ctx->chan[ch_id].enable_dp_stats)
 			gsi_dbg_update_ch_dp_stats(&gsi_ctx->chan[ch_id]);
 	}
@@ -539,18 +527,11 @@ static ssize_t gsi_rst_stats(struct file *file,
 		const char __user *buf, size_t count, loff_t *ppos)
 {
 	int ch_id;
-	int min, max;
+	int min, max, ret;
 
-	if (sizeof(dbg_buff) < count + 1)
-		goto error;
-
-	if (copy_from_user(dbg_buff, buf, count))
-		goto error;
-
-	dbg_buff[count] = '\0';
-
-	if (kstrtos32(dbg_buff, 0, &ch_id))
-		goto error;
+	ret = kstrtos32_from_user(buf, count, 0, &ch_id);
+	if (ret)
+		return ret;
 
 	if (ch_id == -1) {
 		min = 0;
@@ -570,7 +551,7 @@ static ssize_t gsi_rst_stats(struct file *file,
 	return count;
 error:
 	TERR("Usage: echo ch_id > rst_stats. Use -1 for all\n");
-	return -EFAULT;
+	return -EINVAL;
 }
 
 static ssize_t gsi_print_dp_stats(struct file *file,
@@ -580,7 +561,7 @@ static ssize_t gsi_print_dp_stats(struct file *file,
 	bool enable;
 	int ret;
 
-	if (sizeof(dbg_buff) < count + 1)
+	if (count >= sizeof(dbg_buff))
 		goto error;
 
 	if (copy_from_user(dbg_buff, buf, count))
@@ -603,7 +584,7 @@ static ssize_t gsi_print_dp_stats(struct file *file,
 
 	if (gsi_ctx->chan[ch_id].print_dp_stats == enable) {
 		TERR("ch_%d: already enabled/disabled\n", ch_id);
-		return -EFAULT;
+		return -EINVAL;
 	}
 	gsi_ctx->chan[ch_id].print_dp_stats = enable;
 
@@ -628,25 +609,18 @@ static ssize_t gsi_print_dp_stats(struct file *file,
 	return count;
 error:
 	TERR("Usage: echo [+-]ch_id > print_dp_stats\n");
-	return -EFAULT;
+	return -EINVAL;
 }
 
 static ssize_t gsi_enable_ipc_low(struct file *file,
 	const char __user *ubuf, size_t count, loff_t *ppos)
 {
-	unsigned long missing;
 	s8 option = 0;
+	int ret;
 
-	if (sizeof(dbg_buff) < count + 1)
-		return -EFAULT;
-
-	missing = copy_from_user(dbg_buff, ubuf, count);
-	if (missing)
-		return -EFAULT;
-
-	dbg_buff[count] = '\0';
-	if (kstrtos8(dbg_buff, 0, &option))
-		return -EFAULT;
+	ret = kstrtos8_from_user(ubuf, count, 0, &option);
+	if (ret)
+		return ret;
 
 	mutex_lock(&gsi_ctx->mlock);
 	if (option) {
@@ -665,8 +639,6 @@ static ssize_t gsi_enable_ipc_low(struct file *file,
 
 	return count;
 }
-
-
 
 const struct file_operations gsi_ev_dump_ops = {
 	.write = gsi_dump_evt,
@@ -700,10 +672,11 @@ const struct file_operations gsi_ipc_low_ops = {
 	.write = gsi_enable_ipc_low,
 };
 
+#ifdef CONFIG_DEBUG_FS
 void gsi_debugfs_init(void)
 {
 	static struct dentry *dfile;
-	const mode_t write_only_mode = S_IWUSR | S_IWGRP;
+	const mode_t write_only_mode = 0220;
 
 	dent = debugfs_create_dir("gsi", 0);
 	if (IS_ERR(dent)) {
@@ -771,8 +744,5 @@ void gsi_debugfs_init(void)
 fail:
 	debugfs_remove_recursive(dent);
 }
-#else
-void gsi_debugfs_init(void)
-{
-}
 #endif
+

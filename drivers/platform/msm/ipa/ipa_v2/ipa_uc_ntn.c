@@ -1,13 +1,6 @@
-/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2016-2018, 2020, The Linux Foundation. All rights reserved.
  */
 #include "ipa_i.h"
 
@@ -37,19 +30,20 @@ static void ipa_uc_ntn_event_log_info_handler(
 		return;
 	}
 
-	if (uc_event_top_mmio->statsInfo.featureInfo[IPA_HW_FEATURE_NTN].
-		params.size != sizeof(struct IpaHwStatsNTNInfoData_t)) {
-		IPAERR("NTN stats sz invalid exp=%zu is=%u\n",
-			sizeof(struct IpaHwStatsNTNInfoData_t),
-			uc_event_top_mmio->statsInfo.
-			featureInfo[IPA_HW_FEATURE_NTN].params.size);
+if (uc_event_top_mmio->statsInfo.featureInfo[IPA_HW_FEATURE_NTN].params.size !=
+	sizeof(struct IpaHwStatsNTNInfoData_t)) {
+	IPAERR("NTN stats sz invalid exp=%zu is=%u\n",
+	sizeof(struct IpaHwStatsNTNInfoData_t),
+	uc_event_top_mmio->statsInfo.featureInfo[IPA_HW_FEATURE_NTN].params.size
+	);
 		return;
-	}
+}
 
-	ipa_ctx->uc_ntn_ctx.ntn_uc_stats_ofst = uc_event_top_mmio->
-		statsInfo.baseAddrOffset + uc_event_top_mmio->statsInfo.
-		featureInfo[IPA_HW_FEATURE_NTN].params.offset;
-	IPAERR("NTN stats ofst=0x%x\n", ipa_ctx->uc_ntn_ctx.ntn_uc_stats_ofst);
+ipa_ctx->uc_ntn_ctx.ntn_uc_stats_ofst =
+uc_event_top_mmio->statsInfo.baseAddrOffset +
+uc_event_top_mmio->statsInfo.featureInfo[IPA_HW_FEATURE_NTN].params.offset;
+IPAERR("NTN stats ofst=0x%x\n", ipa_ctx->uc_ntn_ctx.ntn_uc_stats_ofst);
+
 	if (ipa_ctx->uc_ntn_ctx.ntn_uc_stats_ofst +
 		sizeof(struct IpaHwStatsNTNInfoData_t) >=
 		ipa_ctx->ctrl->ipa_reg_base_ofst +
@@ -195,7 +189,7 @@ static void ipa_uc_ntn_loaded_handler(void)
 
 int ipa_ntn_init(void)
 {
-	struct ipa_uc_hdlrs uc_ntn_cbs = { 0 };
+	struct ipa_uc_hdlrs uc_ntn_cbs = { NULL };
 
 	uc_ntn_cbs.ipa_uc_event_hdlr = ipa_uc_ntn_event_handler;
 	uc_ntn_cbs.ipa_uc_event_log_info_hdlr =
@@ -377,7 +371,7 @@ fail:
  */
 
 int ipa2_tear_down_uc_offload_pipes(int ipa_ep_idx_ul,
-		int ipa_ep_idx_dl)
+		int ipa_ep_idx_dl, struct ipa_ntn_conn_in_params *params)
 {
 	struct ipa_mem_buffer cmd;
 	struct ipa_ep_context *ep_ul, *ep_dl;
@@ -417,7 +411,7 @@ int ipa2_tear_down_uc_offload_pipes(int ipa_ep_idx_ul,
 	 * Reset ep before sending cmd otherwise disconnect
 	 * during data transfer will result into
 	 * enormous suspend interrupts
-	*/
+	 */
 	memset(&ipa_ctx->ep[ipa_ep_idx_dl], 0, sizeof(struct ipa_ep_context));
 	IPADBG("dl client (ep: %d) disconnected\n", ipa_ep_idx_dl);
 	tear->params.ipa_pipe_number = ipa_ep_idx_dl;

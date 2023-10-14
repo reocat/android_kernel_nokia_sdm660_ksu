@@ -1,12 +1,17 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_PTRACE_H
 #define _LINUX_PTRACE_H
 
 #include <linux/compiler.h>		/* For unlikely.  */
 #include <linux/sched.h>		/* For struct task_struct.  */
+#include <linux/sched/signal.h>		/* For send_sig(), same_thread_group(), etc. */
 #include <linux/err.h>			/* for IS_ERR_VALUE */
 #include <linux/bug.h>			/* For BUG_ON.  */
 #include <linux/pid_namespace.h>	/* For task_active_pid_ns.  */
 #include <uapi/linux/ptrace.h>
+
+extern int ptrace_access_vm(struct task_struct *tsk, unsigned long addr,
+			    void *buf, int len, unsigned int gup_flags);
 
 /*
  * Ptrace flags
@@ -35,12 +40,6 @@
 #define PT_EXITKILL		(PTRACE_O_EXITKILL << PT_OPT_FLAG_SHIFT)
 #define PT_SUSPEND_SECCOMP	(PTRACE_O_SUSPEND_SECCOMP << PT_OPT_FLAG_SHIFT)
 
-/* single stepping state bits (used on ARM and PA-RISC) */
-#define PT_SINGLESTEP_BIT	31
-#define PT_SINGLESTEP		(1<<PT_SINGLESTEP_BIT)
-#define PT_BLOCKSTEP_BIT	30
-#define PT_BLOCKSTEP		(1<<PT_BLOCKSTEP_BIT)
-
 extern long arch_ptrace(struct task_struct *child, long request,
 			unsigned long addr, unsigned long data);
 extern int ptrace_readdata(struct task_struct *tsk, unsigned long src, char __user *dst, int len);
@@ -59,15 +58,12 @@ extern void exit_ptrace(struct task_struct *tracer, struct list_head *dead);
 #define PTRACE_MODE_NOAUDIT	0x04
 #define PTRACE_MODE_FSCREDS	0x08
 #define PTRACE_MODE_REALCREDS	0x10
-#define PTRACE_MODE_SCHED	0x20
-#define PTRACE_MODE_IBPB	0x40
 
 /* shorthands for READ/ATTACH and FSCREDS/REALCREDS combinations */
 #define PTRACE_MODE_READ_FSCREDS (PTRACE_MODE_READ | PTRACE_MODE_FSCREDS)
 #define PTRACE_MODE_READ_REALCREDS (PTRACE_MODE_READ | PTRACE_MODE_REALCREDS)
 #define PTRACE_MODE_ATTACH_FSCREDS (PTRACE_MODE_ATTACH | PTRACE_MODE_FSCREDS)
 #define PTRACE_MODE_ATTACH_REALCREDS (PTRACE_MODE_ATTACH | PTRACE_MODE_REALCREDS)
-#define PTRACE_MODE_SPEC_IBPB (PTRACE_MODE_ATTACH_REALCREDS | PTRACE_MODE_IBPB)
 
 /**
  * ptrace_may_access - check whether the caller is permitted to access
@@ -226,8 +222,6 @@ static inline void ptrace_init_task(struct task_struct *child, bool ptrace)
 			task_set_jobctl_pending(child, JOBCTL_TRAP_STOP);
 		else
 			sigaddset(&child->pending.signal, SIGSTOP);
-
-		set_tsk_thread_flag(child, TIF_SIGPENDING);
 	}
 	else
 		child->ptracer_cred = NULL;
@@ -357,7 +351,6 @@ extern void user_single_step_siginfo(struct task_struct *tsk,
 static inline void user_single_step_siginfo(struct task_struct *tsk,
 				struct pt_regs *regs, siginfo_t *info)
 {
-	memset(info, 0, sizeof(*info));
 	info->si_signo = SIGTRAP;
 }
 #endif
@@ -402,10 +395,6 @@ static inline void user_single_step_siginfo(struct task_struct *tsk,
 
 #ifndef current_pt_regs
 #define current_pt_regs() task_pt_regs(current)
-#endif
-
-#ifndef ptrace_signal_deliver
-#define ptrace_signal_deliver() ((void)0)
 #endif
 
 /*

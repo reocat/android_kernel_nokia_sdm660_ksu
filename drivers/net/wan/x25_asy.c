@@ -124,9 +124,6 @@ static int x25_asy_change_mtu(struct net_device *dev, int newmtu)
 	unsigned char *xbuff, *rbuff;
 	int len;
 
-	if (newmtu > 65534)
-		return -EINVAL;
-
 	len = 2 * newmtu;
 	xbuff = kmalloc(len + 4, GFP_ATOMIC);
 	rbuff = kmalloc(len + 4, GFP_ATOMIC);
@@ -204,7 +201,7 @@ static void x25_asy_bump(struct x25_asy *sl)
 		dev->stats.rx_dropped++;
 		return;
 	}
-	memcpy(skb_put(skb, count), sl->rbuff, count);
+	skb_put_data(skb, sl->rbuff, count);
 	skb->protocol = x25_type_trans(skb, sl->dev);
 	err = lapb_data_received(skb->dev, skb);
 	if (err != LAPB_OK) {
@@ -325,6 +322,7 @@ static netdev_tx_t x25_asy_xmit(struct sk_buff *skb,
 		if (err != LAPB_OK)
 			netdev_err(dev, "lapb_disconnect_request error: %d\n",
 				   err);
+		/* fall through */
 	default:
 		kfree_skb(skb);
 		return NETDEV_TX_OK;
@@ -495,8 +493,10 @@ static int x25_asy_open(struct net_device *dev)
 
 	/* Cleanup */
 	kfree(sl->xbuff);
+	sl->xbuff = NULL;
 noxbuff:
 	kfree(sl->rbuff);
+	sl->rbuff = NULL;
 norbuff:
 	return -ENOMEM;
 }
@@ -578,8 +578,10 @@ static int x25_asy_open_tty(struct tty_struct *tty)
 
 	/* Perform the low-level X.25 async init */
 	err = x25_asy_open(sl->dev);
-	if (err)
+	if (err) {
+		x25_asy_free(sl);
 		return err;
+	}
 	/* Done.  We have linked the TTY line to a channel. */
 	return 0;
 }
@@ -756,6 +758,8 @@ static void x25_asy_setup(struct net_device *dev)
 	 */
 
 	dev->mtu		= SL_MTU;
+	dev->min_mtu		= 0;
+	dev->max_mtu		= 65534;
 	dev->netdev_ops		= &x25_asy_netdev_ops;
 	dev->watchdog_timeo	= HZ*20;
 	dev->hard_header_len	= 0;

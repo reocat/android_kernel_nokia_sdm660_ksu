@@ -132,7 +132,7 @@ static int emc_determine_rate(struct clk_hw *hw, struct clk_rate_request *req)
 		timing = tegra->timings + i;
 
 		if (timing->rate > req->max_rate) {
-			i = min(i, 1);
+			i = max(i, 1);
 			req->rate = tegra->timings[i - 1].rate;
 			return 0;
 		}
@@ -190,6 +190,7 @@ static struct tegra_emc *emc_ensure_emc_driver(struct tegra_clk_emc *tegra)
 
 	tegra->emc = platform_get_drvdata(pdev);
 	if (!tegra->emc) {
+		put_device(&pdev->dev);
 		pr_err("%s: cannot find EMC driver\n", __func__);
 		return NULL;
 	}
@@ -378,7 +379,7 @@ static int load_one_timing_from_dt(struct tegra_clk_emc *tegra,
 
 	err = of_property_read_u32(node, "clock-frequency", &tmp);
 	if (err) {
-		pr_err("timing %s: failed to read rate\n", node->full_name);
+		pr_err("timing %pOF: failed to read rate\n", node);
 		return err;
 	}
 
@@ -386,8 +387,7 @@ static int load_one_timing_from_dt(struct tegra_clk_emc *tegra,
 
 	err = of_property_read_u32(node, "nvidia,parent-clock-frequency", &tmp);
 	if (err) {
-		pr_err("timing %s: failed to read parent rate\n",
-		       node->full_name);
+		pr_err("timing %pOF: failed to read parent rate\n", node);
 		return err;
 	}
 
@@ -395,8 +395,7 @@ static int load_one_timing_from_dt(struct tegra_clk_emc *tegra,
 
 	timing->parent = of_clk_get_by_name(node, "emc-parent");
 	if (IS_ERR(timing->parent)) {
-		pr_err("timing %s: failed to get parent clock\n",
-		       node->full_name);
+		pr_err("timing %pOF: failed to get parent clock\n", node);
 		return PTR_ERR(timing->parent);
 	}
 
@@ -409,8 +408,8 @@ static int load_one_timing_from_dt(struct tegra_clk_emc *tegra,
 		}
 	}
 	if (timing->parent_index == 0xff) {
-		pr_err("timing %s: %s is not a valid parent\n",
-		       node->full_name, __clk_get_name(timing->parent));
+		pr_err("timing %pOF: %s is not a valid parent\n",
+		       node, __clk_get_name(timing->parent));
 		clk_put(timing->parent);
 		return -EINVAL;
 	}
@@ -450,8 +449,10 @@ static int load_timings_from_dt(struct tegra_clk_emc *tegra,
 		struct emc_timing *timing = tegra->timings + (i++);
 
 		err = load_one_timing_from_dt(tegra, timing, child);
-		if (err)
+		if (err) {
+			of_node_put(child);
 			return err;
+		}
 
 		timing->ram_code = ram_code;
 	}
@@ -473,7 +474,7 @@ struct clk *tegra_clk_register_emc(void __iomem *base, struct device_node *np,
 				   spinlock_t *lock)
 {
 	struct tegra_clk_emc *tegra;
-	struct clk_init_data init;
+	struct clk_init_data init = {};
 	struct device_node *node;
 	u32 node_ram_code;
 	struct clk *clk;
@@ -499,9 +500,9 @@ struct clk *tegra_clk_register_emc(void __iomem *base, struct device_node *np,
 		 * fuses until the apbmisc driver is loaded.
 		 */
 		err = load_timings_from_dt(tegra, node, node_ram_code);
+		of_node_put(node);
 		if (err)
 			return ERR_PTR(err);
-		of_node_put(node);
 		break;
 	}
 
@@ -515,7 +516,7 @@ struct clk *tegra_clk_register_emc(void __iomem *base, struct device_node *np,
 
 	init.name = "emc";
 	init.ops = &tegra_clk_emc_ops;
-	init.flags = 0;
+	init.flags = CLK_IS_CRITICAL;
 	init.parent_names = emc_parent_clk_names;
 	init.num_parents = ARRAY_SIZE(emc_parent_clk_names);
 

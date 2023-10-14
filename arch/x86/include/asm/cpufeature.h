@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ASM_X86_CPUFEATURE_H
 #define _ASM_X86_CPUFEATURE_H
 
@@ -21,8 +22,8 @@ enum cpuid_leafs
 	CPUID_LNX_3,
 	CPUID_7_0_EBX,
 	CPUID_D_1_EAX,
-	CPUID_F_0_EDX,
-	CPUID_F_1_EDX,
+	CPUID_LNX_4,
+	CPUID_DUMMY,
 	CPUID_8000_0008_EBX,
 	CPUID_6_EAX,
 	CPUID_8000_000A_EDX,
@@ -128,11 +129,10 @@ extern const char * const x86_bug_flags[NBUGINTS*32];
 #define boot_cpu_has(bit)	cpu_has(&boot_cpu_data, bit)
 
 #define set_cpu_cap(c, bit)	set_bit(bit, (unsigned long *)((c)->x86_capability))
-#define clear_cpu_cap(c, bit)	clear_bit(bit, (unsigned long *)((c)->x86_capability))
-#define setup_clear_cpu_cap(bit) do { \
-	clear_cpu_cap(&boot_cpu_data, bit);	\
-	set_bit(bit, (unsigned long *)cpu_caps_cleared); \
-} while (0)
+
+extern void setup_clear_cpu_cap(unsigned int bit);
+extern void clear_cpu_cap(struct cpuinfo_x86 *c, unsigned int bit);
+
 #define setup_force_cpu_cap(bit) do { \
 	set_cpu_cap(&boot_cpu_data, bit);	\
 	set_bit(bit, (unsigned long *)cpu_caps_set);	\
@@ -140,30 +140,16 @@ extern const char * const x86_bug_flags[NBUGINTS*32];
 
 #define setup_force_cpu_bug(bit) setup_force_cpu_cap(bit)
 
-#define cpu_has_fpu		boot_cpu_has(X86_FEATURE_FPU)
-#define cpu_has_pse		boot_cpu_has(X86_FEATURE_PSE)
-#define cpu_has_tsc		boot_cpu_has(X86_FEATURE_TSC)
-#define cpu_has_pge		boot_cpu_has(X86_FEATURE_PGE)
-#define cpu_has_apic		boot_cpu_has(X86_FEATURE_APIC)
-#define cpu_has_fxsr		boot_cpu_has(X86_FEATURE_FXSR)
-#define cpu_has_xmm		boot_cpu_has(X86_FEATURE_XMM)
-#define cpu_has_xmm2		boot_cpu_has(X86_FEATURE_XMM2)
-#define cpu_has_aes		boot_cpu_has(X86_FEATURE_AES)
-#define cpu_has_avx		boot_cpu_has(X86_FEATURE_AVX)
-#define cpu_has_avx2		boot_cpu_has(X86_FEATURE_AVX2)
-#define cpu_has_clflush		boot_cpu_has(X86_FEATURE_CLFLUSH)
-#define cpu_has_gbpages		boot_cpu_has(X86_FEATURE_GBPAGES)
-#define cpu_has_arch_perfmon	boot_cpu_has(X86_FEATURE_ARCH_PERFMON)
-#define cpu_has_pat		boot_cpu_has(X86_FEATURE_PAT)
-#define cpu_has_x2apic		boot_cpu_has(X86_FEATURE_X2APIC)
-#define cpu_has_xsave		boot_cpu_has(X86_FEATURE_XSAVE)
-#define cpu_has_xsaves		boot_cpu_has(X86_FEATURE_XSAVES)
-#define cpu_has_osxsave		boot_cpu_has(X86_FEATURE_OSXSAVE)
-#define cpu_has_hypervisor	boot_cpu_has(X86_FEATURE_HYPERVISOR)
+#if defined(__clang__) && !defined(CONFIG_CC_HAS_ASM_GOTO)
+
 /*
- * Do not add any more of those clumsy macros - use static_cpu_has() for
- * fast paths and boot_cpu_has() otherwise!
+ * Workaround for the sake of BPF compilation which utilizes kernel
+ * headers, but clang does not support ASM GOTO and fails the build.
  */
+
+#define static_cpu_has(bit)            boot_cpu_has(bit)
+
+#else
 
 #if defined(CC_HAVE_ASM_GOTO) && defined(CONFIG_X86_FAST_FEATURE_TESTS)
 /*
@@ -173,45 +159,46 @@ extern const char * const x86_bug_flags[NBUGINTS*32];
  */
 static __always_inline __pure bool _static_cpu_has(u16 bit)
 {
-		asm_volatile_goto("1: jmp 6f\n"
-			 "2:\n"
-			 ".skip -(((5f-4f) - (2b-1b)) > 0) * "
-			         "((5f-4f) - (2b-1b)),0x90\n"
-			 "3:\n"
-			 ".section .altinstructions,\"a\"\n"
-			 " .long 1b - .\n"		/* src offset */
-			 " .long 4f - .\n"		/* repl offset */
-			 " .word %P1\n"			/* always replace */
-			 " .byte 3b - 1b\n"		/* src len */
-			 " .byte 5f - 4f\n"		/* repl len */
-			 " .byte 3b - 2b\n"		/* pad len */
-			 ".previous\n"
-			 ".section .altinstr_replacement,\"ax\"\n"
-			 "4: jmp %l[t_no]\n"
-			 "5:\n"
-			 ".previous\n"
-			 ".section .altinstructions,\"a\"\n"
-			 " .long 1b - .\n"		/* src offset */
-			 " .long 0\n"			/* no replacement */
-			 " .word %P0\n"			/* feature bit */
-			 " .byte 3b - 1b\n"		/* src len */
-			 " .byte 0\n"			/* repl len */
-			 " .byte 0\n"			/* pad len */
-			 ".previous\n"
-			 ".section .altinstr_aux,\"ax\"\n"
-			 "6:\n"
-			 " testb %[bitnum],%[cap_byte]\n"
-			 " jnz %l[t_yes]\n"
-			 " jmp %l[t_no]\n"
-			 ".previous\n"
-			 : : "i" (bit), "i" (X86_FEATURE_ALWAYS),
-			     [bitnum] "i" (1 << (bit & 7)),
-			     [cap_byte] "m" (((const char *)boot_cpu_data.x86_capability)[bit >> 3])
-			 : : t_yes, t_no);
-	t_yes:
-		return true;
-	t_no:
-		return false;
+	asm_volatile_goto("1: jmp 6f\n"
+		 "2:\n"
+		 ".skip -(((5f-4f) - (2b-1b)) > 0) * "
+			 "((5f-4f) - (2b-1b)),0x90\n"
+		 "3:\n"
+		 ".section .altinstructions,\"a\"\n"
+		 " .long 1b - .\n"		/* src offset */
+		 " .long 4f - .\n"		/* repl offset */
+		 " .word %P[always]\n"		/* always replace */
+		 " .byte 3b - 1b\n"		/* src len */
+		 " .byte 5f - 4f\n"		/* repl len */
+		 " .byte 3b - 2b\n"		/* pad len */
+		 ".previous\n"
+		 ".section .altinstr_replacement,\"ax\"\n"
+		 "4: jmp %l[t_no]\n"
+		 "5:\n"
+		 ".previous\n"
+		 ".section .altinstructions,\"a\"\n"
+		 " .long 1b - .\n"		/* src offset */
+		 " .long 0\n"			/* no replacement */
+		 " .word %P[feature]\n"		/* feature bit */
+		 " .byte 3b - 1b\n"		/* src len */
+		 " .byte 0\n"			/* repl len */
+		 " .byte 0\n"			/* pad len */
+		 ".previous\n"
+		 ".section .altinstr_aux,\"ax\"\n"
+		 "6:\n"
+		 " testb %[bitnum],%[cap_byte]\n"
+		 " jnz %l[t_yes]\n"
+		 " jmp %l[t_no]\n"
+		 ".previous\n"
+		 : : [feature]  "i" (bit),
+		     [always]   "i" (X86_FEATURE_ALWAYS),
+		     [bitnum]   "i" (1 << (bit & 7)),
+		     [cap_byte] "m" (((const char *)boot_cpu_data.x86_capability)[bit >> 3])
+		 : : t_yes, t_no);
+t_yes:
+	return true;
+t_no:
+	return false;
 }
 
 #define static_cpu_has(bit)					\
@@ -220,12 +207,6 @@ static __always_inline __pure bool _static_cpu_has(u16 bit)
 		boot_cpu_has(bit) :				\
 		_static_cpu_has(bit)				\
 )
-#else
-/*
- * Fall back to dynamic for gcc versions which don't support asm goto. Should be
- * a minority now anyway.
- */
-#define static_cpu_has(bit)		boot_cpu_has(bit)
 #endif
 
 #define cpu_has_bug(c, bit)		cpu_has(c, (bit))
@@ -234,6 +215,7 @@ static __always_inline __pure bool _static_cpu_has(u16 bit)
 
 #define static_cpu_has_bug(bit)		static_cpu_has((bit))
 #define boot_cpu_has_bug(bit)		cpu_has_bug(&boot_cpu_data, (bit))
+#define boot_cpu_set_bug(bit)		set_cpu_cap(&boot_cpu_data, (bit))
 
 #define MAX_CPU_FEATURES		(NCAPINTS * 32)
 #define cpu_have_feature		boot_cpu_has

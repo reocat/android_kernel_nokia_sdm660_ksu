@@ -1,3 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
+/*
+ * Copyright (c) 2019, The Linux Foundation. All rights reserved.
+ */
+
 #ifndef _UAPI_QCOTA_H
 #define _UAPI_QCOTA_H
 
@@ -87,7 +92,7 @@ struct qce_f8_req {
  *   In one request, multiple packets can be ciphered, and output to the
  *   data_out stream.
  *
- *   Packet data are layed out contiguously in sequence in data_in,
+ *   Packet data are laid out contiguously in sequence in data_in,
  *   and data_out area. Every packet is identical size.
  *   If the PDU is not byte aligned, set the data_len value of
  *   to the rounded up value of the packet size. Eg, PDU size of
@@ -105,7 +110,7 @@ struct qce_f8_req {
  *   unchanged and output to the dataOut area.
  *
  *   For each packet the input arguments of bearer, direction,
- *   ckey, algoritm have to be the same. count_c is the ciphering sequence
+ *   ckey, algorithm have to be the same. count_c is the ciphering sequence
  *   number of the first packet. The 2nd packet's ciphering sequence
  *   number is assumed to be count_c + 1. The 3rd packet's ciphering sequence
  *   number is count_c + 2.....
@@ -156,7 +161,7 @@ struct qce_f8_multi_pkt_req {
  *   packet.
  *
  *   For each packet the input arguments of bearer, direction,
- *   ckey, algoritm have to be the same. count_c is the ciphering sequence
+ *   ckey, algorithm have to be the same. count_c is the ciphering sequence
  *   number of the first packet. The 2nd packet's ciphering sequence
  *   number is assumed to be count_c + 1. The 3rd packet's ciphering sequence
  *   number is count_c + 2.....
@@ -168,7 +173,7 @@ struct cipher_iov {
 	unsigned short  size;
 };
 
-struct qce_f8_varible_multi_pkt_req {
+struct qce_f8_variable_multi_pkt_req {
 	unsigned short    num_pkt;
 	struct cipher_iov cipher_iov[MAX_NUM_V_MULTI_PKT];
 	struct qce_f8_req qce_f8_req;
@@ -205,6 +210,6 @@ struct qce_f9_req {
 #define QCOTA_F8_MPKT_REQ _IOWR(QCOTA_IOC_MAGIC, 2, struct qce_f8_multi_pkt_req)
 #define QCOTA_F9_REQ _IOWR(QCOTA_IOC_MAGIC, 3, struct qce_f9_req)
 #define QCOTA_F8_V_MPKT_REQ _IOWR(QCOTA_IOC_MAGIC, 4,\
-				struct qce_f8_varible_multi_pkt_req)
+				struct qce_f8_variable_multi_pkt_req)
 
 #endif /* _UAPI_QCOTA_H */

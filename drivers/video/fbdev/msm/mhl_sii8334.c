@@ -1,15 +1,5 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2012-2014, 2018, 2020, The Linux Foundation. All rights reserved. */
 
 #include <linux/bitops.h>
 #include <linux/delay.h>
@@ -179,14 +169,14 @@ u16 support_rcp_key_code_tbl[] = {
 
 
 uint8_t slave_addrs[MAX_PAGES] = {
-	DEV_PAGE_TPI_0    ,
-	DEV_PAGE_TX_L0_0  ,
-	DEV_PAGE_TX_L1_0  ,
-	DEV_PAGE_TX_2_0   ,
-	DEV_PAGE_TX_3_0   ,
-	DEV_PAGE_CBUS     ,
-	DEV_PAGE_DDC_EDID ,
-	DEV_PAGE_DDC_SEGM ,
+	DEV_PAGE_TPI_0,
+	DEV_PAGE_TX_L0_0,
+	DEV_PAGE_TX_L1_0,
+	DEV_PAGE_TX_2_0,
+	DEV_PAGE_TX_3_0,
+	DEV_PAGE_CBUS,
+	DEV_PAGE_DDC_EDID,
+	DEV_PAGE_DDC_SEGM,
 };
 
 static irqreturn_t mhl_tx_isr(int irq, void *dev_id);
@@ -203,7 +193,7 @@ int mhl_i2c_reg_read(struct i2c_client *client,
 	int rc = -1;
 	uint8_t buffer = 0;
 
-	rc = mdss_i2c_byte_read(client, slave_addrs[slave_addr_index],
+	rc = dss_i2c_byte_read(client, slave_addrs[slave_addr_index],
 				reg_offset, &buffer);
 	if (rc) {
 		pr_err("%s: slave=%x, off=%x\n",
@@ -218,7 +208,7 @@ int mhl_i2c_reg_write(struct i2c_client *client,
 			     uint8_t slave_addr_index, uint8_t reg_offset,
 			     uint8_t value)
 {
-	return mdss_i2c_byte_write(client, slave_addrs[slave_addr_index],
+	return dss_i2c_byte_write(client, slave_addrs[slave_addr_index],
 				 reg_offset, &value);
 }
 
@@ -244,6 +234,7 @@ static int mhl_tx_get_dt_data(struct device *dev,
 	struct platform_device *hdmi_pdev = NULL;
 	struct device_node *hdmi_tx_node = NULL;
 	int dt_gpio;
+
 	i = 0;
 
 	if (!dev || !pdata) {
@@ -340,9 +331,6 @@ static int mhl_tx_get_dt_data(struct device *dev,
 	return 0;
 error:
 	pr_err("%s: ret due to err\n", __func__);
-	for (i = 0; i < MHL_TX_MAX_GPIO; i++)
-		if (pdata->gpios[i])
-			devm_kfree(dev, pdata->gpios[i]);
 	return rc;
 } /* mhl_tx_get_dt_data */
 
@@ -421,9 +409,8 @@ static int mhl_sii_config(struct mhl_tx_ctrl *mhl_ctrl, bool on)
 			pr_err("%s: request_threaded_irq failed, status: %d\n",
 			       __func__, rc);
 			return -ENODEV;
-		} else {
-			mhl_ctrl->irq_req_done = true;
 		}
+		mhl_ctrl->irq_req_done = true;
 	} else if (!on && mhl_ctrl->irq_req_done) {
 		free_irq(mhl_ctrl->i2c_handle->irq, mhl_ctrl);
 		mhl_gpio_config(mhl_ctrl, 0);
@@ -910,7 +897,7 @@ void mhl_drive_hpd(struct mhl_tx_ctrl *mhl_ctrl, uint8_t to_state)
 		 * Drive HPD to UP state
 		 * Set HPD_OUT_OVR_EN = HPD State
 		 * EDID read and Un-force HPD (from low)
-		 * propogate to src let HPD float by clearing
+		 * propagate to src let HPD float by clearing
 		 * HPD OUT OVRRD EN
 		 */
 		spin_lock_irqsave(&mhl_ctrl->lock, flags);
@@ -992,7 +979,7 @@ static int mhl_msm_read_rgnd_int(struct mhl_tx_ctrl *mhl_ctrl)
 		    (BIT1 | BIT0));
 	pr_debug("imp range read=%02X\n", (int)rgnd_imp);
 
-	if (0x02 == rgnd_imp) {
+	if (rgnd_impi == 0x02) {
 		pr_debug("%s: mhl sink\n", __func__);
 		if (hdmi_mhl_ops) {
 			rc = hdmi_mhl_ops->set_upstream_hpd(
@@ -1070,13 +1057,13 @@ static int dev_detect_isr(struct mhl_tx_ctrl *mhl_ctrl)
 	status = MHL_SII_REG_NAME_RD(REG_INTR4);
 	pr_debug("%s: reg int4 st=%02X\n", __func__, status);
 
-	if ((0x00 == status) &&\
+	if ((status == 0x00) &&
 	    (mhl_ctrl->cur_state == POWER_STATE_D3)) {
 		pr_warn("%s: invalid intr\n", __func__);
 		return 0;
 	}
 
-	if (0xFF == status) {
+	if (status == 0xFF) {
 		pr_warn("%s: invalid intr 0xff\n", __func__);
 		MHL_SII_REG_NAME_WR(REG_INTR4, status);
 		return 0;
@@ -1120,7 +1107,7 @@ static int dev_detect_isr(struct mhl_tx_ctrl *mhl_ctrl)
 		return 0;
 	}
 
-	if ((mhl_ctrl->cur_state != POWER_STATE_D0_NO_MHL) &&\
+	if ((mhl_ctrl->cur_state != POWER_STATE_D0_NO_MHL) &&
 	    (status & BIT6)) {
 		/* rgnd rdy Intr */
 		pr_debug("%s: rgnd ready intr\n", __func__);
@@ -1129,7 +1116,7 @@ static int dev_detect_isr(struct mhl_tx_ctrl *mhl_ctrl)
 	}
 
 	/* Can't succeed at these in D3 */
-	if ((mhl_ctrl->cur_state != POWER_STATE_D3) &&\
+	if ((mhl_ctrl->cur_state != POWER_STATE_D3) &&
 	     (status & BIT4)) {
 		/* cbus lockout interrupt?
 		 * Hardware detection mechanism figures that
@@ -1221,6 +1208,7 @@ static void mhl_hpd_stat_isr(struct mhl_tx_ctrl *mhl_ctrl)
 
 		if (BIT6 & (cbus_stat ^ t)) {
 			u8 status = cbus_stat & BIT6;
+
 			mhl_drive_hpd(mhl_ctrl, status ? HPD_UP : HPD_DOWN);
 			if (!status && mhl_ctrl->mhl_det_discon) {
 				pr_debug("%s:%u: power_down\n",
@@ -1282,7 +1270,7 @@ int mhl_send_msc_command(struct mhl_tx_ctrl *mhl_ctrl,
 	if (!req)
 		return -EFAULT;
 
-	pr_debug("%s: command=0x%02x offset=0x%02x %02x %02x",
+	pr_debug("%s: command=0x%02x offset=0x%02x %02x %02x\n",
 		 __func__,
 		 req->command,
 		 req->offset,
@@ -1424,6 +1412,7 @@ static void mhl_cbus_isr(struct mhl_tx_ctrl *mhl_ctrl)
 	/* received SET_INT */
 	if (regval & BIT2) {
 		uint8_t intr;
+
 		intr = MHL_SII_REG_NAME_RD(REG_CBUS_SET_INT_0);
 		MHL_SII_REG_NAME_WR(REG_CBUS_SET_INT_0, intr);
 		mhl_msc_recv_set_int(mhl_ctrl, 0, intr);
@@ -1449,6 +1438,7 @@ static void mhl_cbus_isr(struct mhl_tx_ctrl *mhl_ctrl)
 	/* received WRITE_STAT */
 	if (regval & BIT3) {
 		uint8_t stat;
+
 		stat = MHL_SII_REG_NAME_RD(REG_CBUS_WRITE_STAT_0);
 		mhl_msc_recv_write_stat(mhl_ctrl, 0, stat);
 
@@ -1774,7 +1764,6 @@ static int mhl_i2c_probe(struct i2c_client *client,
 
 	mhl_ctrl = devm_kzalloc(&client->dev, sizeof(*mhl_ctrl), GFP_KERNEL);
 	if (!mhl_ctrl) {
-		pr_err("%s: FAILED: cannot alloc hdmi tx ctrl\n", __func__);
 		rc = -ENOMEM;
 		goto failed_no_mem;
 	}
@@ -1783,17 +1772,16 @@ static int mhl_i2c_probe(struct i2c_client *client,
 		pdata = devm_kzalloc(&client->dev,
 			     sizeof(struct mhl_tx_platform_data), GFP_KERNEL);
 		if (!pdata) {
-			dev_err(&client->dev, "Failed to allocate memory\n");
 			rc = -ENOMEM;
 			goto failed_no_mem;
 		}
-
 		rc = mhl_tx_get_dt_data(&client->dev, pdata);
 		if (rc) {
 			pr_err("%s: FAILED: parsing device tree data; rc=%d\n",
 				__func__, rc);
 			goto failed_dt_data;
 		}
+
 		mhl_ctrl->i2c_handle = client;
 		mhl_ctrl->pdata = pdata;
 		i2c_set_clientdata(client, mhl_ctrl);
@@ -1822,11 +1810,8 @@ static int mhl_i2c_probe(struct i2c_client *client,
 
 		mhl_ctrl->rcp_key_code_tbl = vmalloc(
 			sizeof(support_rcp_key_code_tbl));
-		if (!mhl_ctrl->rcp_key_code_tbl) {
-			pr_err("%s: no alloc mem for rcp keycode tbl\n",
-			       __func__);
+		if (!mhl_ctrl->rcp_key_code_tbl)
 			return -ENOMEM;
-		}
 
 		mhl_ctrl->rcp_key_code_tbl_len = sizeof(
 			support_rcp_key_code_tbl);
@@ -1922,7 +1907,6 @@ static int mhl_i2c_probe(struct i2c_client *client,
 
 	mhl_info = devm_kzalloc(&client->dev, sizeof(*mhl_info), GFP_KERNEL);
 	if (!mhl_info) {
-		pr_err("%s: alloc mhl info failed\n", __func__);
 		rc = -ENOMEM;
 		goto failed_probe_pwr;
 	}
@@ -1942,18 +1926,8 @@ failed_probe_pwr:
 	power_supply_unregister(&mhl_ctrl->mhl_psy);
 failed_probe:
 	mhl_sii_config(mhl_ctrl, false);
-	/* do not deep-free */
-	if (mhl_info)
-		devm_kfree(&client->dev, mhl_info);
 failed_dt_data:
-	if (pdata)
-		devm_kfree(&client->dev, pdata);
 failed_no_mem:
-	if (mhl_ctrl)
-		devm_kfree(&client->dev, mhl_ctrl);
-	mhl_info = NULL;
-	pdata = NULL;
-	mhl_ctrl = NULL;
 	pr_err("%s: PROBE FAILED, rc=%d\n", __func__, rc);
 	return rc;
 }
@@ -1972,11 +1946,6 @@ static int mhl_i2c_remove(struct i2c_client *client)
 
 	destroy_workqueue(mhl_ctrl->mhl_workq);
 
-	if (mhl_ctrl->mhl_info)
-		devm_kfree(&client->dev, mhl_ctrl->mhl_info);
-	if (mhl_ctrl->pdata)
-		devm_kfree(&client->dev, mhl_ctrl->pdata);
-	devm_kfree(&client->dev, mhl_ctrl);
 	return 0;
 }
 
@@ -2071,7 +2040,7 @@ static const struct dev_pm_ops mhl_i2c_pm_ops = {
 };
 #endif /* CONFIG_PM_SLEEP */
 
-static struct of_device_id mhl_match_table[] = {
+const struct of_device_id mhl_match_table[] = {
 	{.compatible = COMPATIBLE_NAME,},
 	{ },
 };
@@ -2079,7 +2048,6 @@ static struct of_device_id mhl_match_table[] = {
 static struct i2c_driver mhl_sii_i2c_driver = {
 	.driver = {
 		.name = MHL_DRIVER_NAME,
-		.owner = THIS_MODULE,
 		.of_match_table = mhl_match_table,
 #ifdef CONFIG_PM_SLEEP
 		.pm = &mhl_i2c_pm_ops,

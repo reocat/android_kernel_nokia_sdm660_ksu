@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # Makefile for the Linux kernel device drivers.
 #
@@ -10,18 +11,22 @@ obj-y				+= bus/
 
 obj-$(CONFIG_GENERIC_PHY)	+= phy/
 
+obj-$(CONFIG_VSERVICES_SUPPORT)	+= vservices/
+
 # GPIO must come after pinctrl as gpios may need to mux pins etc
 obj-$(CONFIG_PINCTRL)		+= pinctrl/
-obj-y				+= gpio/
+obj-$(CONFIG_GPIOLIB)		+= gpio/
 obj-y				+= pwm/
-obj-$(CONFIG_PCI)		+= pci/
+
+obj-y				+= pci/
+
 obj-$(CONFIG_PARISC)		+= parisc/
 obj-$(CONFIG_RAPIDIO)		+= rapidio/
 obj-y				+= video/
 obj-y				+= idle/
 
 # IPMI must come before ACPI in order to provide IPMI opregion support
-obj-$(CONFIG_IPMI_HANDLER)	+= char/ipmi/
+obj-y				+= char/ipmi/
 
 obj-$(CONFIG_ACPI)		+= acpi/
 obj-$(CONFIG_SFI)		+= sfi/
@@ -29,6 +34,8 @@ obj-$(CONFIG_SFI)		+= sfi/
 # was used and do nothing if so
 obj-$(CONFIG_PNP)		+= pnp/
 obj-y				+= amba/
+
+obj-y				+= clk/
 # Many drivers will want to use DMA so this has to be made available
 # really early.
 obj-$(CONFIG_DMADEVICES)	+= dma/
@@ -64,21 +71,22 @@ obj-$(CONFIG_PARPORT)		+= parport/
 obj-$(CONFIG_NVM)		+= lightnvm/
 obj-y				+= base/ block/ misc/ mfd/ nfc/ soc/
 obj-$(CONFIG_LIBNVDIMM)		+= nvdimm/
+obj-$(CONFIG_DAX)		+= dax/
 obj-$(CONFIG_DMA_SHARED_BUFFER) += dma-buf/
 obj-$(CONFIG_NUBUS)		+= nubus/
 obj-y				+= macintosh/
 obj-$(CONFIG_IDE)		+= ide/
 obj-$(CONFIG_CRYPTO)		+= crypto/
-obj-$(CONFIG_SCSI)		+= scsi/
+obj-$(CONFIG_EXTCON)		+= extcon/
+obj-y				+= scsi/
 obj-y				+= nvme/
 obj-$(CONFIG_ATA)		+= ata/
 obj-$(CONFIG_TARGET_CORE)	+= target/
 obj-$(CONFIG_MTD)		+= mtd/
 obj-$(CONFIG_SPI)		+= spi/
 obj-$(CONFIG_SPMI)		+= spmi/
+obj-$(CONFIG_HSI)		+= hsi/
 obj-$(CONFIG_SLIMBUS)		+= slimbus/
-obj-$(CONFIG_SOUNDWIRE)		+= soundwire/
-obj-y				+= hsi/
 obj-y				+= net/
 obj-$(CONFIG_ATM)		+= atm/
 obj-$(CONFIG_FUSION)		+= message/
@@ -105,11 +113,11 @@ obj-$(CONFIG_SERIO)		+= input/serio/
 obj-$(CONFIG_GAMEPORT)		+= input/gameport/
 obj-$(CONFIG_INPUT)		+= input/
 obj-$(CONFIG_RTC_LIB)		+= rtc/
-obj-y				+= i2c/ media/
+obj-y				+= i2c/ i3c/ media/
 obj-$(CONFIG_PPS)		+= pps/
-obj-$(CONFIG_PTP_1588_CLOCK)	+= ptp/
+obj-y				+= ptp/
 obj-$(CONFIG_W1)		+= w1/
-obj-$(CONFIG_POWER_SUPPLY)	+= power/
+obj-y				+= power/
 obj-$(CONFIG_HWMON)		+= hwmon/
 obj-$(CONFIG_THERMAL)		+= thermal/
 obj-$(CONFIG_WATCHDOG)		+= watchdog/
@@ -119,18 +127,16 @@ obj-$(CONFIG_ACCESSIBILITY)	+= accessibility/
 obj-$(CONFIG_ISDN)		+= isdn/
 obj-$(CONFIG_EDAC)		+= edac/
 obj-$(CONFIG_EISA)		+= eisa/
-obj-y				+= lguest/
+obj-$(CONFIG_PM_OPP)		+= opp/
 obj-$(CONFIG_CPU_FREQ)		+= cpufreq/
 obj-$(CONFIG_CPU_IDLE)		+= cpuidle/
 obj-y				+= mmc/
 obj-$(CONFIG_MEMSTICK)		+= memstick/
-obj-y				+= leds/
-obj-$(CONFIG_SWITCH)		+= switch/
+obj-$(CONFIG_NEW_LEDS)		+= leds/
 obj-$(CONFIG_INFINIBAND)	+= infiniband/
 obj-$(CONFIG_SGI_SN)		+= sn/
 obj-y				+= firmware/
 obj-$(CONFIG_SUPERH)		+= sh/
-obj-$(CONFIG_ARCH_SHMOBILE)	+= sh/
 ifndef CONFIG_ARCH_USES_GETTIMEOFFSET
 obj-y				+= clocksource/
 endif
@@ -145,8 +151,6 @@ obj-$(CONFIG_VHOST)		+= vhost/
 obj-$(CONFIG_VLYNQ)		+= vlynq/
 obj-$(CONFIG_STAGING)		+= staging/
 obj-y				+= platform/
-#common clk code
-obj-y				+= clk/
 
 # iommu/ comes before gpu as gpu are using iommu controllers
 obj-$(CONFIG_IOMMU_SUPPORT)	+= iommu/
@@ -155,13 +159,15 @@ obj-$(CONFIG_MAILBOX)		+= mailbox/
 obj-$(CONFIG_HWSPINLOCK)	+= hwspinlock/
 obj-$(CONFIG_REMOTEPROC)	+= remoteproc/
 obj-$(CONFIG_RPMSG)		+= rpmsg/
+obj-$(CONFIG_SOUNDWIRE)		+= soundwire/
+
+obj-$(CONFIG_ENERGY_MODEL)	+= energy_model/
 
 # Virtualization drivers
 obj-$(CONFIG_VIRT_DRIVERS)	+= virt/
 obj-$(CONFIG_HYPERV)		+= hv/
 
 obj-$(CONFIG_PM_DEVFREQ)	+= devfreq/
-obj-$(CONFIG_EXTCON)		+= extcon/
 obj-$(CONFIG_MEMORY)		+= memory/
 obj-$(CONFIG_IIO)		+= iio/
 obj-$(CONFIG_VME_BUS)		+= vme/
@@ -179,12 +185,11 @@ obj-$(CONFIG_STM)		+= hwtracing/stm/
 obj-$(CONFIG_ANDROID)		+= android/
 obj-$(CONFIG_NVMEM)		+= nvmem/
 obj-$(CONFIG_FPGA)		+= fpga/
-
-obj-$(CONFIG_BIF)		+= bif/
-
-obj-$(CONFIG_SENSORS_SSC)	+= sensors/
-obj-$(CONFIG_ESOC)              += esoc/
-obj-$(CONFIG_HAPTICS_DRV2605)         += haptics/
-obj-y   += fih/
+obj-$(CONFIG_FSI)		+= fsi/
 obj-$(CONFIG_TEE)		+= tee/
-obj-$(CONFIG_KSU) += kernelsu/
+obj-$(CONFIG_MULTIPLEXER)	+= mux/
+obj-$(CONFIG_ESOC)              += esoc/
+obj-$(CONFIG_UNISYS_VISORBUS)	+= visorbus/
+obj-$(CONFIG_SIOX)		+= siox/
+obj-$(CONFIG_GNSS)		+= gnss/
+obj-$(CONFIG_SENSORS_SSC)	+= sensors/

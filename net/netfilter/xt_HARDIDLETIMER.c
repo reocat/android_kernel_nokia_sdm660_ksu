@@ -1,10 +1,10 @@
-/*
- * linux/net/netfilter/xt_HARDIDLETIMER.c
+// SPDX-License-Identifier: GPL-2.0-only
+/* linux/net/netfilter/xt_HARDIDLETIMER.c
  *
  * Netfilter module to trigger a timer when packet matches.
  * After timer expires a kevent will be sent.
  *
- * Copyright (c) 2014-2015, 2017 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, 2017-2019, The Linux Foundation. All rights reserved.
  *
  * Copyright (C) 2004, 2010 Nokia Corporation
  *
@@ -14,20 +14,6 @@
  * by Luciano Coelho <luciano.coelho@nokia.com>
  *
  * Contact: Luciano Coelho <luciano.coelho@nokia.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -72,7 +58,7 @@ static DEFINE_MUTEX(list_mutex);
 static struct kobject *hardidletimer_tg_kobj;
 
 static void notify_netlink_uevent(const char *iface,
-		struct hardidletimer_tg *timer)
+				  struct hardidletimer_tg *timer)
 {
 	char iface_msg[NLMSG_MAX_SIZE];
 	char state_msg[NLMSG_MAX_SIZE];
@@ -81,21 +67,18 @@ static void notify_netlink_uevent(const char *iface,
 
 	res = snprintf(iface_msg, NLMSG_MAX_SIZE, "INTERFACE=%s",
 		       iface);
-	if (NLMSG_MAX_SIZE <= res) {
+	if (res >= NLMSG_MAX_SIZE) {
 		pr_err("message too long (%d)", res);
 		return;
 	}
 	res = snprintf(state_msg, NLMSG_MAX_SIZE, "STATE=%s",
 		       timer->active ? "active" : "inactive");
-	if (NLMSG_MAX_SIZE <= res) {
+	if (res >= NLMSG_MAX_SIZE) {
 		pr_err("message too long (%d)", res);
 		return;
 	}
 	pr_debug("putting nlmsg: <%s> <%s>\n", iface_msg, state_msg);
 	kobject_uevent_env(hardidletimer_tg_kobj, KOBJ_CHANGE, envp);
-	return;
-
-
 }
 
 static
@@ -103,7 +86,7 @@ struct hardidletimer_tg *__hardidletimer_tg_find_by_label(const char *label)
 {
 	struct hardidletimer_tg *entry;
 
-	BUG_ON(!label);
+	WARN_ON(!label);
 
 	list_for_each_entry(entry, &hardidletimer_tg_list, entry) {
 		if (!strcmp(label, entry->attr.attr.name))
@@ -114,7 +97,7 @@ struct hardidletimer_tg *__hardidletimer_tg_find_by_label(const char *label)
 }
 
 static ssize_t hardidletimer_tg_show(struct kobject *kobj,
-			struct attribute *attr, char *buf)
+				     struct attribute *attr, char *buf)
 {
 	struct hardidletimer_tg *timer;
 	ktime_t expires;
@@ -134,7 +117,7 @@ static ssize_t hardidletimer_tg_show(struct kobject *kobj,
 	if (ktimespec.tv_sec >= 0)
 		return snprintf(buf, PAGE_SIZE, "%ld\n", ktimespec.tv_sec);
 
-	if ((timer) && (timer->send_nl_msg))
+	if ((timer) && timer->send_nl_msg)
 		return snprintf(buf, PAGE_SIZE, "0 %ld\n", ktimespec.tv_sec);
 	else
 		return snprintf(buf, PAGE_SIZE, "0\n");
@@ -152,7 +135,7 @@ static void hardidletimer_tg_work(struct work_struct *work)
 }
 
 static enum alarmtimer_restart hardidletimer_tg_alarmproc(struct alarm *alarm,
-							ktime_t now)
+							  ktime_t now)
 {
 	struct hardidletimer_tg *timer = alarm->data;
 
@@ -179,7 +162,7 @@ static int hardidletimer_tg_create(struct hardidletimer_tg_info *info)
 		ret = -ENOMEM;
 		goto out_free_timer;
 	}
-	info->timer->attr.attr.mode = S_IRUGO;
+	info->timer->attr.attr.mode = 0444;
 	info->timer->attr.show = hardidletimer_tg_show;
 
 	ret = sysfs_create_file(hardidletimer_tg_kobj, &info->timer->attr.attr);
@@ -193,7 +176,7 @@ static int hardidletimer_tg_create(struct hardidletimer_tg_info *info)
 	list_add(&info->timer->entry, &hardidletimer_tg_list);
 
 	alarm_init(&info->timer->alarm, ALARM_BOOTTIME,
-				hardidletimer_tg_alarmproc);
+		   hardidletimer_tg_alarmproc);
 	info->timer->alarm.data = info->timer;
 	info->timer->refcnt = 1;
 	info->timer->send_nl_msg = (info->send_nl_msg == 0) ? false : true;
@@ -215,7 +198,7 @@ out:
 
 /* The actual xt_tables plugin. */
 static unsigned int hardidletimer_tg_target(struct sk_buff *skb,
-					 const struct xt_action_param *par)
+					    const struct xt_action_param *par)
 {
 	const struct hardidletimer_tg_info *info = par->targinfo;
 	ktime_t tout;
@@ -223,9 +206,9 @@ static unsigned int hardidletimer_tg_target(struct sk_buff *skb,
 	pr_debug("resetting timer %s, timeout period %u\n",
 		 info->label, info->timeout);
 
-	BUG_ON(!info->timer);
+	WARN_ON(!info->timer);
 
-	if (info->timer->active == false) {
+	if (!info->timer->active) {
 		schedule_work(&info->timer->work);
 		pr_debug("Starting timer %s\n", info->label);
 	}
@@ -243,6 +226,9 @@ static int hardidletimer_tg_checkentry(const struct xt_tgchk_param *par)
 	struct hardidletimer_tg_info *info = par->targinfo;
 	int ret;
 	ktime_t tout;
+	struct timespec ktimespec;
+
+	memset(&ktimespec, 0, sizeof(struct timespec));
 
 	pr_debug("checkentry targinfo %s\n", info->label);
 
@@ -263,14 +249,15 @@ static int hardidletimer_tg_checkentry(const struct xt_tgchk_param *par)
 	info->timer = __hardidletimer_tg_find_by_label(info->label);
 	if (info->timer) {
 		info->timer->refcnt++;
-		if (info->timer->active == false) {
-				schedule_work(&info->timer->work);
-				pr_debug("Starting Checkentry timer\n");
-		}
+		/* calculate remaining expiry time */
+		tout = alarm_expires_remaining(&info->timer->alarm);
+		ktimespec = ktime_to_timespec(tout);
 
-		info->timer->active = true;
-		tout = ktime_set(info->timeout, 0);
-		alarm_start_relative(&info->timer->alarm, tout);
+		if (ktimespec.tv_sec > 0) {
+			pr_debug("time_expiry_remaining %ld\n",
+				 ktimespec.tv_sec);
+			alarm_start_relative(&info->timer->alarm, tout);
+		}
 
 		pr_debug("increased refcnt of timer %s to %u\n",
 			 info->label, info->timer->refcnt);
@@ -303,12 +290,12 @@ static void hardidletimer_tg_destroy(const struct xt_tgdtor_param *par)
 		alarm_cancel(&info->timer->alarm);
 		cancel_work_sync(&info->timer->work);
 		sysfs_remove_file(hardidletimer_tg_kobj,
-				&info->timer->attr.attr);
+				  &info->timer->attr.attr);
 		kfree(info->timer->attr.attr.name);
 		kfree(info->timer);
 	} else {
 		pr_debug("decreased refcnt of timer %s to %u\n",
-		info->label, info->timer->refcnt);
+			 info->label, info->timer->refcnt);
 	}
 
 	mutex_unlock(&list_mutex);
@@ -341,7 +328,7 @@ static int __init hardidletimer_tg_init(void)
 	}
 
 	hardidletimer_tg_device = device_create(hardidletimer_tg_class, NULL,
-					    MKDEV(0, 0), NULL, "timers");
+						MKDEV(0, 0), NULL, "timers");
 	err = PTR_ERR(hardidletimer_tg_device);
 	if (IS_ERR(hardidletimer_tg_device)) {
 		pr_debug("couldn't register system device\n");

@@ -1,4 +1,5 @@
-/* Copyright (c) 2014-2015 The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2014-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,7 +12,7 @@
  *
  */
 /*
- * SPI driver for Qualcomm MSM platforms.
+ * SPI driver for Qualcomm Technologies, Inc. MSM platforms.
  */
 
 /**
@@ -34,7 +35,10 @@
  * @bam_producer_pipe_index BAM producer pipe
  * @rt_priority true if RT thread
  * @use_pinctrl true if pinctrl library is used
- * @is_shared true when qup is shared between ee's
+ * @is_shared true when qup is shared between ee's and client driver is not
+	in control of spi pm_runtime_get_sync/put_sync.
+ * @shared_ee true when qup is shared between ee's and client driver is in
+	control of spi pm_runtime_get_sync/put_sync.
  */
 struct msm_spi_platform_data {
 	u32 max_clock_speed;
@@ -48,11 +52,10 @@ struct msm_spi_platform_data {
 	u32  infinite_mode;
 	bool ver_reg_exists;
 	bool use_bam;
-	bool slv_test;
 	u32  bam_consumer_pipe_index;
 	u32  bam_producer_pipe_index;
 	bool rt_priority;
 	bool use_pinctrl;
 	bool is_shared;
-	bool is_slv_ctrl;
+	bool shared_ee;
 };

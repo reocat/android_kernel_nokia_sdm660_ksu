@@ -1,18 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Driver for msm7k serial device and console
  *
  * Copyright (C) 2007 Google, Inc.
  * Author: Robert Love <rlove@google.com>
  * Copyright (c) 2011, Code Aurora Forum. All rights reserved.
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #if defined(CONFIG_SERIAL_MSM_CONSOLE) && defined(CONFIG_MAGIC_SYSRQ)
@@ -197,13 +189,13 @@ struct msm_port {
 static
 void msm_write(struct uart_port *port, unsigned int val, unsigned int off)
 {
-	writel_relaxed_no_log(val, port->membase + off);
+	writel_relaxed(val, port->membase + off);
 }
 
 static
 unsigned int msm_read(struct uart_port *port, unsigned int off)
 {
-	return readl_relaxed_no_log(port->membase + off);
+	return readl_relaxed(port->membase + off);
 }
 
 /*
@@ -1234,7 +1226,7 @@ err_irq:
 		msm_release_dma(msm_port);
 
 	clk_disable_unprepare(msm_port->pclk);
-
+	clk_disable_unprepare(msm_port->clk);
 err_pclk:
 	clk_disable_unprepare(msm_port->clk);
 
@@ -1605,6 +1597,7 @@ static inline struct uart_port *msm_get_port_from_line(unsigned int line)
 static void __msm_console_write(struct uart_port *port, const char *s,
 				unsigned int count, bool is_uartdm)
 {
+	unsigned long flags;
 	int i;
 	int num_newlines = 0;
 	bool replaced = false;
@@ -1621,6 +1614,8 @@ static void __msm_console_write(struct uart_port *port, const char *s,
 		if (s[i] == '\n')
 			num_newlines++;
 	count += num_newlines;
+
+	local_irq_save(flags);
 
 	if (port->sysrq)
 		locked = 0;
@@ -1669,6 +1664,8 @@ static void __msm_console_write(struct uart_port *port, const char *s,
 
 	if (locked)
 		spin_unlock(&port->lock);
+
+	local_irq_restore(flags);
 }
 
 static void msm_console_write(struct console *co, const char *s,
@@ -1863,27 +1860,25 @@ static const struct of_device_id msm_match_table[] = {
 };
 MODULE_DEVICE_TABLE(of, msm_match_table);
 
-#ifdef CONFIG_PM_SLEEP
-static int msm_serial_suspend(struct device *dev)
+static int __maybe_unused msm_serial_suspend(struct device *dev)
 {
-	struct uart_port *port = dev_get_drvdata(dev);
+	struct msm_port *port = dev_get_drvdata(dev);
 
-	uart_suspend_port(&msm_uart_driver, port);
+	uart_suspend_port(&msm_uart_driver, &port->uart);
 
 	return 0;
 }
 
-static int msm_serial_resume(struct device *dev)
+static int __maybe_unused msm_serial_resume(struct device *dev)
 {
-	struct uart_port *port = dev_get_drvdata(dev);
+	struct msm_port *port = dev_get_drvdata(dev);
 
-	uart_resume_port(&msm_uart_driver, port);
+	uart_resume_port(&msm_uart_driver, &port->uart);
 
 	return 0;
 }
-#endif
 
-static const struct dev_pm_ops msm_serial_pm_ops = {
+static const struct dev_pm_ops msm_serial_dev_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(msm_serial_suspend, msm_serial_resume)
 };
 
@@ -1892,6 +1887,7 @@ static struct platform_driver msm_platform_driver = {
 	.probe = msm_serial_probe,
 	.driver = {
 		.name = "msm_serial",
+		.pm = &msm_serial_dev_pm_ops,
 		.of_match_table = msm_match_table,
 		.pm = &msm_serial_pm_ops,
 	},

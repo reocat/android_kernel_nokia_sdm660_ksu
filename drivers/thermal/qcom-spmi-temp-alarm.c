@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2015, 2017, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,6 +11,7 @@
  * GNU General Public License for more details.
  */
 
+#include <linux/bitops.h>
 #include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/iio/consumer.h>
@@ -22,6 +23,7 @@
 #include <linux/regmap.h>
 #include <linux/thermal.h>
 
+#define QPNP_TM_REG_DIG_MAJOR		0x01
 #define QPNP_TM_REG_TYPE		0x04
 #define QPNP_TM_REG_SUBTYPE		0x05
 #define QPNP_TM_REG_STATUS		0x08
@@ -29,28 +31,40 @@
 #define QPNP_TM_REG_ALARM_CTRL		0x46
 
 #define QPNP_TM_TYPE			0x09
-#define QPNP_TM_SUBTYPE			0x08
+#define QPNP_TM_SUBTYPE_GEN1		0x08
+#define QPNP_TM_SUBTYPE_GEN2		0x09
 
-#define STATUS_STAGE_MASK		0x03
+#define STATUS_GEN1_STAGE_MASK		GENMASK(1, 0)
+#define STATUS_GEN2_STATE_MASK		GENMASK(6, 4)
+#define STATUS_GEN2_STATE_SHIFT		4
 
-#define SHUTDOWN_CTRL1_THRESHOLD_MASK	0x03
+#define SHUTDOWN_CTRL1_OVERRIDE_MASK	GENMASK(7, 6)
+#define SHUTDOWN_CTRL1_THRESHOLD_MASK	GENMASK(1, 0)
 
-#define ALARM_CTRL_FORCE_ENABLE		0x80
+#define ALARM_CTRL_FORCE_ENABLE		BIT(7)
 
-/*
- * Trip point values based on threshold control
- * 0 = {105 C, 125 C, 145 C}
- * 1 = {110 C, 130 C, 150 C}
- * 2 = {115 C, 135 C, 155 C}
- * 3 = {120 C, 140 C, 160 C}
-*/
-#define TEMP_STAGE_STEP			20000	/* Stage step: 20.000 C */
+#define THRESH_COUNT			4
+#define STAGE_COUNT			3
+
+/* Over-temperature trip point values in mC */
+static const long temp_map_gen1[THRESH_COUNT][STAGE_COUNT] = {
+	{105000, 125000, 145000},
+	{110000, 130000, 150000},
+	{115000, 135000, 155000},
+	{120000, 140000, 160000},
+};
+
+static const long temp_map_gen2_v1[THRESH_COUNT][STAGE_COUNT] = {
+	{ 90000, 110000, 140000},
+	{ 95000, 115000, 145000},
+	{100000, 120000, 150000},
+	{105000, 125000, 155000},
+};
+
 #define TEMP_STAGE_HYSTERESIS		2000
 
-#define TEMP_THRESH_MIN			105000	/* Threshold Min: 105 C */
-#define TEMP_THRESH_STEP		5000	/* Threshold step: 5 C */
-
 #define THRESH_MIN			0
+#define THRESH_MAX			3
 
 /* Temperature in Milli Celsius reported during stage 0 if no ADC is present */
 #define DEFAULT_TEMP			37000
@@ -58,13 +72,19 @@
 struct qpnp_tm_chip {
 	struct regmap			*map;
 	struct thermal_zone_device	*tz_dev;
+	unsigned int			subtype;
 	long				temp;
 	unsigned int			thresh;
 	unsigned int			stage;
 	unsigned int			prev_stage;
 	unsigned int			base;
+	u32				init_thresh;
 	struct iio_channel		*adc;
+	const long			(*temp_map)[THRESH_COUNT][STAGE_COUNT];
 };
+
+/* This array maps from GEN2 alarm state to GEN1 alarm stage */
+static const unsigned int alarm_state_map[8] = {0, 1, 1, 2, 2, 3, 3, 3};
 
 static int qpnp_tm_read(struct qpnp_tm_chip *chip, u16 addr, u8 *data)
 {
@@ -84,13 +104,31 @@ static int qpnp_tm_write(struct qpnp_tm_chip *chip, u16 addr, u8 data)
 	return regmap_write(chip->map, chip->base + addr, data);
 }
 
-/*
- * This function updates the internal temp value based on the
- * current thermal stage and threshold as well as the previous stage
+/**
+ * qpnp_tm_decode_temp() - return temperature in mC corresponding to the
+ *		specified over-temperature stage
+ * @chip:		Pointer to the qpnp_tm chip
+ * @stage:		Over-temperature stage
+ *
+ * Return: temperature in mC
  */
-static int qpnp_tm_update_temp_no_adc(struct qpnp_tm_chip *chip)
+static long qpnp_tm_decode_temp(struct qpnp_tm_chip *chip, unsigned int stage)
 {
-	unsigned int stage;
+	if (!chip->temp_map || chip->thresh >= THRESH_COUNT || stage == 0
+	    || stage > STAGE_COUNT)
+		return 0;
+
+	return (*chip->temp_map)[chip->thresh][stage - 1];
+}
+
+/**
+ * qpnp_tm_get_temp_stage() - return over-temperature stage
+ * @chip:		Pointer to the qpnp_tm chip
+ *
+ * Return: stage (GEN1) or state (GEN2) on success, or errno on failure.
+ */
+static int qpnp_tm_get_temp_stage(struct qpnp_tm_chip *chip)
+{
 	int ret;
 	u8 reg = 0;
 
@@ -98,18 +136,44 @@ static int qpnp_tm_update_temp_no_adc(struct qpnp_tm_chip *chip)
 	if (ret < 0)
 		return ret;
 
-	stage = reg & STATUS_STAGE_MASK;
+	if (chip->subtype == QPNP_TM_SUBTYPE_GEN1)
+		ret = reg & STATUS_GEN1_STAGE_MASK;
+	else
+		ret = (reg & STATUS_GEN2_STATE_MASK) >> STATUS_GEN2_STATE_SHIFT;
 
-	if (stage > chip->stage) {
+	return ret;
+}
+
+/*
+ * This function updates the internal temp value based on the
+ * current thermal stage and threshold as well as the previous stage
+ */
+static int qpnp_tm_update_temp_no_adc(struct qpnp_tm_chip *chip)
+{
+	unsigned int stage, stage_new, stage_old;
+	int ret;
+
+	ret = qpnp_tm_get_temp_stage(chip);
+	if (ret < 0)
+		return ret;
+	stage = ret;
+
+	if (chip->subtype == QPNP_TM_SUBTYPE_GEN1) {
+		stage_new = stage;
+		stage_old = chip->stage;
+	} else {
+		stage_new = alarm_state_map[stage];
+		stage_old = alarm_state_map[chip->stage];
+	}
+
+	if (stage_new > stage_old) {
 		/* increasing stage, use lower bound */
-		chip->temp = (stage - 1) * TEMP_STAGE_STEP +
-			     chip->thresh * TEMP_THRESH_STEP +
-			     TEMP_STAGE_HYSTERESIS + TEMP_THRESH_MIN;
-	} else if (stage < chip->stage) {
+		chip->temp = qpnp_tm_decode_temp(chip, stage_new)
+				+ TEMP_STAGE_HYSTERESIS;
+	} else if (stage_new < stage_old) {
 		/* decreasing stage, use upper bound */
-		chip->temp = stage * TEMP_STAGE_STEP +
-			     chip->thresh * TEMP_THRESH_STEP -
-			     TEMP_STAGE_HYSTERESIS + TEMP_THRESH_MIN;
+		chip->temp = qpnp_tm_decode_temp(chip, stage_new + 1)
+				- TEMP_STAGE_HYSTERESIS;
 	}
 
 	chip->stage = stage;
@@ -125,7 +189,7 @@ static int qpnp_tm_get_temp(void *data, int *temp)
 	if (!temp)
 		return -EINVAL;
 
-	if (IS_ERR(chip->adc)) {
+	if (!chip->adc) {
 		ret = qpnp_tm_update_temp_no_adc(chip);
 		if (ret < 0)
 			return ret;
@@ -137,7 +201,7 @@ static int qpnp_tm_get_temp(void *data, int *temp)
 		chip->temp = mili_celsius;
 	}
 
-	*temp = chip->temp < 0 ? 0 : chip->temp;
+	*temp = chip->temp;
 
 	return 0;
 }
@@ -150,7 +214,7 @@ static irqreturn_t qpnp_tm_isr(int irq, void *data)
 {
 	struct qpnp_tm_chip *chip = data;
 
-	thermal_zone_device_update(chip->tz_dev);
+	thermal_zone_device_update(chip->tz_dev, THERMAL_EVENT_UNSPECIFIED);
 
 	return IRQ_HANDLED;
 }
@@ -162,28 +226,35 @@ static irqreturn_t qpnp_tm_isr(int irq, void *data)
  */
 static int qpnp_tm_init(struct qpnp_tm_chip *chip)
 {
+	unsigned int stage;
 	int ret;
-	u8 reg;
+	u8 reg = 0;
 
-	chip->thresh = THRESH_MIN;
-	chip->temp = DEFAULT_TEMP;
-
-	ret = qpnp_tm_read(chip, QPNP_TM_REG_STATUS, &reg);
+	ret = qpnp_tm_read(chip, QPNP_TM_REG_SHUTDOWN_CTRL1, &reg);
 	if (ret < 0)
 		return ret;
 
-	chip->stage = reg & STATUS_STAGE_MASK;
+	chip->thresh = reg & SHUTDOWN_CTRL1_THRESHOLD_MASK;
+	chip->temp = DEFAULT_TEMP;
 
-	if (chip->stage)
-		chip->temp = chip->thresh * TEMP_THRESH_STEP +
-			     (chip->stage - 1) * TEMP_STAGE_STEP +
-			     TEMP_THRESH_MIN;
+	ret = qpnp_tm_get_temp_stage(chip);
+	if (ret < 0)
+		return ret;
+	chip->stage = ret;
+
+	stage = chip->subtype == QPNP_TM_SUBTYPE_GEN1
+		? chip->stage : alarm_state_map[chip->stage];
+
+	if (stage)
+		chip->temp = qpnp_tm_decode_temp(chip, stage);
 
 	/*
 	 * Set threshold and disable software override of stage 2 and 3
 	 * shutdowns.
 	 */
-	reg = chip->thresh & SHUTDOWN_CTRL1_THRESHOLD_MASK;
+	chip->thresh = chip->init_thresh;
+	reg &= ~(SHUTDOWN_CTRL1_OVERRIDE_MASK | SHUTDOWN_CTRL1_THRESHOLD_MASK);
+	reg |= chip->thresh & SHUTDOWN_CTRL1_THRESHOLD_MASK;
 	ret = qpnp_tm_write(chip, QPNP_TM_REG_SHUTDOWN_CTRL1, reg);
 	if (ret < 0)
 		return ret;
@@ -199,8 +270,8 @@ static int qpnp_tm_probe(struct platform_device *pdev)
 {
 	struct qpnp_tm_chip *chip;
 	struct device_node *node;
-	u8 type, subtype;
-	u32 res[2];
+	u8 type, subtype, dig_major;
+	u32 res;
 	int ret, irq;
 
 	node = pdev->dev.of_node;
@@ -215,75 +286,84 @@ static int qpnp_tm_probe(struct platform_device *pdev)
 	if (!chip->map)
 		return -ENXIO;
 
-	ret = of_property_read_u32_array(node, "reg", res, 2);
+	ret = of_property_read_u32(node, "reg", &res);
 	if (ret < 0)
 		return ret;
+
+	chip->init_thresh = THRESH_MIN;
+	if (of_property_read_u32(node, "qcom,temperature-threshold-set",
+				 &chip->init_thresh) == 0) {
+		if (chip->init_thresh > THRESH_MAX) {
+			dev_err(&pdev->dev, "Invalid qcom,temperature-threshold-set=%u\n",
+				chip->init_thresh);
+			return -EINVAL;
+		}
+	}
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
 		return irq;
 
 	/* ADC based measurements are optional */
-	chip->adc = iio_channel_get(&pdev->dev, "thermal");
-	if (PTR_ERR(chip->adc) == -EPROBE_DEFER)
-		return PTR_ERR(chip->adc);
+	chip->adc = devm_iio_channel_get(&pdev->dev, "thermal");
+	if (IS_ERR(chip->adc)) {
+		ret = PTR_ERR(chip->adc);
+		chip->adc = NULL;
+		if (ret == -EPROBE_DEFER)
+			return ret;
+	}
 
-	chip->base = res[0];
+	chip->base = res;
 
 	ret = qpnp_tm_read(chip, QPNP_TM_REG_TYPE, &type);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "could not read type\n");
-		goto fail;
+		return ret;
 	}
 
 	ret = qpnp_tm_read(chip, QPNP_TM_REG_SUBTYPE, &subtype);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "could not read subtype\n");
-		goto fail;
+		return ret;
 	}
 
-	if (type != QPNP_TM_TYPE || subtype != QPNP_TM_SUBTYPE) {
+	ret = qpnp_tm_read(chip, QPNP_TM_REG_DIG_MAJOR, &dig_major);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "could not read dig_major\n");
+		return ret;
+	}
+
+	if (type != QPNP_TM_TYPE || (subtype != QPNP_TM_SUBTYPE_GEN1
+				     && subtype != QPNP_TM_SUBTYPE_GEN2)) {
 		dev_err(&pdev->dev, "invalid type 0x%02x or subtype 0x%02x\n",
 			type, subtype);
-		ret = -ENODEV;
-		goto fail;
+		return -ENODEV;
 	}
+
+	chip->subtype = subtype;
+
+	if (subtype == QPNP_TM_SUBTYPE_GEN2 && dig_major >= 1)
+		chip->temp_map = &temp_map_gen2_v1;
+	else
+		chip->temp_map = &temp_map_gen1;
 
 	ret = qpnp_tm_init(chip);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "init failed\n");
-		goto fail;
+		return ret;
 	}
 
 	ret = devm_request_threaded_irq(&pdev->dev, irq, NULL, qpnp_tm_isr,
 					IRQF_ONESHOT, node->name, chip);
 	if (ret < 0)
-		goto fail;
+		return ret;
 
-	chip->tz_dev = thermal_zone_of_sensor_register(&pdev->dev, 0, chip,
+	chip->tz_dev = devm_thermal_zone_of_sensor_register(&pdev->dev, 0, chip,
 							&qpnp_tm_sensor_ops);
 	if (IS_ERR(chip->tz_dev)) {
 		dev_err(&pdev->dev, "failed to register sensor\n");
-		ret = PTR_ERR(chip->tz_dev);
-		goto fail;
+		return PTR_ERR(chip->tz_dev);
 	}
-
-	return 0;
-
-fail:
-	if (!IS_ERR(chip->adc))
-		iio_channel_release(chip->adc);
-
-	return ret;
-}
-
-static int qpnp_tm_remove(struct platform_device *pdev)
-{
-	struct qpnp_tm_chip *chip = dev_get_drvdata(&pdev->dev);
-
-	thermal_zone_of_sensor_unregister(&pdev->dev, chip->tz_dev);
-	if (!IS_ERR(chip->adc))
-		iio_channel_release(chip->adc);
 
 	return 0;
 }
@@ -300,7 +380,6 @@ static struct platform_driver qpnp_tm_driver = {
 		.of_match_table = qpnp_tm_match_table,
 	},
 	.probe  = qpnp_tm_probe,
-	.remove = qpnp_tm_remove,
 };
 module_platform_driver(qpnp_tm_driver);
 

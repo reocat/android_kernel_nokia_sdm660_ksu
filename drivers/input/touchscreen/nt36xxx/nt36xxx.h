@@ -1,8 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (C) 2010 - 2017 Novatek, Inc.
+ * Copyright (C) 2010 - 2018 Novatek, Inc.
  *
- * $Revision: 20563 $
- * $Date: 2017-12-20 14:20:44 +0800 (?±‰?, 20 ?Å‰???2017) $
+ * $Revision: 47247 $
+ * $Date: 2019-07-10 10:41:36 +0800 (Wed, 10 Jul 2019) $
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,8 +19,10 @@
 #ifndef 	_LINUX_NVT_TOUCH_H
 #define		_LINUX_NVT_TOUCH_H
 
+#include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/input.h>
+#include <linux/uaccess.h>
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 #include <linux/earlysuspend.h>
@@ -30,6 +33,7 @@
 #define NVT_DEBUG 1
 
 //---GPIO number---
+#define NVTTOUCH_RST_PIN 980
 #define NVTTOUCH_INT_PIN 943
 
 
@@ -58,7 +62,7 @@
 
 //---Touch info.---
 #define TOUCH_DEFAULT_MAX_WIDTH 1080
-#define TOUCH_DEFAULT_MAX_HEIGHT 2160	//Orig-1920	//SW4-HL-TP-FixBottomAreaNotResponseIssue-00*_20190730
+#define TOUCH_DEFAULT_MAX_HEIGHT 2408
 #define TOUCH_MAX_FINGER_NUM 10
 #define TOUCH_KEY_NUM 0
 #if TOUCH_KEY_NUM > 0
@@ -66,18 +70,20 @@ extern const uint16_t touch_key_array[TOUCH_KEY_NUM];
 #endif
 #define TOUCH_FORCE_NUM 1000
 
+/* Enable only when module have tp reset pin and connected to host */
+#define NVT_TOUCH_SUPPORT_HW_RST 1
+
 //---Customerized func.---
 #define NVT_TOUCH_PROC 1
 #define NVT_TOUCH_EXT_PROC 1
 #define NVT_TOUCH_MP 1
 #define MT_PROTOCOL_B 1
-//#define WAKEUP_GESTURE 1	//SW4-HL-TP-B2N-NT36672-DoubleTap-00-_20180302
-//#if WAKEUP_GESTURE		//SW4-HL-TP-B2N-NT36672-DoubleTap-00-_20180302
+#define WAKEUP_GESTURE 0
+#if WAKEUP_GESTURE
 extern const uint16_t gesture_key_array[];
-//#endif
+#endif
 #define BOOT_UPDATE_FIRMWARE 1
 #define BOOT_UPDATE_FIRMWARE_NAME "novatek_ts_fw.bin"
-#define BOOT_UPDATE_FIRMWARE_NAME_H_GLASS "novatek_h_glass_ts_fw.bin"	//SW4-HL-Touch-NT36672-H_GLASS-Firmware-Update-00+_20180823
 
 //---ESD Protect.---
 #define NVT_TOUCH_ESD_PROTECT 0
@@ -86,11 +92,13 @@ extern const uint16_t gesture_key_array[];
 struct nvt_ts_data {
 	struct i2c_client *client;
 	struct input_dev *input_dev;
-	struct work_struct nvt_work;
 	struct delayed_work nvt_fwu_work;
 	uint16_t addr;
 	int8_t phys[32];
-#if defined(CONFIG_FB)
+	const struct i2c_device_id *id;
+#if defined(CONFIG_DRM_PANEL)
+	struct notifier_block drm_notif;
+#elif defined(CONFIG_FB)
 	struct notifier_block fb_notif;
 #elif defined(CONFIG_HAS_EARLYSUSPEND)
 	struct early_suspend early_suspend;
@@ -111,6 +119,9 @@ struct nvt_ts_data {
 	const struct nvt_ts_mem_map *mmap;
 	uint8_t carrier_system;
 	uint16_t nvt_pid;
+	uint8_t xbuf[1025];
+	struct mutex xbuf_lock;
+	bool irq_enabled;
 };
 
 #if NVT_TOUCH_PROC
@@ -122,9 +133,9 @@ struct nvt_flash_data{
 
 typedef enum {
 	RESET_STATE_INIT = 0xA0,// IC reset
-	RESET_STATE_REK,		// ReK baseline
-	RESET_STATE_REK_FINISH,	// baseline is ready
-	RESET_STATE_NORMAL_RUN,	// normal run
+	RESET_STATE_REK,        // ReK baseline
+	RESET_STATE_REK_FINISH, // baseline is ready
+	RESET_STATE_NORMAL_RUN, // normal run
 	RESET_STATE_MAX  = 0xAF
 } RST_COMPLETE_STATE;
 
@@ -148,6 +159,7 @@ extern int32_t nvt_check_fw_reset_state(RST_COMPLETE_STATE check_reset_state);
 extern int32_t nvt_get_fw_info(void);
 extern int32_t nvt_clear_fw_status(void);
 extern int32_t nvt_check_fw_status(void);
+extern int32_t nvt_set_page(uint16_t i2c_addr, uint32_t addr);
 #if NVT_TOUCH_ESD_PROTECT
 extern void nvt_esd_check_enable(uint8_t enable);
 #endif /* #if NVT_TOUCH_ESD_PROTECT */

@@ -348,7 +348,11 @@ static int __init pxa_rtc_probe(struct platform_device *pdev)
 		dev_err(dev, "No alarm IRQ resource defined\n");
 		return -ENXIO;
 	}
-	pxa_rtc_open(dev);
+
+	sa1100_rtc->rtc = devm_rtc_allocate_device(&pdev->dev);
+	if (IS_ERR(sa1100_rtc->rtc))
+		return PTR_ERR(sa1100_rtc->rtc);
+
 	pxa_rtc->base = devm_ioremap(dev, pxa_rtc->ress->start,
 				resource_size(pxa_rtc->ress));
 	if (!pxa_rtc->base) {
@@ -356,12 +360,14 @@ static int __init pxa_rtc_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
+	pxa_rtc_open(dev);
+
 	sa1100_rtc->rcnr = pxa_rtc->base + 0x0;
 	sa1100_rtc->rtsr = pxa_rtc->base + 0x8;
 	sa1100_rtc->rtar = pxa_rtc->base + 0x4;
 	sa1100_rtc->rttr = pxa_rtc->base + 0xc;
 	ret = sa1100_rtc_init(pdev, sa1100_rtc);
-	if (!ret) {
+	if (ret) {
 		dev_err(dev, "Unable to init SA1100 RTC sub-device\n");
 		return ret;
 	}

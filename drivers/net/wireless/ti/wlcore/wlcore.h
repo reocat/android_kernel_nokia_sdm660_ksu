@@ -40,6 +40,9 @@
 /* wl12xx/wl18xx maximum transmission power (in dBm) */
 #define WLCORE_MAX_TXPWR        25
 
+/* Texas Instruments pre assigned OUI */
+#define WLCORE_TI_OUI_ADDRESS 0x080028
+
 /* forward declaration */
 struct wl1271_tx_hw_descr;
 enum wl_rx_buf_align;
@@ -310,9 +313,6 @@ struct wl1271 {
 	/* FW memory block size */
 	u32 fw_mem_block_size;
 
-	/* Sysfs FW log entry readers wait queue */
-	wait_queue_head_t fwlog_waitq;
-
 	/* Hardware recovery work */
 	struct work_struct recovery_work;
 	bool watchdog_recovery;
@@ -348,7 +348,6 @@ struct wl1271 {
 	enum nl80211_band band;
 
 	struct completion *elp_compl;
-	struct delayed_work elp_work;
 
 	/* in dBm */
 	int power_level;
@@ -466,6 +465,7 @@ struct wl1271 {
 
 	/* the current dfs region */
 	enum nl80211_dfs_regions dfs_region;
+	bool radar_debug_mode;
 
 	/* size of the private FW status data */
 	size_t fw_status_len;
@@ -503,6 +503,9 @@ struct wl1271 {
 
 	/* dynamic fw traces */
 	u32 dynamic_fw_traces;
+
+	/* time sync zone master */
+	u8 zone_master_mac_addr[ETH_ALEN];
 };
 
 int wlcore_probe(struct wl1271 *wl, struct platform_device *pdev);

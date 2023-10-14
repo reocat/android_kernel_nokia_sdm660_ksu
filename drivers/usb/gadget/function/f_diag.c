@@ -1,18 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* drivers/usb/gadget/f_diag.c
  * Diag Function Device - Route ARM9 and ARM11 DIAG messages
  * between HOST and DEVICE.
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2008-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2008-2021, The Linux Foundation. All rights reserved.
  * Author: Brian Swetland <swetland@google.com>
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  */
 #include <linux/init.h>
 #include <linux/module.h>
@@ -28,9 +20,24 @@
 #include <linux/workqueue.h>
 #include <linux/debugfs.h>
 #include <linux/kmemleak.h>
-#include <linux/qcom/diag_dload.h>
 
 #define MAX_INST_NAME_LEN	40
+
+/* dload specific suppot */
+#define PID_MAGIC_ID		0x71432909
+#define SERIAL_NUM_MAGIC_ID	0x61945374
+#define SERIAL_NUMBER_LENGTH	128
+
+struct magic_num_struct {
+	uint32_t pid;
+	uint32_t serial_num;
+};
+
+struct dload_struct {
+	uint32_t	pid;
+	char		serial_number[SERIAL_NUMBER_LENGTH];
+	struct magic_num_struct magic_struct;
+};
 
 /* for configfs support */
 struct diag_opts {
@@ -50,28 +57,28 @@ static LIST_HEAD(usb_diag_ch_list);
 static struct dload_struct __iomem *diag_dload;
 
 static struct usb_interface_descriptor intf_desc = {
-	.bLength            =	sizeof intf_desc,
+	.bLength            =	sizeof(intf_desc),
 	.bDescriptorType    =	USB_DT_INTERFACE,
 	.bNumEndpoints      =	2,
-	.bInterfaceClass    =	0xFF,
-	.bInterfaceSubClass =	0xFF,
+	.bInterfaceClass    =	USB_CLASS_VENDOR_SPEC,
+	.bInterfaceSubClass =	USB_SUBCLASS_VENDOR_SPEC,
 	.bInterfaceProtocol =	0x30,
 };
 
 static struct usb_endpoint_descriptor hs_bulk_in_desc = {
-	.bLength 			=	USB_DT_ENDPOINT_SIZE,
-	.bDescriptorType 	=	USB_DT_ENDPOINT,
+	.bLength          =	USB_DT_ENDPOINT_SIZE,
+	.bDescriptorType  =	USB_DT_ENDPOINT,
 	.bEndpointAddress =	USB_DIR_IN,
-	.bmAttributes 		=	USB_ENDPOINT_XFER_BULK,
-	.wMaxPacketSize 	=	__constant_cpu_to_le16(512),
-	.bInterval 			=	0,
+	.bmAttributes     =	USB_ENDPOINT_XFER_BULK,
+	.wMaxPacketSize   =	cpu_to_le16(512),
+	.bInterval        =	0,
 };
 static struct usb_endpoint_descriptor fs_bulk_in_desc = {
 	.bLength          =	USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType  =	USB_DT_ENDPOINT,
 	.bEndpointAddress =	USB_DIR_IN,
 	.bmAttributes     =	USB_ENDPOINT_XFER_BULK,
-	.wMaxPacketSize   = __constant_cpu_to_le16(64),
+	.wMaxPacketSize   =	cpu_to_le16(64),
 	.bInterval        =	0,
 };
 
@@ -80,7 +87,7 @@ static struct usb_endpoint_descriptor hs_bulk_out_desc = {
 	.bDescriptorType  =	USB_DT_ENDPOINT,
 	.bEndpointAddress =	USB_DIR_OUT,
 	.bmAttributes     =	USB_ENDPOINT_XFER_BULK,
-	.wMaxPacketSize   = __constant_cpu_to_le16(512),
+	.wMaxPacketSize   =	cpu_to_le16(512),
 	.bInterval        =	0,
 };
 
@@ -89,7 +96,7 @@ static struct usb_endpoint_descriptor fs_bulk_out_desc = {
 	.bDescriptorType  =	USB_DT_ENDPOINT,
 	.bEndpointAddress =	USB_DIR_OUT,
 	.bmAttributes     =	USB_ENDPOINT_XFER_BULK,
-	.wMaxPacketSize   = __constant_cpu_to_le16(64),
+	.wMaxPacketSize   =	cpu_to_le16(64),
 	.bInterval        =	0,
 };
 
@@ -98,11 +105,11 @@ static struct usb_endpoint_descriptor ss_bulk_in_desc = {
 	.bDescriptorType  =	USB_DT_ENDPOINT,
 	.bEndpointAddress =	USB_DIR_IN,
 	.bmAttributes     =	USB_ENDPOINT_XFER_BULK,
-	.wMaxPacketSize   = __constant_cpu_to_le16(1024),
+	.wMaxPacketSize   =	cpu_to_le16(1024),
 };
 
 static struct usb_ss_ep_comp_descriptor ss_bulk_in_comp_desc = {
-	.bLength =		sizeof ss_bulk_in_comp_desc,
+	.bLength =		sizeof(ss_bulk_in_comp_desc),
 	.bDescriptorType =	USB_DT_SS_ENDPOINT_COMP,
 
 	/* the following 2 values can be tweaked if necessary */
@@ -115,11 +122,11 @@ static struct usb_endpoint_descriptor ss_bulk_out_desc = {
 	.bDescriptorType  =	USB_DT_ENDPOINT,
 	.bEndpointAddress =	USB_DIR_OUT,
 	.bmAttributes     =	USB_ENDPOINT_XFER_BULK,
-	.wMaxPacketSize   = __constant_cpu_to_le16(1024),
+	.wMaxPacketSize   =	cpu_to_le16(1024),
 };
 
 static struct usb_ss_ep_comp_descriptor ss_bulk_out_comp_desc = {
-	.bLength =		sizeof ss_bulk_out_comp_desc,
+	.bLength =		sizeof(ss_bulk_out_comp_desc),
 	.bDescriptorType =	USB_DT_SS_ENDPOINT_COMP,
 
 	/* the following 2 values can be tweaked if necessary */
@@ -170,7 +177,7 @@ struct diag_context {
 	struct list_head read_pool;
 	struct list_head write_pool;
 	spinlock_t lock;
-	unsigned configured;
+	unsigned int configured;
 	struct usb_composite_dev *cdev;
 	struct usb_diag_ch *ch;
 	struct kref kref;
@@ -178,7 +185,7 @@ struct diag_context {
 	/* pkt counters */
 	unsigned long dpkts_tolaptop;
 	unsigned long dpkts_tomodem;
-	unsigned dpkts_tolaptop_pending;
+	unsigned int dpkts_tolaptop_pending;
 
 	/* A list node inside the diag_dev_list */
 	struct list_head list_item;
@@ -191,7 +198,7 @@ static inline struct diag_context *func_to_diag(struct usb_function *f)
 	return container_of(f, struct diag_context, function);
 }
 
-/* Called with ctxt->lock held; i.e. only use with kref_put_spinlock_irqsave */
+/* Called with ctxt->lock held; i.e. only use with kref_put_lock() */
 static void diag_context_release(struct kref *kref)
 {
 	struct diag_context *ctxt =
@@ -260,21 +267,8 @@ static void diag_write_complete(struct usb_ep *ep,
 
 	ctxt->dpkts_tolaptop_pending--;
 
-	if (!req->status) {
-		if ((req->length >= ep->maxpacket) &&
-				((req->length % ep->maxpacket) == 0)) {
-			ctxt->dpkts_tolaptop_pending++;
-			req->length = 0;
-			d_req->actual = req->actual;
-			d_req->status = req->status;
-			/* Queue zero length packet */
-			if (!usb_ep_queue(ctxt->in, req, GFP_ATOMIC))
-				return;
-			ctxt->dpkts_tolaptop_pending--;
-		} else {
-			ctxt->dpkts_tolaptop++;
-		}
-	}
+	if (!req->status)
+		ctxt->dpkts_tolaptop++;
 
 	spin_lock_irqsave(&ctxt->lock, flags);
 	list_add_tail(&req->list, &ctxt->write_pool);
@@ -287,8 +281,7 @@ static void diag_write_complete(struct usb_ep *ep,
 	if (ctxt->ch && ctxt->ch->notify)
 		ctxt->ch->notify(ctxt->ch->priv, USB_DIAG_WRITE_DONE, d_req);
 
-	kref_put_spinlock_irqsave(&ctxt->kref, diag_context_release,
-			&ctxt->lock);
+	kref_put_lock(&ctxt->kref, diag_context_release, &ctxt->lock);
 }
 
 static void diag_read_complete(struct usb_ep *ep,
@@ -310,8 +303,7 @@ static void diag_read_complete(struct usb_ep *ep,
 	if (ctxt->ch && ctxt->ch->notify)
 		ctxt->ch->notify(ctxt->ch->priv, USB_DIAG_READ_DONE, d_req);
 
-	kref_put_spinlock_irqsave(&ctxt->kref, diag_context_release,
-			&ctxt->lock);
+	kref_put_lock(&ctxt->kref, diag_context_release, &ctxt->lock);
 }
 
 /**
@@ -326,11 +318,13 @@ static void diag_read_complete(struct usb_ep *ep,
  *
  */
 struct usb_diag_ch *usb_diag_open(const char *name, void *priv,
-		void (*notify)(void *, unsigned, struct diag_request *))
+		void (*notify)(void *, unsigned int, struct diag_request *))
 {
 	struct usb_diag_ch *ch;
 	unsigned long flags;
 	int found = 0;
+	bool connected = false;
+	struct diag_context  *dev;
 
 	spin_lock_irqsave(&ch_lock, flags);
 	/* Check if we already have a channel with this name */
@@ -357,6 +351,16 @@ struct usb_diag_ch *usb_diag_open(const char *name, void *priv,
 		list_add_tail(&ch->list, &usb_diag_ch_list);
 		spin_unlock_irqrestore(&ch_lock, flags);
 	}
+
+	if (ch->priv_usb) {
+		dev = ch->priv_usb;
+		spin_lock_irqsave(&dev->lock, flags);
+		connected = dev->configured;
+		spin_unlock_irqrestore(&dev->lock, flags);
+	}
+
+	if (ch->notify && connected)
+		ch->notify(priv, USB_DIAG_CONNECT, NULL);
 
 	return ch;
 }
@@ -436,6 +440,7 @@ int usb_diag_alloc_req(struct usb_diag_ch *ch, int n_write, int n_read)
 			goto fail;
 		kmemleak_not_leak(req);
 		req->complete = diag_write_complete;
+		req->zero = true;
 		list_add_tail(&req->list, &ctxt->write_pool);
 	}
 
@@ -457,6 +462,7 @@ fail:
 }
 EXPORT_SYMBOL(usb_diag_alloc_req);
 #define DWC3_MAX_REQUEST_SIZE (16 * 1024 * 1024)
+#define CI_MAX_REQUEST_SIZE   (16 * 1024)
 /**
  * usb_diag_request_size - Max request size for controller
  * @ch: Channel handler
@@ -466,6 +472,16 @@ EXPORT_SYMBOL(usb_diag_alloc_req);
  */
 int usb_diag_request_size(struct usb_diag_ch *ch)
 {
+	struct diag_context *ctxt = ch->priv_usb;
+	struct usb_composite_dev *cdev;
+
+	if (!ctxt)
+		return 0;
+
+	cdev = ctxt->cdev;
+	if (cdev->gadget->is_chipidea)
+		return CI_MAX_REQUEST_SIZE;
+
 	return DWC3_MAX_REQUEST_SIZE;
 }
 EXPORT_SYMBOL(usb_diag_request_size);
@@ -505,7 +521,7 @@ int usb_diag_read(struct usb_diag_ch *ch, struct diag_request *d_req)
 
 	if (list_empty(&ctxt->read_pool)) {
 		spin_unlock_irqrestore(&ctxt->lock, flags);
-		ERROR(ctxt->cdev, "%s: no requests available\n", __func__);
+		pr_err("%s: no requests available\n", __func__);
 		return -EAGAIN;
 	}
 
@@ -521,8 +537,7 @@ int usb_diag_read(struct usb_diag_ch *ch, struct diag_request *d_req)
 	/* make sure context is still valid after releasing lock */
 	if (ctxt != ch->priv_usb) {
 		usb_ep_free_request(out, req);
-		kref_put_spinlock_irqsave(&ctxt->kref, diag_context_release,
-				&ctxt->lock);
+		kref_put_lock(&ctxt->kref, diag_context_release, &ctxt->lock);
 		return -EIO;
 	}
 
@@ -532,8 +547,7 @@ int usb_diag_read(struct usb_diag_ch *ch, struct diag_request *d_req)
 		list_add_tail(&req->list, &ctxt->read_pool);
 		/* 1 error message for every 10 sec */
 		if (__ratelimit(&rl))
-			ERROR(ctxt->cdev, "%s: cannot queue"
-				" read request\n", __func__);
+			pr_err("%s: cannot queue read request\n", __func__);
 
 		if (kref_put(&ctxt->kref, diag_context_release))
 			/* diag_context_release called spin_unlock already */
@@ -582,7 +596,7 @@ int usb_diag_write(struct usb_diag_ch *ch, struct diag_request *d_req)
 
 	if (list_empty(&ctxt->write_pool)) {
 		spin_unlock_irqrestore(&ctxt->lock, flags);
-		ERROR(ctxt->cdev, "%s: no requests available\n", __func__);
+		pr_err("%s: no requests available\n", __func__);
 		return -EAGAIN;
 	}
 
@@ -598,8 +612,7 @@ int usb_diag_write(struct usb_diag_ch *ch, struct diag_request *d_req)
 	/* make sure context is still valid after releasing lock */
 	if (ctxt != ch->priv_usb) {
 		usb_ep_free_request(in, req);
-		kref_put_spinlock_irqsave(&ctxt->kref, diag_context_release,
-				&ctxt->lock);
+		kref_put_lock(&ctxt->kref, diag_context_release, &ctxt->lock);
 		return -EIO;
 	}
 
@@ -611,8 +624,7 @@ int usb_diag_write(struct usb_diag_ch *ch, struct diag_request *d_req)
 		ctxt->dpkts_tolaptop_pending--;
 		/* 1 error message for every 10 sec */
 		if (__ratelimit(&rl))
-			ERROR(ctxt->cdev, "%s: cannot queue"
-				" read request\n", __func__);
+			pr_err("%s: cannot queue read request\n", __func__);
 
 		if (kref_put(&ctxt->kref, diag_context_release))
 			/* diag_context_release called spin_unlock already */
@@ -637,7 +649,7 @@ static void diag_function_disable(struct usb_function *f)
 	struct diag_context  *dev = func_to_diag(f);
 	unsigned long flags;
 
-	DBG(dev->cdev, "diag_function_disable\n");
+	DBG(dev->cdev, "%s\n", __func__);
 
 	spin_lock_irqsave(&dev->lock, flags);
 	dev->configured = 0;
@@ -670,7 +682,7 @@ static void diag_free_func(struct usb_function *f)
 }
 
 static int diag_function_set_alt(struct usb_function *f,
-		unsigned intf, unsigned alt)
+		unsigned int intf, unsigned int alt)
 {
 	struct diag_context  *dev = func_to_diag(f);
 	struct usb_composite_dev *cdev = f->config->cdev;
@@ -729,12 +741,7 @@ static void diag_function_unbind(struct usb_configuration *c,
 	struct diag_context *ctxt = func_to_diag(f);
 	unsigned long flags;
 
-	if (gadget_is_superspeed(c->cdev->gadget))
-		usb_free_descriptors(f->ss_descriptors);
-	if (gadget_is_dualspeed(c->cdev->gadget))
-		usb_free_descriptors(f->hs_descriptors);
-
-	usb_free_descriptors(f->fs_descriptors);
+	usb_free_all_descriptors(f);
 
 	/*
 	 * Channel priv_usb may point to other diag function.
@@ -774,35 +781,19 @@ static int diag_function_bind(struct usb_configuration *c,
 	ctxt->out = ep;
 	ep->driver_data = ctxt;
 
-	status = -ENOMEM;
-	/* copy descriptors, and track endpoint copies */
-	f->fs_descriptors = usb_copy_descriptors(fs_diag_desc);
-	if (!f->fs_descriptors)
+	hs_bulk_in_desc.bEndpointAddress =
+			fs_bulk_in_desc.bEndpointAddress;
+	hs_bulk_out_desc.bEndpointAddress =
+			fs_bulk_out_desc.bEndpointAddress;
+	ss_bulk_in_desc.bEndpointAddress =
+			fs_bulk_in_desc.bEndpointAddress;
+	ss_bulk_out_desc.bEndpointAddress =
+			fs_bulk_out_desc.bEndpointAddress;
+
+	status = usb_assign_descriptors(f, fs_diag_desc, hs_diag_desc,
+				ss_diag_desc, ss_diag_desc);
+	if (status)
 		goto fail;
-
-	if (gadget_is_dualspeed(c->cdev->gadget)) {
-		hs_bulk_in_desc.bEndpointAddress =
-				fs_bulk_in_desc.bEndpointAddress;
-		hs_bulk_out_desc.bEndpointAddress =
-				fs_bulk_out_desc.bEndpointAddress;
-
-		/* copy descriptors, and track endpoint copies */
-		f->hs_descriptors = usb_copy_descriptors(hs_diag_desc);
-		if (!f->hs_descriptors)
-			goto fail;
-	}
-
-	if (gadget_is_superspeed(c->cdev->gadget)) {
-		ss_bulk_in_desc.bEndpointAddress =
-				fs_bulk_in_desc.bEndpointAddress;
-		ss_bulk_out_desc.bEndpointAddress =
-				fs_bulk_out_desc.bEndpointAddress;
-
-		/* copy descriptors, and track endpoint copies */
-		f->ss_descriptors = usb_copy_descriptors(ss_diag_desc);
-		if (!f->ss_descriptors)
-			goto fail;
-	}
 
 	/* Allow only first diag channel to update pid and serial no */
 	if (ctxt == list_first_entry(&diag_dev_list,
@@ -811,12 +802,6 @@ static int diag_function_bind(struct usb_configuration *c,
 
 	return 0;
 fail:
-	if (f->ss_descriptors)
-		usb_free_descriptors(f->ss_descriptors);
-	if (f->hs_descriptors)
-		usb_free_descriptors(f->hs_descriptors);
-	if (f->fs_descriptors)
-		usb_free_descriptors(f->fs_descriptors);
 	if (ctxt->out)
 		ctxt->out->driver_data = NULL;
 	if (ctxt->in)
@@ -870,8 +855,6 @@ static struct diag_context *diag_context_init(const char *name)
 	dev->ch = _ch;
 
 	dev->function.name = _ch->name;
-	dev->function.fs_descriptors = fs_diag_desc;
-	dev->function.hs_descriptors = hs_diag_desc;
 	dev->function.bind = diag_function_bind;
 	dev->function.unbind = diag_function_unbind;
 	dev->function.set_alt = diag_function_set_alt;
@@ -955,6 +938,7 @@ struct dentry *dent_diag;
 static void fdiag_debugfs_init(void)
 {
 	struct dentry *dent_diag_status;
+
 	dent_diag = debugfs_create_dir("usb_diag", 0);
 	if (!dent_diag || IS_ERR(dent_diag))
 		return;

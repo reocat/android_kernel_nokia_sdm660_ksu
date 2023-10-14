@@ -26,7 +26,6 @@
 #include <asm/mmu.h>
 #include <asm/rtas.h>
 #include <asm/topology.h>
-#include "../../kernel/cacheinfo.h"
 
 static u64 stream_id;
 static struct device suspend_dev;
@@ -91,9 +90,7 @@ static void pseries_suspend_enable_irqs(void)
 	 * Update configuration which can be modified based on device tree
 	 * changes during resume.
 	 */
-	cacheinfo_cpu_offline(smp_processor_id());
 	post_mobility_fixup();
-	cacheinfo_cpu_online(smp_processor_id());
 }
 
 /**
@@ -151,7 +148,7 @@ static ssize_t store_hibernate(struct device *dev,
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	if (!alloc_cpumask_var(&offline_mask, GFP_TEMPORARY))
+	if (!alloc_cpumask_var(&offline_mask, GFP_KERNEL))
 		return -ENOMEM;
 
 	stream_id = simple_strtoul(buf, NULL, 16);
@@ -214,8 +211,7 @@ static ssize_t show_hibernate(struct device *dev,
 	return sprintf(buf, "%d\n", KERN_DT_UPDATE);
 }
 
-static DEVICE_ATTR(hibernate, S_IWUSR | S_IRUGO,
-		   show_hibernate, store_hibernate);
+static DEVICE_ATTR(hibernate, 0644, show_hibernate, store_hibernate);
 
 static struct bus_type suspend_subsys = {
 	.name = "power",

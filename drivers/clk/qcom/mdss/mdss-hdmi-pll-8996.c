@@ -1,15 +1,5 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2014-2017, 2020, The Linux Foundation. All rights reserved. */
 
 #include <linux/kernel.h>
 #include <linux/err.h>
@@ -571,7 +561,6 @@ static inline u64 hdmi_8996_v2_get_fdata(u64 bclk, u64 vco_range)
 {
 	if (bclk >= vco_range)
 		return bclk;
-
 	u64 tmp_calc = hdmi_8996_v2_get_vco_freq(bclk, vco_range);
 	u64 pll_post_div_ratio_lt_2g = hdmi_8996_v2_get_post_div_lt_2g(
 						bclk, vco_range);
@@ -579,13 +568,13 @@ static inline u64 hdmi_8996_v2_get_fdata(u64 bclk, u64 vco_range)
 		return HDMI_64B_ERR_VAL;
 
 	do_div(tmp_calc, pll_post_div_ratio_lt_2g);
-	return tmp_calc;
+		return tmp_calc;
 }
 
 static inline u64 hdmi_8996_get_cpctrl(u64 frac_start, bool gen_ssc)
 {
 	if ((frac_start != 0) ||
-	    (gen_ssc == true))
+	    (gen_ssc))
 		/*
 		 * This should be ROUND(11/(19.2/20))).
 		 * Since ref clock does not change, hardcoding to 11
@@ -597,7 +586,7 @@ static inline u64 hdmi_8996_get_cpctrl(u64 frac_start, bool gen_ssc)
 
 static inline u64 hdmi_8996_get_rctrl(u64 frac_start, bool gen_ssc)
 {
-	if ((frac_start != 0) || (gen_ssc == true))
+	if ((frac_start != 0) || (gen_ssc))
 		return 0x16;
 
 	return 0x10;
@@ -605,7 +594,7 @@ static inline u64 hdmi_8996_get_rctrl(u64 frac_start, bool gen_ssc)
 
 static inline u64 hdmi_8996_get_cctrl(u64 frac_start, bool gen_ssc)
 {
-	if ((frac_start != 0) || (gen_ssc == true))
+	if ((frac_start != 0) || (gen_ssc))
 		return 0x28;
 
 	return 0x1;
@@ -613,7 +602,7 @@ static inline u64 hdmi_8996_get_cctrl(u64 frac_start, bool gen_ssc)
 
 static inline u64 hdmi_8996_get_integloop_gain(u64 frac_start, bool gen_ssc)
 {
-	if ((frac_start != 0) || (gen_ssc == true))
+	if ((frac_start != 0) || (gen_ssc))
 		return 0x80;
 
 	return 0xC4;
@@ -623,7 +612,7 @@ static inline u64 hdmi_8996_v3_get_integloop_gain(u64 frac_start, u64 bclk,
 							bool gen_ssc)
 {
 	u64 digclk_divsel = bclk >= HDMI_DIG_FREQ_BIT_CLK_THRESHOLD ? 1 : 2;
-	u64 base = ((frac_start != 0) || (gen_ssc == true)) ? 0x40 : 0xC4;
+	u64 base = ((frac_start != 0) || (gen_ssc)) ? 0x40 : 0xC4;
 
 	base <<= digclk_divsel;
 
@@ -762,7 +751,7 @@ static int hdmi_8996_v3_get_post_div(struct hdmi_8996_v3_post_divider *pd,
 	case 35:
 		pd->hsclk_divsel = 15;
 		break;
-	};
+	}
 
 	return 0;
 }
@@ -1582,7 +1571,7 @@ static int hdmi_8996_phy_pll_set_clk_rate(struct clk *c, u32 tmds_clk, u32 ver)
 	case HDMI_VERSION_8996_V3_1_8:
 		MDSS_PLL_REG_W(io->pll_base, QSERDES_COM_BG_CTRL, 0x04);
 		break;
-	};
+	}
 
 	MDSS_PLL_REG_W(io->phy_base, HDMI_PHY_PD_CTL, 0x1);
 	MDSS_PLL_REG_W(io->pll_base, QSERDES_COM_RESETSM_CNTRL, 0x20);
@@ -2072,7 +2061,6 @@ static int hdmi_8996_v1_perform_sw_calibration(struct clk *c)
 
 static int hdmi_8996_v2_perform_sw_calibration(struct clk *c)
 {
-	int rc = 0;
 	struct hdmi_pll_vco_clk *vco = to_hdmi_8996_vco_clk(c);
 	struct mdss_pll_resources *io = vco->priv;
 	u32 vco_code1, vco_code2, integral_loop, ready_poll;
@@ -2117,7 +2105,7 @@ static int hdmi_8996_v2_perform_sw_calibration(struct clk *c)
 
 		MDSS_PLL_REG_W(io->phy_base, HDMI_PHY_CFG, 0x19);
 	}
-	return rc;
+	return 0;
 }
 
 static int hdmi_8996_perform_sw_calibration(struct clk *c, u32 ver)
@@ -2564,7 +2552,7 @@ static enum handoff hdmi_8996_vco_handoff(struct clk *c)
 	return ret;
 }
 
-static struct clk_ops hdmi_8996_v1_vco_clk_ops = {
+static const struct clk_ops hdmi_8996_v1_vco_clk_ops = {
 	.enable = hdmi_8996_v1_vco_enable,
 	.set_rate = hdmi_8996_v1_vco_set_rate,
 	.get_rate = hdmi_8996_vco_get_rate,
@@ -2574,7 +2562,7 @@ static struct clk_ops hdmi_8996_v1_vco_clk_ops = {
 	.handoff = hdmi_8996_vco_handoff,
 };
 
-static struct clk_ops hdmi_8996_v2_vco_clk_ops = {
+static const struct clk_ops hdmi_8996_v2_vco_clk_ops = {
 	.enable = hdmi_8996_v2_vco_enable,
 	.set_rate = hdmi_8996_v2_vco_set_rate,
 	.get_rate = hdmi_8996_vco_get_rate,
@@ -2584,7 +2572,7 @@ static struct clk_ops hdmi_8996_v2_vco_clk_ops = {
 	.handoff = hdmi_8996_vco_handoff,
 };
 
-static struct clk_ops hdmi_8996_v3_vco_clk_ops = {
+static const struct clk_ops hdmi_8996_v3_vco_clk_ops = {
 	.enable = hdmi_8996_v3_vco_enable,
 	.set_rate = hdmi_8996_v3_vco_set_rate,
 	.get_rate = hdmi_8996_vco_get_rate,
@@ -2594,7 +2582,7 @@ static struct clk_ops hdmi_8996_v3_vco_clk_ops = {
 	.handoff = hdmi_8996_vco_handoff,
 };
 
-static struct clk_ops hdmi_8996_v3_1p8_vco_clk_ops = {
+static const struct clk_ops hdmi_8996_v3_1p8_vco_clk_ops = {
 	.enable = hdmi_8996_v3_1p8_vco_enable,
 	.set_rate = hdmi_8996_v3_1p8_vco_set_rate,
 	.get_rate = hdmi_8996_vco_get_rate,
@@ -2643,7 +2631,7 @@ int hdmi_8996_pll_clock_register(struct platform_device *pdev,
 	default:
 		hdmi_vco_clk.c.ops = &hdmi_8996_v1_vco_clk_ops;
 		break;
-	};
+	}
 
 	rc = of_msm_clock_register(pdev->dev.of_node, hdmipllcc_8996,
 					ARRAY_SIZE(hdmipllcc_8996));

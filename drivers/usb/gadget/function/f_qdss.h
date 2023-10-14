@@ -1,33 +1,32 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
-
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
-
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _F_QDSS_H
 #define _F_QDSS_H
 
 #include <linux/kernel.h>
+#include <linux/ipc_logging.h>
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
-#include <linux/usb/msm_hsusb.h>
 #include <linux/usb/composite.h>
 #include <linux/usb/usb_qdss.h>
 
-#include "u_rmnet.h"
+enum qti_port_type {
+	QTI_PORT_RMNET,
+	QTI_PORT_DPL,
+	QTI_NUM_PORTS
+};
 
 struct usb_qdss_bam_connect_info {
 	u32 usb_bam_pipe_idx;
 	u32 peer_pipe_idx;
 	unsigned long usb_bam_handle;
 	struct sps_mem_buffer *data_fifo;
+	unsigned long qdss_bam_iova;
+	phys_addr_t qdss_bam_phys;
+	u32 qdss_bam_size;
 };
 
 struct gqdss {
@@ -51,11 +50,10 @@ struct f_qdss {
 	bool debug_inface_enabled;
 	struct usb_request *endless_req;
 	struct usb_qdss_ch ch;
-	struct list_head ctrl_read_pool;
-	struct list_head ctrl_write_pool;
 
 	/* for mdm channel SW path */
 	struct list_head data_write_pool;
+	struct list_head queued_data_pool;
 
 	struct work_struct connect_w;
 	struct work_struct disconnect_w;
@@ -64,7 +62,22 @@ struct f_qdss {
 	unsigned int ctrl_in_enabled:1;
 	unsigned int ctrl_out_enabled:1;
 	struct workqueue_struct *wq;
+	bool qdss_close;
 };
+
+static void *_qdss_ipc_log;
+
+#define NUM_PAGES	10 /* # of pages for ipc logging */
+
+#ifdef CONFIG_DYNAMIC_DEBUG
+#define qdss_log(fmt, ...) do { \
+	ipc_log_string(_qdss_ipc_log, "%s: " fmt,  __func__, ##__VA_ARGS__); \
+	dynamic_pr_debug("%s: " fmt, __func__, ##__VA_ARGS__); \
+} while (0)
+#else
+#define qdss_log(fmt, ...) \
+	ipc_log_string(_qdss_ipc_log, "%s: " fmt,  __func__, ##__VA_ARGS__)
+#endif
 
 struct usb_qdss_opts {
 	struct usb_function_instance func_inst;
@@ -74,4 +87,5 @@ struct usb_qdss_opts {
 
 int uninit_data(struct usb_ep *ep);
 int set_qdss_data_connection(struct f_qdss *qdss, int enable);
+int alloc_sps_req(struct usb_ep *data_ep);
 #endif

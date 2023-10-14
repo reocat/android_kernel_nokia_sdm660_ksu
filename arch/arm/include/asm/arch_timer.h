@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __ASMARM_ARCH_TIMER_H
 #define __ASMARM_ARCH_TIMER_H
 
@@ -10,6 +11,20 @@
 #include <clocksource/arm_arch_timer.h>
 
 #ifdef CONFIG_ARM_ARCH_TIMER
+
+#ifdef CONFIG_ARM_ERRATUM_858921
+DECLARE_PER_CPU(bool, timer_erratum_858921_workaround_enabled);
+static __always_inline bool erratum_858921_workaround_enabled(void)
+{
+	return this_cpu_read(timer_erratum_858921_workaround_enabled);
+}
+#else
+static __always_inline bool erratum_858921_workaround_enabled(void)
+{
+	return false;
+}
+#endif
+
 int arch_timer_arch_init(void);
 
 /*
@@ -78,12 +93,19 @@ static inline u32 arch_timer_get_cntfrq(void)
 	return val;
 }
 
+#define L32_BITS 0x00000000FFFFFFFF
 static inline u64 arch_counter_get_cntpct(void)
 {
 	u64 cval;
 
 	isb();
-	asm volatile("mrrc p15, 0, %Q0, %R0, c14" : "=r" (cval));
+	if (erratum_858921_workaround_enabled()) {
+		do {
+			asm volatile("mrrc p15, 0, %Q0, %R0, c14" : "=r"(cval));
+		} while ((cval & L32_BITS) == L32_BITS);
+	} else {
+		asm volatile("mrrc p15, 0, %Q0, %R0, c14" : "=r" (cval));
+	}
 	return cval;
 }
 
@@ -92,7 +114,13 @@ static inline u64 arch_counter_get_cntvct(void)
 	u64 cval;
 
 	isb();
-	asm volatile("mrrc p15, 1, %Q0, %R0, c14" : "=r" (cval));
+	if (erratum_858921_workaround_enabled()) {
+		do {
+			asm volatile("mrrc p15, 1, %Q0, %R0, c14" : "=r"(cval));
+		} while ((cval & L32_BITS) == L32_BITS);
+	} else {
+		asm volatile("mrrc p15, 1, %Q0, %R0, c14" : "=r" (cval));
+	}
 	return cval;
 }
 
@@ -106,6 +134,7 @@ static inline u32 arch_timer_get_cntkctl(void)
 static inline void arch_timer_set_cntkctl(u32 cntkctl)
 {
 	asm volatile("mcr p15, 0, %0, c14, c1, 0" : : "r" (cntkctl));
+	isb();
 }
 
 #endif

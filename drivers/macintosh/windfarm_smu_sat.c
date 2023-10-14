@@ -172,6 +172,7 @@ static void wf_sat_release(struct kref *ref)
 
 	if (sat->nr >= 0)
 		sats[sat->nr] = NULL;
+	of_node_put(sat->node);
 	kfree(sat);
 }
 
@@ -184,7 +185,7 @@ static void wf_sat_sensor_release(struct wf_sensor *sr)
 	kref_put(&sat->ref, wf_sat_release);
 }
 
-static struct wf_sensor_ops wf_sat_ops = {
+static const struct wf_sensor_ops wf_sat_ops = {
 	.get_value	= wf_sat_sensor_get,
 	.release	= wf_sat_sensor_release,
 	.owner		= THIS_MODULE,
@@ -237,7 +238,7 @@ static int wf_sat_probe(struct i2c_client *client,
 		core = loc[5] - '0';
 		if (chip > 1 || core > 1) {
 			printk(KERN_ERR "wf_sat_create: don't understand "
-			       "location %s for %s\n", loc, child->full_name);
+			       "location %s for %pOF\n", loc, child);
 			continue;
 		}
 		cpu = 2 * chip + core;
@@ -343,9 +344,16 @@ static const struct i2c_device_id wf_sat_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, wf_sat_id);
 
+static const struct of_device_id wf_sat_of_id[] = {
+	{ .compatible = "smu-sat", },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, wf_sat_of_id);
+
 static struct i2c_driver wf_sat_driver = {
 	.driver = {
 		.name		= "wf_smu_sat",
+		.of_match_table = wf_sat_of_id,
 	},
 	.probe		= wf_sat_probe,
 	.remove		= wf_sat_remove,

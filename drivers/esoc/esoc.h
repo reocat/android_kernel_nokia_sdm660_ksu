@@ -1,13 +1,6 @@
-/* Copyright (c) 2013-2015, 2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2013-2015, 2017-2018, The Linux Foundation. All rights reserved.
  */
 #ifndef __ESOC_H__
 #define __ESOC_H__
@@ -15,6 +8,7 @@
 #include <linux/cdev.h>
 #include <linux/completion.h>
 #include <linux/esoc_ctrl.h>
+#include <linux/esoc_client.h>
 #include <linux/fs.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
@@ -22,6 +16,18 @@
 #include <linux/spinlock.h>
 #include <soc/qcom/subsystem_restart.h>
 #include <soc/qcom/subsystem_notif.h>
+#include <linux/ipc_logging.h>
+
+#define ESOC_MDM_IPC_PAGES	10
+
+extern void *ipc_log;
+
+#define esoc_mdm_log(__msg, ...) \
+do { \
+	if (ipc_log) \
+		ipc_log_string(ipc_log, \
+			"[%s]: "__msg, __func__, ##__VA_ARGS__); \
+} while (0)
 
 #define ESOC_DEV_MAX		4
 #define ESOC_NAME_LEN		20
@@ -89,6 +95,7 @@ struct esoc_clink {
 	bool primary;
 	bool statusline_not_a_powersource;
 	bool userspace_handle_shutdown;
+	struct esoc_client_hook *client_hook[ESOC_MAX_HOOKS];
 };
 
 /**
@@ -174,9 +181,12 @@ void notify_esoc_clients(struct esoc_clink *esoc_clink, unsigned long evt);
 static inline void notify_esoc_clients(struct esoc_clink *esoc_clink,
 							unsigned long evt)
 {
-	return;
 }
 #endif
 bool esoc_req_eng_enabled(struct esoc_clink *esoc_clink);
 bool esoc_cmd_eng_enabled(struct esoc_clink *esoc_clink);
 #endif
+
+/* Modem boot fail actions */
+int esoc_set_boot_fail_action(struct esoc_clink *esoc_clink, u32 action);
+int esoc_set_n_pon_tries(struct esoc_clink *esoc_clink, u32 n_tries);

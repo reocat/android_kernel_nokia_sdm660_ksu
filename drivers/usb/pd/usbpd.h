@@ -1,13 +1,6 @@
-/* Copyright (c) 2016-2017, Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _USBPD_H
@@ -58,6 +51,7 @@ enum pd_spec_rev {
 
 /* enable msg and signal to be received by phy */
 #define FRAME_FILTER_EN_SOP		BIT(0)
+#define FRAME_FILTER_EN_SOPI		BIT(1)
 #define FRAME_FILTER_EN_HARD_RESET	BIT(5)
 
 struct pd_phy_params {
@@ -76,6 +70,7 @@ int pd_phy_signal(enum pd_sig_type sig);
 int pd_phy_write(u16 hdr, const u8 *data, size_t data_len,
 		enum pd_sop_type sop);
 int pd_phy_update_roles(enum data_role dr, enum power_role pr);
+int pd_phy_update_frame_filter(u8 frame_filter_val);
 void pd_phy_close(void);
 #else
 static inline int pd_phy_open(struct pd_phy_params *params)
@@ -95,6 +90,11 @@ static inline int pd_phy_write(u16 hdr, const u8 *data, size_t data_len,
 }
 
 static inline int pd_phy_update_roles(enum data_role dr, enum power_role pr)
+{
+	return -ENODEV;
+}
+
+static inline int pd_phy_update_frame_filter(u8 frame_filter_val)
 {
 	return -ENODEV;
 }

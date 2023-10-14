@@ -1,13 +1,6 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2012-2017, 2020, The Linux Foundation. All rights reserved.
  */
 #include <asm/barrier.h>
 #include <linux/delay.h>
@@ -35,7 +28,7 @@ int ipa_enable_data_path(u32 clnt_hdl)
 	/* From IPA 2.0, disable HOLB */
 	if ((ipa_ctx->ipa_hw_type >= IPA_HW_v2_0) &&
 		IPA_CLIENT_IS_CONS(ep->client)) {
-		memset(&holb_cfg, 0 , sizeof(holb_cfg));
+		memset(&holb_cfg, 0, sizeof(holb_cfg));
 		holb_cfg.en = IPA_HOLB_TMR_DIS;
 		holb_cfg.tmr_val = 0;
 		res = ipa2_cfg_ep_holb(clnt_hdl, &holb_cfg);
@@ -46,7 +39,7 @@ int ipa_enable_data_path(u32 clnt_hdl)
 	    (ep->keep_ipa_awake ||
 	     ipa_ctx->resume_on_connect[ep->client] ||
 	     !ipa_should_pipe_be_suspended(ep->client))) {
-		memset(&ep_cfg_ctrl, 0 , sizeof(ep_cfg_ctrl));
+		memset(&ep_cfg_ctrl, 0, sizeof(ep_cfg_ctrl));
 		ep_cfg_ctrl.ipa_ep_suspend = false;
 		ipa2_cfg_ep_ctrl(clnt_hdl, &ep_cfg_ctrl);
 	}
@@ -74,7 +67,7 @@ int ipa_disable_data_path(u32 clnt_hdl)
 
 	/* Suspend the pipe */
 	if (IPA_CLIENT_IS_CONS(ep->client)) {
-		memset(&ep_cfg_ctrl, 0 , sizeof(struct ipa_ep_cfg_ctrl));
+		memset(&ep_cfg_ctrl, 0, sizeof(struct ipa_ep_cfg_ctrl));
 		ep_cfg_ctrl.ipa_ep_suspend = true;
 		ipa2_cfg_ep_ctrl(clnt_hdl, &ep_cfg_ctrl);
 	}
@@ -84,20 +77,11 @@ int ipa_disable_data_path(u32 clnt_hdl)
 			IPA_ENDP_INIT_AGGR_N_OFST_v2_0(clnt_hdl));
 	if (((aggr_init & IPA_ENDP_INIT_AGGR_N_AGGR_EN_BMSK) >>
 	    IPA_ENDP_INIT_AGGR_N_AGGR_EN_SHFT) == IPA_ENABLE_AGGR) {
-		/*
-		* Tag process will not work for,
-		* APPS CMD PROD --> Uses the same for IMM cmd over tag
-		* APPS LAN CONS --> Already suspend is set
-		*/
-		if (!(ep->client == IPA_CLIENT_APPS_CMD_PROD ||
-			ep->client == IPA_CLIENT_APPS_LAN_CONS)) {
-			res = ipa_tag_aggr_force_close(clnt_hdl);
-			if (res) {
-				IPAERR("tag process timeout");
-				IPAERR("client:%d err:%d\n",
-					clnt_hdl, res);
-				ipa_assert();
-			}
+		res = ipa_tag_aggr_force_close(clnt_hdl);
+		if (res) {
+			IPAERR("tag process timeout, client:%d err:%d\n",
+				clnt_hdl, res);
+			ipa_assert();
 		}
 	}
 
@@ -149,7 +133,7 @@ static int ipa2_smmu_map_peer_bam(unsigned long dev)
 	phys_addr_t base;
 	u32 size;
 	struct iommu_domain *smmu_domain;
-	struct ipa_smmu_cb_ctx *cb = ipa2_get_smmu_ctx();
+	struct ipa_smmu_cb_ctx *cb = ipa2_get_smmu_ctx(IPA_SMMU_CB_AP);
 
 	if (!ipa_ctx->smmu_s1_bypass) {
 		if (ipa_ctx->peer_bam_map_cnt == 0) {
@@ -165,7 +149,7 @@ static int ipa2_smmu_map_peer_bam(unsigned long dev)
 					roundup(size + base -
 					rounddown(base, PAGE_SIZE), PAGE_SIZE),
 					IOMMU_READ | IOMMU_WRITE |
-					IOMMU_DEVICE)) {
+					IOMMU_MMIO)) {
 					IPAERR("Fail to ipa_iommu_map\n");
 					return -EINVAL;
 				}
@@ -259,7 +243,7 @@ static int ipa_connect_allocate_fifo(const struct ipa_connect_params *in,
 			result = sps_setup_bam2bam_fifo(mem_buff_ptr, ofst,
 				fifo_size, 1);
 			WARN_ON(result);
-			*fifo_in_pipe_mem_ptr = 1;
+			*fifo_in_pipe_mem_ptr = true;
 			dma_addr = mem_buff_ptr->phys_base;
 			*fifo_pipe_mem_ofst_ptr = ofst;
 		}
@@ -404,7 +388,7 @@ int ipa2_connect(const struct ipa_connect_params *in,
 	} else {
 		IPADBG("client allocated DESC FIFO\n");
 		ep->connect.desc = in->desc;
-		ep->desc_fifo_client_allocated = 1;
+		ep->desc_fifo_client_allocated = true;
 	}
 	IPADBG("Descriptor FIFO pa=%pa, size=%d\n", &ep->connect.desc.phys_base,
 	       ep->connect.desc.size);
@@ -421,7 +405,7 @@ int ipa2_connect(const struct ipa_connect_params *in,
 	} else {
 		IPADBG("client allocated DATA FIFO\n");
 		ep->connect.data = in->data;
-		ep->data_fifo_client_allocated = 1;
+		ep->data_fifo_client_allocated = true;
 	}
 	IPADBG("Data FIFO pa=%pa, size=%d\n", &ep->connect.data.phys_base,
 	       ep->connect.data.size);
@@ -545,7 +529,7 @@ static int ipa2_smmu_unmap_peer_bam(unsigned long dev)
 {
 	size_t len;
 	struct iommu_domain *smmu_domain;
-	struct ipa_smmu_cb_ctx *cb = ipa2_get_smmu_ctx();
+	struct ipa_smmu_cb_ctx *cb = ipa2_get_smmu_ctx(IPA_SMMU_CB_AP);
 
 	if (!ipa_ctx->smmu_s1_bypass) {
 		WARN_ON(dev != ipa_ctx->peer_bam_dev);
@@ -730,13 +714,13 @@ int ipa2_disconnect(u32 clnt_hdl)
 }
 
 /**
-* ipa2_reset_endpoint() - reset an endpoint from BAM perspective
-* @clnt_hdl: [in] IPA client handle
-*
-* Returns:	0 on success, negative on failure
-*
-* Note:	Should not be called from atomic context
-*/
+ * ipa2_reset_endpoint() - reset an endpoint from BAM perspective
+ * @clnt_hdl: [in] IPA client handle
+ *
+ * Returns:	0 on success, negative on failure
+ *
+ * Note:	Should not be called from atomic context
+ */
 int ipa2_reset_endpoint(u32 clnt_hdl)
 {
 	int res;
@@ -771,63 +755,6 @@ bail:
 	IPA_ACTIVE_CLIENTS_DEC_EP(ipa2_get_client_mapping(clnt_hdl));
 
 	return res;
-}
-
-/**
-* ipa2_apps_shutdown_apps_ep_reset() -
-* reset an endpoints from BAM perspective.
-*
-* Q6 ep reset is not handled here
-*/
-void ipa2_apps_shutdown_apps_ep_reset(void)
-{
-	struct ipa_ep_context *ep;
-	int ep_idx, client_idx;
-
-	if (unlikely(!ipa_ctx)) {
-		IPAERR("IPA driver was not initialized\n");
-		return;
-	}
-
-	for (client_idx = 0; client_idx < IPA_CLIENT_MAX; client_idx++) {
-
-		ep_idx = ipa2_get_ep_mapping(client_idx);
-		if (ep_idx == -1)
-			continue;
-
-		ep = &ipa_ctx->ep[ep_idx];
-		if (ep->valid && (IPA_CLIENT_IS_APPS_PROD(client_idx) ||
-			IPA_CLIENT_IS_APPS_CONS(client_idx))) {
-			/*
-			 * we shouldn't reset APPS CMD PROD
-			 * and LAN CONS in for loop
-			 * these 2 ep's should be resetted at last,
-			 * since it is used in Tag Process
-			 */
-			if (!(client_idx == IPA_CLIENT_APPS_CMD_PROD ||
-				client_idx == IPA_CLIENT_APPS_LAN_CONS)) {
-				IPADBG("teardown ep (%d)\n", ep_idx);
-				ipa2_teardown_sys_pipe(ep_idx);
-			}
-		}
-	}
-	ep_idx = ipa2_get_ep_mapping(IPA_CLIENT_APPS_LAN_CONS);
-	if (ep_idx != -1) {
-		ep = &ipa_ctx->ep[ep_idx];
-		if (ep->valid) {
-			IPADBG("teardown ep (%d)\n", ep_idx);
-			ipa2_teardown_sys_pipe(ep_idx);
-		}
-	}
-
-	ep_idx = ipa2_get_ep_mapping(IPA_CLIENT_APPS_CMD_PROD);
-	if (ep_idx != -1) {
-		ep = &ipa_ctx->ep[ep_idx];
-		if (ep->valid) {
-			IPADBG("teardown ep (%d)\n", ep_idx);
-			ipa2_teardown_sys_pipe(ep_idx);
-		}
-	}
 }
 
 /**

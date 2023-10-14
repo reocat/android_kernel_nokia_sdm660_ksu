@@ -1,13 +1,6 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2014-2018, 2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/list_sort.h>
@@ -16,6 +9,7 @@
 #include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/msm-bus.h>
+#define CREATE_TRACE_POINTS
 #include <trace/events/trace_msm_bus.h>
 
 struct node_vote_info {
@@ -65,8 +59,8 @@ static struct rule_node_info *get_node(u32 id, void *data)
 
 	list_for_each_entry(node_it, &node_list, link) {
 		if (node_it->id == id) {
-			if ((id == NB_ID)) {
-				if ((node_it->data == data)) {
+			if (id == NB_ID) {
+				if (node_it->data == data) {
 					node_match = node_it;
 					break;
 				}
@@ -93,10 +87,8 @@ static struct rule_node_info *gen_node(u32 id, void *data)
 
 	if (!node_match) {
 		node_match = kzalloc(sizeof(struct rule_node_info), GFP_KERNEL);
-		if (!node_match) {
-			pr_err("%s: Cannot allocate memory", __func__);
+		if (!node_match)
 			goto exit_node_match;
-		}
 
 		node_match->id = id;
 		node_match->cur_rule = NULL;
@@ -132,7 +124,7 @@ static bool do_compare_op(u64 op1, u64 op2, int op)
 		ret = true;
 		break;
 	default:
-		pr_info("Invalid OP %d", op);
+		pr_info("Invalid OP %d\n", op);
 		break;
 	}
 	return ret;
@@ -192,12 +184,13 @@ static bool check_rule(struct rules_def *rule,
 	case OP_GE:
 	{
 		u64 src_field = get_field(rule, inp->id);
+
 		ret = do_compare_op(src_field, rule->rule_ops.thresh,
 							rule->rule_ops.op);
 		break;
 	}
 	default:
-		pr_err("Unsupported op %d", rule->rule_ops.op);
+		pr_err("Unsupported op %d\n", rule->rule_ops.op);
 		break;
 	}
 	return ret;
@@ -211,23 +204,24 @@ static void match_rule(struct rule_update_path_info *inp_node,
 
 	list_for_each_entry(rule, &node->node_rules, link) {
 		for (i = 0; i < rule->num_src; i++) {
-			if (rule->src_info[i].id == inp_node->id) {
-				if (check_rule(rule, inp_node)) {
-					trace_bus_rules_matches(
-					(node->cur_rule ?
-						node->cur_rule->rule_id : -1),
-					inp_node->id, inp_node->ab,
-					inp_node->ib, inp_node->clk);
-					if (rule->state ==
-						RULE_STATE_NOT_APPLIED)
-						rule->state_change = true;
-					rule->state = RULE_STATE_APPLIED;
-				} else {
-					if (rule->state ==
-						RULE_STATE_APPLIED)
-						rule->state_change = true;
-					rule->state = RULE_STATE_NOT_APPLIED;
-				}
+			if (rule->src_info[i].id != inp_node->id)
+				continue;
+
+			if (check_rule(rule, inp_node)) {
+				trace_bus_rules_matches(
+				(node->cur_rule ?
+					node->cur_rule->rule_id : -1),
+				inp_node->id, inp_node->ab,
+				inp_node->ib, inp_node->clk);
+				if (rule->state ==
+					RULE_STATE_NOT_APPLIED)
+					rule->state_change = true;
+				rule->state = RULE_STATE_APPLIED;
+			} else {
+				if (rule->state ==
+					RULE_STATE_APPLIED)
+					rule->state_change = true;
+				rule->state = RULE_STATE_NOT_APPLIED;
 			}
 		}
 	}
@@ -344,7 +338,7 @@ static int node_rules_compare(void *priv, struct list_head *a,
 						rb->rule_ops.thresh;
 				if (th_diff > 0)
 					ret = 1;
-				 else
+				else
 					ret = -1;
 			} else if ((ra->rule_ops.op == OP_GT) ||
 					(ra->rule_ops.op == OP_GE)) {
@@ -352,11 +346,12 @@ static int node_rules_compare(void *priv, struct list_head *a,
 							ra->rule_ops.thresh;
 				if (th_diff > 0)
 					ret = 1;
-				 else
+				else
 					ret = -1;
 			}
-		} else
+		} else {
 			ret = ra->rule_ops.op - rb->rule_ops.op;
+		}
 	} else if (is_throttle_rule(ra->rule_ops.mode) &&
 				is_throttle_rule(rb->rule_ops.mode)) {
 		if (ra->rule_ops.mode == THROTTLE_ON)
@@ -380,7 +375,7 @@ static void print_rules(struct rule_node_info *node_it)
 	int i;
 
 	if (!node_it) {
-		pr_err("%s: no node for found", __func__);
+		pr_err("%s: no node for found\n", __func__);
 		return;
 	}
 
@@ -470,7 +465,7 @@ static int copy_rule(struct bus_rule_type *src, struct rules_def *node_rule,
 			(sizeof(int) * node_rule->rule_ops.num_src),
 							GFP_KERNEL);
 	if (!node_rule->rule_ops.src_id) {
-		pr_err("%s:Failed to allocate for src_id",
+		pr_err("%s:Failed to allocate for src_id\n",
 					__func__);
 		return -ENOMEM;
 	}
@@ -482,11 +477,8 @@ static int copy_rule(struct bus_rule_type *src, struct rules_def *node_rule,
 		node_rule->rule_ops.dst_node = kzalloc(
 			(sizeof(int) * node_rule->rule_ops.num_dst),
 						GFP_KERNEL);
-		if (!node_rule->rule_ops.dst_node) {
-			pr_err("%s:Failed to allocate for src_id",
-							__func__);
+		if (!node_rule->rule_ops.dst_node)
 			return -ENOMEM;
-		}
 		memcpy(node_rule->rule_ops.dst_node, src->dst_node,
 						sizeof(int) * src->num_dst);
 	}
@@ -496,7 +488,7 @@ static int copy_rule(struct bus_rule_type *src, struct rules_def *node_rule,
 		(sizeof(struct node_vote_info) * node_rule->rule_ops.num_src),
 							GFP_KERNEL);
 	if (!node_rule->src_info) {
-		pr_err("%s:Failed to allocate for src_id",
+		pr_err("%s:Failed to allocate for src_id\n",
 						__func__);
 		return -ENOMEM;
 	}
@@ -534,21 +526,19 @@ static bool __rule_register(int num_rules, struct bus_rule_type *rule,
 
 			node = gen_node(id, nb);
 			if (!node) {
-				pr_info("Error getting rule");
+				pr_info("Error getting rule\n");
 				reg_success = false;
 				goto exit_rule_register;
 			}
 			node_rule = kzalloc(sizeof(struct rules_def),
 						GFP_KERNEL);
 			if (!node_rule) {
-				pr_err("%s: Failed to allocate for rule",
-								__func__);
 				reg_success = false;
 				goto exit_rule_register;
 			}
 
 			if (copy_rule(&rule[i], node_rule, nb)) {
-				pr_err("Error copying rule");
+				pr_err("Error copying rule\n");
 				reg_success = false;
 				goto exit_rule_register;
 			}
@@ -610,7 +600,7 @@ static bool __rule_unregister(int num_rules, struct bus_rule_type *rule,
 	if (nb) {
 		node = get_node(NB_ID, nb);
 		if (!node) {
-			pr_err("%s: Can't find node", __func__);
+			pr_err("%s: Can't find node\n", __func__);
 			goto exit_unregister_rule;
 		}
 		match_found = true;
@@ -639,16 +629,16 @@ static bool __rule_unregister(int num_rules, struct bus_rule_type *rule,
 				list_for_each_entry_safe(node_rule,
 				node_rule_tmp, &node->node_rules, link) {
 					if (comp_rules(&node_rule->rule_ops,
-						&rule[i]) == 0) {
-						list_del(&node_rule->link);
-						kfree(node_rule);
-						match_found = true;
-						node->num_rules--;
-						list_sort(NULL,
-							&node->node_rules,
-							node_rules_compare);
-						break;
-					}
+						&rule[i]) != 0)
+						continue;
+					list_del(&node_rule->link);
+					kfree(node_rule);
+					match_found = true;
+					node->num_rules--;
+					list_sort(NULL,
+						&node->node_rules,
+						node_rules_compare);
+					break;
 				}
 			}
 		}
@@ -657,7 +647,7 @@ static bool __rule_unregister(int num_rules, struct bus_rule_type *rule,
 	list_for_each_entry_safe(node, node_tmp,
 					&node_list, link) {
 		if (!node->num_rules) {
-			pr_debug("Deleting Rule node %d", node->id);
+			pr_debug("Deleting Rule node %d\n", node->id);
 			list_del(&node->link);
 			kfree(node);
 		}
@@ -683,14 +673,10 @@ bool msm_rule_update(struct bus_rule_type *old_rule,
 {
 	bool rc = true;
 
-	if (!old_rule || !new_rule) {
-		pr_err("%s:msm_rule_update: void rules, error\n", __func__);
+	if (!old_rule || !new_rule)
 		return false;
-	}
 	mutex_lock(&msm_bus_rules_lock);
 	if (!__rule_unregister(1, old_rule, nb)) {
-		pr_err("%s:msm_rule_update: failed to unregister old rule\n",
-				__func__);
 		rc = false;
 		goto exit_rule_update;
 	}
@@ -700,8 +686,6 @@ bool msm_rule_update(struct bus_rule_type *old_rule,
 		 * Registering new rule has failed for some reason, attempt
 		 * to re-register the old rule and return error.
 		 */
-		pr_err("%s:msm_rule_update: failed to register new rule\n",
-				__func__);
 		__rule_register(1, old_rule, nb);
 		rc = false;
 	}

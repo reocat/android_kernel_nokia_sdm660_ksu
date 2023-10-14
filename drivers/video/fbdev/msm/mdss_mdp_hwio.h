@@ -1,15 +1,5 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2012-2018, 2020, The Linux Foundation. All rights reserved. */
 
 #ifndef MDSS_MDP_HWIO_H
 #define MDSS_MDP_HWIO_H
@@ -682,7 +672,7 @@ enum mdss_mdp_dspp_index {
 #define MDSS_MDP_REG_INTF_INTR_CLEAR			0x1C8
 #define MDSS_MDP_REG_INTF_PROG_LINE_INTR_CONF		0x250
 #define MDSS_MDP_REG_INTF_VBLANK_END_CONF		0x264
-
+#define MDSS_MDP_REG_INTF_RGB_INTF_CTRL			0x268
 #define MDSS_MDP_REG_INTF_AVR_CONTROL			0x270
 #define MDSS_MDP_REG_INTF_AVR_MODE			0x274
 #define MDSS_MDP_REG_INTF_AVR_TRIGGER			0x278

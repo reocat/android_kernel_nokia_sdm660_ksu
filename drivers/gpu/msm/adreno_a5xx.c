@@ -1,37 +1,23 @@
-/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
  */
+
+#include <linux/clk/qcom.h>
+#include <linux/delay.h>
 #include <linux/firmware.h>
-#include <soc/qcom/subsystem_restart.h>
+#include <linux/of.h>
+#include <linux/slab.h>
 #include <soc/qcom/scm.h>
-#include <linux/pm_opp.h>
-#include <linux/clk/msm-clk.h>
+#include <soc/qcom/subsystem_restart.h>
 
 #include "adreno.h"
-#include "a5xx_reg.h"
 #include "adreno_a5xx.h"
-#include "adreno_cp_parser.h"
-#include "adreno_trace.h"
-#include "adreno_pm4types.h"
-#include "adreno_perfcounter.h"
-#include "adreno_ringbuffer.h"
-#include "kgsl_sharedmem.h"
-#include "kgsl_log.h"
-#include "kgsl.h"
-#include "kgsl_trace.h"
 #include "adreno_a5xx_packets.h"
+#include "adreno_pm4types.h"
+#include "adreno_trace.h"
+#include "kgsl_trace.h"
 
-static int zap_ucode_loaded;
-static void *zap_handle_ptr;
 static int critical_packet_constructed;
 
 static struct kgsl_memdesc crit_pkts;
@@ -41,34 +27,10 @@ static struct kgsl_memdesc crit_pkts_refbuf1;
 static struct kgsl_memdesc crit_pkts_refbuf2;
 static struct kgsl_memdesc crit_pkts_refbuf3;
 
-void a5xx_snapshot(struct adreno_device *adreno_dev,
-		struct kgsl_snapshot *snapshot);
-
-static const struct adreno_vbif_data a530_vbif[] = {
-	{A5XX_VBIF_ROUND_ROBIN_QOS_ARB, 0x00000003},
-	{0, 0},
-};
-
-static const struct adreno_vbif_data a540_vbif[] = {
-	{A5XX_VBIF_ROUND_ROBIN_QOS_ARB, 0x00000003},
-	{A5XX_VBIF_GATE_OFF_WRREQ_EN, 0x00000009},
-	{0, 0},
-};
-
-static const struct adreno_vbif_platform a5xx_vbif_platforms[] = {
-	{ adreno_is_a540, a540_vbif },
-	{ adreno_is_a530, a530_vbif },
-	{ adreno_is_a512, a540_vbif },
-	{ adreno_is_a510, a530_vbif },
-	{ adreno_is_a509, a540_vbif },
-	{ adreno_is_a508, a530_vbif },
-	{ adreno_is_a505, a530_vbif },
-	{ adreno_is_a506, a530_vbif },
-};
-
 static void a5xx_irq_storm_worker(struct work_struct *work);
-static int _read_fw2_block_header(uint32_t *header, uint32_t remain,
-	uint32_t id, uint32_t major, uint32_t minor);
+static int _read_fw2_block_header(struct kgsl_device *device,
+		uint32_t *header, uint32_t remain,
+		uint32_t id, uint32_t major, uint32_t minor);
 static void a5xx_gpmu_reset(struct work_struct *work);
 static int a5xx_gpmu_init(struct adreno_device *adreno_dev);
 
@@ -86,34 +48,6 @@ static int a5xx_gpmu_init(struct adreno_device *adreno_dev);
 
 #define A530_QFPROM_RAW_PTE_ROW0_MSB 0x134
 #define A530_QFPROM_RAW_PTE_ROW2_MSB 0x144
-
-/* Print some key registers if a spin-for-idle times out */
-static void spin_idle_debug(struct kgsl_device *device,
-		const char *str)
-{
-	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
-	unsigned int rptr, wptr;
-	unsigned int status, status3, intstatus;
-	unsigned int hwfault;
-
-	dev_err(device->dev, str);
-
-	adreno_readreg(adreno_dev, ADRENO_REG_CP_RB_RPTR, &rptr);
-	adreno_readreg(adreno_dev, ADRENO_REG_CP_RB_WPTR, &wptr);
-
-	kgsl_regread(device, A5XX_RBBM_STATUS, &status);
-	kgsl_regread(device, A5XX_RBBM_STATUS3, &status3);
-	kgsl_regread(device, A5XX_RBBM_INT_0_STATUS, &intstatus);
-	kgsl_regread(device, A5XX_CP_HW_FAULT, &hwfault);
-
-	dev_err(device->dev,
-		"rb=%d pos=%X/%X rbbm_status=%8.8X/%8.8X int_0_status=%8.8X\n",
-		adreno_dev->cur_rb->id, rptr, wptr, status, status3, intstatus);
-
-	dev_err(device->dev, " hwfault=%8.8X\n", hwfault);
-
-	kgsl_device_snapshot(device, NULL);
-}
 
 static void a530_efuse_leakage(struct adreno_device *adreno_dev)
 {
@@ -155,15 +89,35 @@ static void a530_efuse_speed_bin(struct adreno_device *adreno_dev)
 	adreno_dev->speed_bin = (val & speed_bin[1]) >> speed_bin[2];
 }
 
+static void a5xx_efuse_speed_bin(struct adreno_device *adreno_dev)
+{
+	unsigned int val;
+	unsigned int speed_bin[3];
+	struct kgsl_device *device = &adreno_dev->dev;
+
+	if (of_get_property(device->pdev->dev.of_node,
+			"qcom,gpu-speed-bin-vectors", NULL)) {
+		adreno_efuse_speed_bin_array(adreno_dev);
+		return;
+	}
+
+	if (!of_property_read_u32_array(device->pdev->dev.of_node,
+			"qcom,gpu-speed-bin", speed_bin, 3)) {
+		adreno_efuse_read_u32(adreno_dev, speed_bin[0], &val);
+		adreno_dev->speed_bin = (val & speed_bin[1]) >> speed_bin[2];
+		return;
+	}
+}
+
 static const struct {
 	int (*check)(struct adreno_device *adreno_dev);
 	void (*func)(struct adreno_device *adreno_dev);
 } a5xx_efuse_funcs[] = {
 	{ adreno_is_a530, a530_efuse_leakage },
 	{ adreno_is_a530, a530_efuse_speed_bin },
-	{ adreno_is_a505, a530_efuse_speed_bin },
+	{ adreno_is_a504, a5xx_efuse_speed_bin },
+	{ adreno_is_a505, a5xx_efuse_speed_bin },
 	{ adreno_is_a512, a530_efuse_speed_bin },
-	{ adreno_is_a509, a530_efuse_speed_bin },
 	{ adreno_is_a508, a530_efuse_speed_bin },
 };
 
@@ -184,10 +138,9 @@ static void a5xx_check_features(struct adreno_device *adreno_dev)
 
 static void a5xx_platform_setup(struct adreno_device *adreno_dev)
 {
-	uint64_t addr;
 	struct adreno_gpudev *gpudev = ADRENO_GPU_DEVICE(adreno_dev);
 
-	if (adreno_is_a505_or_a506(adreno_dev) || adreno_is_a508(adreno_dev)) {
+	if (adreno_is_a504_to_a506(adreno_dev) || adreno_is_a508(adreno_dev)) {
 		gpudev->snapshot_data->sect_sizes->cp_meq = 32;
 		gpudev->snapshot_data->sect_sizes->cp_merciu = 1024;
 		gpudev->snapshot_data->sect_sizes->roq = 256;
@@ -204,19 +157,21 @@ static void a5xx_platform_setup(struct adreno_device *adreno_dev)
 		gpudev->vbif_xin_halt_ctrl0_mask =
 				A510_VBIF_XIN_HALT_CTRL0_MASK;
 	} else if (adreno_is_a540(adreno_dev) ||
-		adreno_is_a512(adreno_dev) ||
-		adreno_is_a509(adreno_dev)) {
+		adreno_is_a512(adreno_dev)) {
 		gpudev->snapshot_data->sect_sizes->cp_merciu = 1024;
 	}
 
-	/* Calculate SP local and private mem addresses */
-	addr = ALIGN(ADRENO_UCHE_GMEM_BASE + adreno_dev->gmem_size, SZ_64K);
-	adreno_dev->sp_local_gpuaddr = addr;
-	adreno_dev->sp_pvt_gpuaddr = addr + SZ_64K;
+	set_bit(ADRENO_LM_CTRL, &adreno_dev->pwrctrl_flag);
 
 	/* Setup defaults that might get changed by the fuse bits */
 	adreno_dev->lm_leakage = A530_DEFAULT_LEAKAGE;
 	adreno_dev->speed_bin = 0;
+
+	/* Set the GPU busy counter to use for frequency scaling */
+	adreno_dev->perfctr_pwr_lo = A5XX_RBBM_PERFCTR_RBBM_0_LO;
+
+	if (ADRENO_FEATURE(adreno_dev, ADRENO_SPTP_PC))
+		set_bit(ADRENO_SPTP_PC_CTRL, &adreno_dev->pwrctrl_flag);
 
 	/* Check efuse bits for various capabilties */
 	a5xx_check_features(adreno_dev);
@@ -229,6 +184,8 @@ static void a5xx_critical_packet_destroy(struct adreno_device *adreno_dev)
 	kgsl_free_global(&adreno_dev->dev, &crit_pkts_refbuf2);
 	kgsl_free_global(&adreno_dev->dev, &crit_pkts_refbuf3);
 
+	kgsl_iommu_unmap_global_secure_pt_entry(KGSL_DEVICE(adreno_dev),
+			&crit_pkts_refbuf0);
 	kgsl_sharedmem_free(&crit_pkts_refbuf0);
 
 }
@@ -267,8 +224,10 @@ static int a5xx_critical_packet_construct(struct adreno_device *adreno_dev)
 	if (ret)
 		return ret;
 
-	kgsl_add_global_secure_entry(&adreno_dev->dev,
+	ret = kgsl_iommu_map_global_secure_pt_entry(&adreno_dev->dev,
 					&crit_pkts_refbuf0);
+	if (ret)
+		return ret;
 
 	ret = kgsl_allocate_global(&adreno_dev->dev,
 					&crit_pkts_refbuf1,
@@ -324,13 +283,30 @@ static int a5xx_critical_packet_construct(struct adreno_device *adreno_dev)
 
 static void a5xx_init(struct adreno_device *adreno_dev)
 {
+	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
+
+	of_property_read_u32(device->pdev->dev.of_node,
+		"qcom,highest-bank-bit", &adreno_dev->highest_bank_bit);
+
+	if (WARN(adreno_dev->highest_bank_bit < 13 ||
+			adreno_dev->highest_bank_bit > 16,
+			"The highest-bank-bit property is invalid\n"))
+		adreno_dev->highest_bank_bit =
+			clamp_t(unsigned int, adreno_dev->highest_bank_bit,
+				13, 16);
+
 	if (ADRENO_FEATURE(adreno_dev, ADRENO_GPMU))
 		INIT_WORK(&adreno_dev->gpmu_work, a5xx_gpmu_reset);
 
 	INIT_WORK(&adreno_dev->irq_storm_work, a5xx_irq_storm_worker);
 
-	if (ADRENO_QUIRK(adreno_dev, ADRENO_QUIRK_CRITICAL_PACKETS))
-		a5xx_critical_packet_construct(adreno_dev);
+	if (ADRENO_QUIRK(adreno_dev, ADRENO_QUIRK_CRITICAL_PACKETS)) {
+		int ret;
+
+		ret = a5xx_critical_packet_construct(adreno_dev);
+		if (ret)
+			a5xx_critical_packet_destroy(adreno_dev);
+	}
 
 	a5xx_crashdump_init(adreno_dev);
 }
@@ -341,57 +317,72 @@ static void a5xx_remove(struct adreno_device *adreno_dev)
 		a5xx_critical_packet_destroy(adreno_dev);
 }
 
-/**
- * a5xx_protect_init() - Initializes register protection on a5xx
- * @device: Pointer to the device structure
- * Performs register writes to enable protected access to sensitive
- * registers
- */
+const static struct {
+	u32 reg;
+	u32 base;
+	u32 count;
+} a5xx_protected_blocks[] = {
+	/* RBBM */
+	{  A5XX_CP_PROTECT_REG_0,     0x004, 2 },
+	{  A5XX_CP_PROTECT_REG_0 + 1, 0x008, 3 },
+	{  A5XX_CP_PROTECT_REG_0 + 2, 0x010, 4 },
+	{  A5XX_CP_PROTECT_REG_0 + 3, 0x020, 5 },
+	{  A5XX_CP_PROTECT_REG_0 + 4, 0x040, 6 },
+	{  A5XX_CP_PROTECT_REG_0 + 5, 0x080, 6 },
+	/* Content protection */
+	{  A5XX_CP_PROTECT_REG_0 + 6, A5XX_RBBM_SECVID_TSB_TRUSTED_BASE_LO, 4 },
+	{  A5XX_CP_PROTECT_REG_0 + 7, A5XX_RBBM_SECVID_TRUST_CNTL, 1 },
+	/* CP */
+	{  A5XX_CP_PROTECT_REG_0 + 8, 0x800, 6 },
+	{  A5XX_CP_PROTECT_REG_0 + 9, 0x840, 3 },
+	{  A5XX_CP_PROTECT_REG_0 + 10, 0x880, 5 },
+	{  A5XX_CP_PROTECT_REG_0 + 11, 0xaa0, 0 },
+	/* RB */
+	{  A5XX_CP_PROTECT_REG_0 + 12, 0xcc0, 0 },
+	{  A5XX_CP_PROTECT_REG_0 + 13, 0xcf0, 1 },
+	/* VPC */
+	{  A5XX_CP_PROTECT_REG_0 + 14, 0xe68, 3 },
+	{  A5XX_CP_PROTECT_REG_0 + 15, 0xe70, 4 },
+	/* UCHE */
+	{  A5XX_CP_PROTECT_REG_0 + 16, 0xe80, 4 },
+	/* A5XX_CP_PROTECT_REG_17 will be used for SMMU */
+	/* A5XX_CP_PROTECT_REG_18 - A5XX_CP_PROTECT_REG_31 are available */
+};
+
+static void _setprotectreg(struct kgsl_device *device, u32 offset,
+		u32 base, u32 count)
+{
+	kgsl_regwrite(device, offset, 0x60000000 | (count << 24) | (base << 2));
+}
+
 static void a5xx_protect_init(struct adreno_device *adreno_dev)
 {
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
-	int index = 0;
-	struct kgsl_protected_registers *iommu_regs;
+	u32 reg;
+	int i;
 
 	/* enable access protection to privileged registers */
 	kgsl_regwrite(device, A5XX_CP_PROTECT_CNTL, 0x00000007);
 
-	/* RBBM registers */
-	adreno_set_protected_registers(adreno_dev, &index, 0x4, 2);
-	adreno_set_protected_registers(adreno_dev, &index, 0x8, 3);
-	adreno_set_protected_registers(adreno_dev, &index, 0x10, 4);
-	adreno_set_protected_registers(adreno_dev, &index, 0x20, 5);
-	adreno_set_protected_registers(adreno_dev, &index, 0x40, 6);
-	adreno_set_protected_registers(adreno_dev, &index, 0x80, 6);
+	for (i = 0; i < ARRAY_SIZE(a5xx_protected_blocks); i++) {
+		reg = a5xx_protected_blocks[i].reg;
 
-	/* Content protection registers */
-	adreno_set_protected_registers(adreno_dev, &index,
-		   A5XX_RBBM_SECVID_TSB_TRUSTED_BASE_LO, 4);
-	adreno_set_protected_registers(adreno_dev, &index,
-		   A5XX_RBBM_SECVID_TRUST_CNTL, 1);
+		_setprotectreg(device, reg, a5xx_protected_blocks[i].base,
+			a5xx_protected_blocks[i].count);
+	}
 
-	/* CP registers */
-	adreno_set_protected_registers(adreno_dev, &index, 0x800, 6);
-	adreno_set_protected_registers(adreno_dev, &index, 0x840, 3);
-	adreno_set_protected_registers(adreno_dev, &index, 0x880, 5);
-	adreno_set_protected_registers(adreno_dev, &index, 0x0AA0, 0);
-
-	/* RB registers */
-	adreno_set_protected_registers(adreno_dev, &index, 0xCC0, 0);
-	adreno_set_protected_registers(adreno_dev, &index, 0xCF0, 1);
-
-	/* VPC registers */
-	adreno_set_protected_registers(adreno_dev, &index, 0xE68, 3);
-	adreno_set_protected_registers(adreno_dev, &index, 0xE70, 4);
-
-	/* UCHE registers */
-	adreno_set_protected_registers(adreno_dev, &index, 0xE80, ilog2(16));
-
-	/* SMMU registers */
-	iommu_regs = kgsl_mmu_get_prot_regs(&device->mmu);
-	if (iommu_regs)
-		adreno_set_protected_registers(adreno_dev, &index,
-				iommu_regs->base, iommu_regs->range);
+	/*
+	 * For a530 and a540 the SMMU region is 0x20000 bytes long and 0x10000
+	 * bytes on all other targets. The base offset for both is 0x40000.
+	 * Write it to the next available slot. The base offset and length of a
+	 * block must be specified as power of 2 values.
+	 */
+	if (adreno_is_a530(adreno_dev) || adreno_is_a540(adreno_dev))
+		_setprotectreg(device, reg + 1, (0x40000 >> 2),
+			ilog2(0x20000 >> 2));
+	else
+		_setprotectreg(device, reg + 1, (0x40000 >> 2),
+			ilog2(0x10000 >> 2));
 }
 
 /*
@@ -488,6 +479,7 @@ static int a5xx_regulator_enable(struct adreno_device *adreno_dev)
 {
 	unsigned int ret;
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
+
 	if (!(adreno_is_a530(adreno_dev) || adreno_is_a540(adreno_dev))) {
 		/* Halt the sp_input_clk at HM level */
 		kgsl_regwrite(device, A5XX_RBBM_CLOCK_CNTL, 0x00000055);
@@ -506,14 +498,14 @@ static int a5xx_regulator_enable(struct adreno_device *adreno_dev)
 	udelay(3);
 	ret = _poll_gdsc_status(adreno_dev, A5XX_GPMU_RBCCU_PWR_CLK_STATUS, 1);
 	if (ret) {
-		KGSL_PWR_ERR(device, "RBCCU GDSC enable failed\n");
+		dev_err(device->dev, "RBCCU GDSC enable failed\n");
 		return ret;
 	}
 
 	kgsl_regwrite(device, A5XX_GPMU_SP_POWER_CNTL, 0x778000);
 	ret = _poll_gdsc_status(adreno_dev, A5XX_GPMU_SP_PWR_CLK_STATUS, 1);
 	if (ret) {
-		KGSL_PWR_ERR(device, "SPTP GDSC enable failed\n");
+		dev_err(device->dev, "SPTP GDSC enable failed\n");
 		return ret;
 	}
 
@@ -543,8 +535,7 @@ static void a5xx_regulator_disable(struct adreno_device *adreno_dev)
 	unsigned int reg;
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 
-	if (adreno_is_a512(adreno_dev) || adreno_is_a509(adreno_dev) ||
-		adreno_is_a508(adreno_dev))
+	if (adreno_is_a512(adreno_dev) || adreno_is_a508(adreno_dev))
 		return;
 
 	/* If feature is not supported or not enabled */
@@ -559,28 +550,28 @@ static void a5xx_regulator_disable(struct adreno_device *adreno_dev)
 		udelay(3);
 		if (_poll_gdsc_status(adreno_dev,
 					A5XX_GPMU_SP_PWR_CLK_STATUS, 0))
-			KGSL_PWR_WARN(device, "SPTP GDSC disable failed\n");
+			dev_warn(device->dev, "SPTP GDSC disable failed\n");
 
 		kgsl_regwrite(device, A5XX_GPMU_RBCCU_POWER_CNTL, 0x778001);
 		if (_poll_gdsc_status(adreno_dev,
 					A5XX_GPMU_RBCCU_PWR_CLK_STATUS, 0))
-			KGSL_PWR_WARN(device, "RBCCU GDSC disable failed\n");
+			dev_warn(device->dev, "RBCCU GDSC disable failed\n");
 	} else if (test_bit(ADRENO_DEVICE_GPMU_INITIALIZED,
 			&adreno_dev->priv)) {
 		/* GPMU firmware is supposed to turn off SPTP & RAC GDSCs. */
 		kgsl_regread(device, A5XX_GPMU_SP_PWR_CLK_STATUS, &reg);
 		if (reg & BIT(20))
-			KGSL_PWR_WARN(device, "SPTP GDSC is not disabled\n");
+			dev_warn(device->dev, "SPTP GDSC is not disabled\n");
 		kgsl_regread(device, A5XX_GPMU_RBCCU_PWR_CLK_STATUS, &reg);
 		if (reg & BIT(20))
-			KGSL_PWR_WARN(device, "RBCCU GDSC is not disabled\n");
+			dev_warn(device->dev, "RBCCU GDSC is not disabled\n");
 		/*
 		 * GPMU firmware is supposed to set GMEM to non-retention.
 		 * Bit 14 is the memory core force on bit.
 		 */
 		kgsl_regread(device, A5XX_GPMU_RBCCU_CLOCK_CNTL, &reg);
 		if (reg & BIT(14))
-			KGSL_PWR_WARN(device, "GMEM is forced on\n");
+			dev_warn(device->dev, "GMEM is forced on\n");
 	}
 
 	if (adreno_is_a530(adreno_dev)) {
@@ -642,8 +633,7 @@ static int _gpmu_create_load_cmds(struct adreno_device *adreno_dev,
 	start = cmds;
 
 	/* Turn CP protection OFF */
-	*cmds++ = cp_type7_packet(CP_SET_PROTECTED_MODE, 1);
-	*cmds++ = 0;
+	cmds += cp_protected_mode(adreno_dev, cmds, 0);
 
 	/*
 	 * Prebuild the cmd stream to send to the GPU to load
@@ -667,8 +657,7 @@ static int _gpmu_create_load_cmds(struct adreno_device *adreno_dev,
 	}
 
 	/* Turn CP protection ON */
-	*cmds++ = cp_type7_packet(CP_SET_PROTECTED_MODE, 1);
-	*cmds++ = 1;
+	cmds += cp_protected_mode(adreno_dev, cmds, 1);
 
 	adreno_dev->gpmu_cmds_size = (size_t) (cmds - start);
 
@@ -685,24 +674,29 @@ static int _load_gpmu_firmware(struct adreno_device *adreno_dev)
 	uint32_t *data;
 	const struct firmware *fw = NULL;
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
-	const struct adreno_gpu_core *gpucore = adreno_dev->gpucore;
+	const struct adreno_a5xx_core *a5xx_core = to_a5xx_core(adreno_dev);
 	uint32_t *cmds, cmd_size;
 	int ret =  -EINVAL;
+	u32 gmu_major = 1;
 
 	if (!ADRENO_FEATURE(adreno_dev, ADRENO_GPMU))
 		return 0;
+
+	/* a530 used GMU major 1 and A540 used GMU major 3 */
+	if (adreno_is_a540(adreno_dev))
+		gmu_major = 3;
 
 	/* gpmu fw already saved and verified so do nothing new */
 	if (adreno_dev->gpmu_cmds_size != 0)
 		return 0;
 
-	if (gpucore->gpmufw_name == NULL)
+	if (a5xx_core->gpmufw_name == NULL)
 		return 0;
 
-	ret = request_firmware(&fw, gpucore->gpmufw_name, device->dev);
+	ret = request_firmware(&fw, a5xx_core->gpmufw_name, device->dev);
 	if (ret || fw == NULL) {
-		KGSL_CORE_ERR("request_firmware (%s) failed: %d\n",
-				gpucore->gpmufw_name, ret);
+		dev_err(device->dev, "request_firmware (%s) failed: %d\n",
+				a5xx_core->gpmufw_name, ret);
 		return ret;
 	}
 
@@ -713,11 +707,8 @@ static int _load_gpmu_firmware(struct adreno_device *adreno_dev)
 
 	if (data[1] != GPMU_FIRMWARE_ID)
 		goto err;
-	ret = _read_fw2_block_header(&data[2],
-		data[0] - 2,
-		GPMU_FIRMWARE_ID,
-		adreno_dev->gpucore->gpmu_major,
-		adreno_dev->gpucore->gpmu_minor);
+	ret = _read_fw2_block_header(device, &data[2],
+		data[0] - 2, GPMU_FIRMWARE_ID, gmu_major, 0);
 	if (ret)
 		goto err;
 
@@ -729,9 +720,9 @@ static int _load_gpmu_firmware(struct adreno_device *adreno_dev)
 	cmd_size = data[0] - data[2] - 2;
 
 	if (cmd_size > GPMU_INST_RAM_SIZE) {
-		KGSL_CORE_ERR(
+		dev_err(device->dev,
 			"GPMU firmware block size is larger than RAM size\n");
-		 goto err;
+		goto err;
 	}
 
 	/* Everything is cool, so create some commands */
@@ -764,7 +755,7 @@ static int _gpmu_send_init_cmds(struct adreno_device *adreno_dev)
 
 	ret = adreno_ringbuffer_submit_spin(rb, NULL, 2000);
 	if (ret != 0)
-		spin_idle_debug(&adreno_dev->dev,
+		adreno_spin_idle_debug(adreno_dev,
 				"gpmu initialization failed to idle\n");
 
 	return ret;
@@ -806,7 +797,8 @@ static int a5xx_gpmu_start(struct adreno_device *adreno_dev)
 	} while ((reg != 0xBABEFACE) && retry--);
 
 	if (reg != 0xBABEFACE) {
-		KGSL_CORE_ERR("GPMU firmware initialization timed out\n");
+		dev_err(device->dev,
+			"GPMU firmware initialization timed out\n");
 		return -ETIMEDOUT;
 	}
 
@@ -814,7 +806,7 @@ static int a5xx_gpmu_start(struct adreno_device *adreno_dev)
 		kgsl_regread(device, A5XX_GPMU_GENERAL_1, &reg);
 
 		if (reg) {
-			KGSL_CORE_ERR(
+			dev_err(device->dev,
 				"GPMU firmware initialization failed: %d\n",
 				reg);
 			return -EIO;
@@ -838,408 +830,27 @@ static int a5xx_gpmu_start(struct adreno_device *adreno_dev)
 	return ret;
 }
 
-struct kgsl_hwcg_reg {
-	unsigned int off;
-	unsigned int val;
-};
-
-static const struct kgsl_hwcg_reg a50x_hwcg_regs[] = {
-	{A5XX_RBBM_CLOCK_CNTL_SP0, 0x02222222},
-	{A5XX_RBBM_CLOCK_CNTL2_SP0, 0x02222220},
-	{A5XX_RBBM_CLOCK_HYST_SP0, 0x0000F3CF},
-	{A5XX_RBBM_CLOCK_DELAY_SP0, 0x00000080},
-	{A5XX_RBBM_CLOCK_CNTL_TP0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_TP0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL3_TP0, 0x00002222},
-	{A5XX_RBBM_CLOCK_HYST_TP0, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST2_TP0, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST3_TP0, 0x00007777},
-	{A5XX_RBBM_CLOCK_DELAY_TP0, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY2_TP0, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY3_TP0, 0x00001111},
-	{A5XX_RBBM_CLOCK_CNTL2_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL3_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL4_UCHE, 0x00222222},
-	{A5XX_RBBM_CLOCK_CNTL_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_HYST_UCHE, 0x00FFFFF4},
-	{A5XX_RBBM_CLOCK_DELAY_UCHE, 0x00000002},
-	{A5XX_RBBM_CLOCK_CNTL_RB0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_RB0, 0x00222222},
-	{A5XX_RBBM_CLOCK_CNTL_CCU0, 0x00022220},
-	{A5XX_RBBM_CLOCK_CNTL_RAC, 0x05522222},
-	{A5XX_RBBM_CLOCK_CNTL2_RAC, 0x00505555},
-	{A5XX_RBBM_CLOCK_HYST_RB_CCU0, 0x04040404},
-	{A5XX_RBBM_CLOCK_HYST_RAC, 0x07444044},
-	{A5XX_RBBM_CLOCK_DELAY_RB_CCU_L1_0, 0x00000002},
-	{A5XX_RBBM_CLOCK_DELAY_RAC, 0x00010011},
-	{A5XX_RBBM_CLOCK_CNTL_TSE_RAS_RBBM, 0x04222222},
-	{A5XX_RBBM_CLOCK_MODE_GPC, 0x02222222},
-	{A5XX_RBBM_CLOCK_MODE_VFD, 0x00002222},
-	{A5XX_RBBM_CLOCK_HYST_TSE_RAS_RBBM, 0x00000000},
-	{A5XX_RBBM_CLOCK_HYST_GPC, 0x04104004},
-	{A5XX_RBBM_CLOCK_HYST_VFD, 0x00000000},
-	{A5XX_RBBM_CLOCK_DELAY_HLSQ, 0x00000000},
-	{A5XX_RBBM_CLOCK_DELAY_TSE_RAS_RBBM, 0x00004000},
-	{A5XX_RBBM_CLOCK_DELAY_GPC, 0x00000200},
-	{A5XX_RBBM_CLOCK_DELAY_VFD, 0x00002222}
-};
-
-static const struct kgsl_hwcg_reg a510_hwcg_regs[] = {
-	{A5XX_RBBM_CLOCK_CNTL_SP0, 0x02222222},
-	{A5XX_RBBM_CLOCK_CNTL_SP1, 0x02222222},
-	{A5XX_RBBM_CLOCK_CNTL2_SP0, 0x02222220},
-	{A5XX_RBBM_CLOCK_CNTL2_SP1, 0x02222220},
-	{A5XX_RBBM_CLOCK_HYST_SP0, 0x0000F3CF},
-	{A5XX_RBBM_CLOCK_HYST_SP1, 0x0000F3CF},
-	{A5XX_RBBM_CLOCK_DELAY_SP0, 0x00000080},
-	{A5XX_RBBM_CLOCK_DELAY_SP1, 0x00000080},
-	{A5XX_RBBM_CLOCK_CNTL_TP0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_TP1, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_TP0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_TP1, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL3_TP0, 0x00002222},
-	{A5XX_RBBM_CLOCK_CNTL3_TP1, 0x00002222},
-	{A5XX_RBBM_CLOCK_HYST_TP0, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST_TP1, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST2_TP0, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST2_TP1, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST3_TP0, 0x00007777},
-	{A5XX_RBBM_CLOCK_HYST3_TP1, 0x00007777},
-	{A5XX_RBBM_CLOCK_DELAY_TP0, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY_TP1, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY2_TP0, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY2_TP1, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY3_TP0, 0x00001111},
-	{A5XX_RBBM_CLOCK_DELAY3_TP1, 0x00001111},
-	{A5XX_RBBM_CLOCK_CNTL_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL3_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL4_UCHE, 0x00222222},
-	{A5XX_RBBM_CLOCK_HYST_UCHE, 0x00444444},
-	{A5XX_RBBM_CLOCK_DELAY_UCHE, 0x00000002},
-	{A5XX_RBBM_CLOCK_CNTL_RB0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_RB1, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_RB0, 0x00222222},
-	{A5XX_RBBM_CLOCK_CNTL2_RB1, 0x00222222},
-	{A5XX_RBBM_CLOCK_CNTL_CCU0, 0x00022220},
-	{A5XX_RBBM_CLOCK_CNTL_CCU1, 0x00022220},
-	{A5XX_RBBM_CLOCK_CNTL_RAC, 0x05522222},
-	{A5XX_RBBM_CLOCK_CNTL2_RAC, 0x00505555},
-	{A5XX_RBBM_CLOCK_HYST_RB_CCU0, 0x04040404},
-	{A5XX_RBBM_CLOCK_HYST_RB_CCU1, 0x04040404},
-	{A5XX_RBBM_CLOCK_HYST_RAC, 0x07444044},
-	{A5XX_RBBM_CLOCK_DELAY_RB_CCU_L1_0, 0x00000002},
-	{A5XX_RBBM_CLOCK_DELAY_RB_CCU_L1_1, 0x00000002},
-	{A5XX_RBBM_CLOCK_DELAY_RAC, 0x00010011},
-	{A5XX_RBBM_CLOCK_CNTL_TSE_RAS_RBBM, 0x04222222},
-	{A5XX_RBBM_CLOCK_MODE_GPC, 0x02222222},
-	{A5XX_RBBM_CLOCK_MODE_VFD, 0x00002222},
-	{A5XX_RBBM_CLOCK_HYST_TSE_RAS_RBBM, 0x00000000},
-	{A5XX_RBBM_CLOCK_HYST_GPC, 0x04104004},
-	{A5XX_RBBM_CLOCK_HYST_VFD, 0x00000000},
-	{A5XX_RBBM_CLOCK_DELAY_HLSQ, 0x00000000},
-	{A5XX_RBBM_CLOCK_DELAY_TSE_RAS_RBBM, 0x00004000},
-	{A5XX_RBBM_CLOCK_DELAY_GPC, 0x00000200},
-	{A5XX_RBBM_CLOCK_DELAY_VFD, 0x00002222}
-};
-
-static const struct kgsl_hwcg_reg a530_hwcg_regs[] = {
-	{A5XX_RBBM_CLOCK_CNTL_SP0, 0x02222222},
-	{A5XX_RBBM_CLOCK_CNTL_SP1, 0x02222222},
-	{A5XX_RBBM_CLOCK_CNTL_SP2, 0x02222222},
-	{A5XX_RBBM_CLOCK_CNTL_SP3, 0x02222222},
-	{A5XX_RBBM_CLOCK_CNTL2_SP0, 0x02222220},
-	{A5XX_RBBM_CLOCK_CNTL2_SP1, 0x02222220},
-	{A5XX_RBBM_CLOCK_CNTL2_SP2, 0x02222220},
-	{A5XX_RBBM_CLOCK_CNTL2_SP3, 0x02222220},
-	{A5XX_RBBM_CLOCK_HYST_SP0, 0x0000F3CF},
-	{A5XX_RBBM_CLOCK_HYST_SP1, 0x0000F3CF},
-	{A5XX_RBBM_CLOCK_HYST_SP2, 0x0000F3CF},
-	{A5XX_RBBM_CLOCK_HYST_SP3, 0x0000F3CF},
-	{A5XX_RBBM_CLOCK_DELAY_SP0, 0x00000080},
-	{A5XX_RBBM_CLOCK_DELAY_SP1, 0x00000080},
-	{A5XX_RBBM_CLOCK_DELAY_SP2, 0x00000080},
-	{A5XX_RBBM_CLOCK_DELAY_SP3, 0x00000080},
-	{A5XX_RBBM_CLOCK_CNTL_TP0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_TP1, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_TP2, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_TP3, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_TP0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_TP1, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_TP2, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_TP3, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL3_TP0, 0x00002222},
-	{A5XX_RBBM_CLOCK_CNTL3_TP1, 0x00002222},
-	{A5XX_RBBM_CLOCK_CNTL3_TP2, 0x00002222},
-	{A5XX_RBBM_CLOCK_CNTL3_TP3, 0x00002222},
-	{A5XX_RBBM_CLOCK_HYST_TP0, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST_TP1, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST_TP2, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST_TP3, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST2_TP0, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST2_TP1, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST2_TP2, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST2_TP3, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST3_TP0, 0x00007777},
-	{A5XX_RBBM_CLOCK_HYST3_TP1, 0x00007777},
-	{A5XX_RBBM_CLOCK_HYST3_TP2, 0x00007777},
-	{A5XX_RBBM_CLOCK_HYST3_TP3, 0x00007777},
-	{A5XX_RBBM_CLOCK_DELAY_TP0, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY_TP1, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY_TP2, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY_TP3, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY2_TP0, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY2_TP1, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY2_TP2, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY2_TP3, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY3_TP0, 0x00001111},
-	{A5XX_RBBM_CLOCK_DELAY3_TP1, 0x00001111},
-	{A5XX_RBBM_CLOCK_DELAY3_TP2, 0x00001111},
-	{A5XX_RBBM_CLOCK_DELAY3_TP3, 0x00001111},
-	{A5XX_RBBM_CLOCK_CNTL_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL3_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL4_UCHE, 0x00222222},
-	{A5XX_RBBM_CLOCK_HYST_UCHE, 0x00444444},
-	{A5XX_RBBM_CLOCK_DELAY_UCHE, 0x00000002},
-	{A5XX_RBBM_CLOCK_CNTL_RB0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_RB1, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_RB2, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_RB3, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_RB0, 0x00222222},
-	{A5XX_RBBM_CLOCK_CNTL2_RB1, 0x00222222},
-	{A5XX_RBBM_CLOCK_CNTL2_RB2, 0x00222222},
-	{A5XX_RBBM_CLOCK_CNTL2_RB3, 0x00222222},
-	{A5XX_RBBM_CLOCK_CNTL_CCU0, 0x00022220},
-	{A5XX_RBBM_CLOCK_CNTL_CCU1, 0x00022220},
-	{A5XX_RBBM_CLOCK_CNTL_CCU2, 0x00022220},
-	{A5XX_RBBM_CLOCK_CNTL_CCU3, 0x00022220},
-	{A5XX_RBBM_CLOCK_CNTL_RAC, 0x05522222},
-	{A5XX_RBBM_CLOCK_CNTL2_RAC, 0x00505555},
-	{A5XX_RBBM_CLOCK_HYST_RB_CCU0, 0x04040404},
-	{A5XX_RBBM_CLOCK_HYST_RB_CCU1, 0x04040404},
-	{A5XX_RBBM_CLOCK_HYST_RB_CCU2, 0x04040404},
-	{A5XX_RBBM_CLOCK_HYST_RB_CCU3, 0x04040404},
-	{A5XX_RBBM_CLOCK_HYST_RAC, 0x07444044},
-	{A5XX_RBBM_CLOCK_DELAY_RB_CCU_L1_0, 0x00000002},
-	{A5XX_RBBM_CLOCK_DELAY_RB_CCU_L1_1, 0x00000002},
-	{A5XX_RBBM_CLOCK_DELAY_RB_CCU_L1_2, 0x00000002},
-	{A5XX_RBBM_CLOCK_DELAY_RB_CCU_L1_3, 0x00000002},
-	{A5XX_RBBM_CLOCK_DELAY_RAC, 0x00010011},
-	{A5XX_RBBM_CLOCK_CNTL_TSE_RAS_RBBM, 0x04222222},
-	{A5XX_RBBM_CLOCK_MODE_GPC, 0x02222222},
-	{A5XX_RBBM_CLOCK_MODE_VFD, 0x00002222},
-	{A5XX_RBBM_CLOCK_HYST_TSE_RAS_RBBM, 0x00000000},
-	{A5XX_RBBM_CLOCK_HYST_GPC, 0x04104004},
-	{A5XX_RBBM_CLOCK_HYST_VFD, 0x00000000},
-	{A5XX_RBBM_CLOCK_DELAY_HLSQ, 0x00000000},
-	{A5XX_RBBM_CLOCK_DELAY_TSE_RAS_RBBM, 0x00004000},
-	{A5XX_RBBM_CLOCK_DELAY_GPC, 0x00000200},
-	{A5XX_RBBM_CLOCK_DELAY_VFD, 0x00002222}
-};
-
-
-static const struct kgsl_hwcg_reg a540_hwcg_regs[] = {
-	{A5XX_RBBM_CLOCK_CNTL_SP0, 0x02222222},
-	{A5XX_RBBM_CLOCK_CNTL_SP1, 0x02222222},
-	{A5XX_RBBM_CLOCK_CNTL_SP2, 0x02222222},
-	{A5XX_RBBM_CLOCK_CNTL_SP3, 0x02222222},
-	{A5XX_RBBM_CLOCK_CNTL2_SP0, 0x02222220},
-	{A5XX_RBBM_CLOCK_CNTL2_SP1, 0x02222220},
-	{A5XX_RBBM_CLOCK_CNTL2_SP2, 0x02222220},
-	{A5XX_RBBM_CLOCK_CNTL2_SP3, 0x02222220},
-	{A5XX_RBBM_CLOCK_HYST_SP0, 0x0000F3CF},
-	{A5XX_RBBM_CLOCK_HYST_SP1, 0x0000F3CF},
-	{A5XX_RBBM_CLOCK_HYST_SP2, 0x0000F3CF},
-	{A5XX_RBBM_CLOCK_HYST_SP3, 0x0000F3CF},
-	{A5XX_RBBM_CLOCK_DELAY_SP0, 0x00000080},
-	{A5XX_RBBM_CLOCK_DELAY_SP1, 0x00000080},
-	{A5XX_RBBM_CLOCK_DELAY_SP2, 0x00000080},
-	{A5XX_RBBM_CLOCK_DELAY_SP3, 0x00000080},
-	{A5XX_RBBM_CLOCK_CNTL_TP0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_TP1, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_TP2, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_TP3, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_TP0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_TP1, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_TP2, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_TP3, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL3_TP0, 0x00002222},
-	{A5XX_RBBM_CLOCK_CNTL3_TP1, 0x00002222},
-	{A5XX_RBBM_CLOCK_CNTL3_TP2, 0x00002222},
-	{A5XX_RBBM_CLOCK_CNTL3_TP3, 0x00002222},
-	{A5XX_RBBM_CLOCK_HYST_TP0, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST_TP1, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST_TP2, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST_TP3, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST2_TP0, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST2_TP1, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST2_TP2, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST2_TP3, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST3_TP0, 0x00007777},
-	{A5XX_RBBM_CLOCK_HYST3_TP1, 0x00007777},
-	{A5XX_RBBM_CLOCK_HYST3_TP2, 0x00007777},
-	{A5XX_RBBM_CLOCK_HYST3_TP3, 0x00007777},
-	{A5XX_RBBM_CLOCK_DELAY_TP0, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY_TP1, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY_TP2, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY_TP3, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY2_TP0, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY2_TP1, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY2_TP2, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY2_TP3, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY3_TP0, 0x00001111},
-	{A5XX_RBBM_CLOCK_DELAY3_TP1, 0x00001111},
-	{A5XX_RBBM_CLOCK_DELAY3_TP2, 0x00001111},
-	{A5XX_RBBM_CLOCK_DELAY3_TP3, 0x00001111},
-	{A5XX_RBBM_CLOCK_CNTL_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL3_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL4_UCHE, 0x00222222},
-	{A5XX_RBBM_CLOCK_HYST_UCHE, 0x00444444},
-	{A5XX_RBBM_CLOCK_DELAY_UCHE, 0x00000002},
-	{A5XX_RBBM_CLOCK_CNTL_RB0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_RB1, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_RB2, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_RB3, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_RB0, 0x00222222},
-	{A5XX_RBBM_CLOCK_CNTL2_RB1, 0x00222222},
-	{A5XX_RBBM_CLOCK_CNTL2_RB2, 0x00222222},
-	{A5XX_RBBM_CLOCK_CNTL2_RB3, 0x00222222},
-	{A5XX_RBBM_CLOCK_CNTL_CCU0, 0x00022220},
-	{A5XX_RBBM_CLOCK_CNTL_CCU1, 0x00022220},
-	{A5XX_RBBM_CLOCK_CNTL_CCU2, 0x00022220},
-	{A5XX_RBBM_CLOCK_CNTL_CCU3, 0x00022220},
-	{A5XX_RBBM_CLOCK_CNTL_RAC, 0x05522222},
-	{A5XX_RBBM_CLOCK_CNTL2_RAC, 0x00505555},
-	{A5XX_RBBM_CLOCK_HYST_RB_CCU0, 0x04040404},
-	{A5XX_RBBM_CLOCK_HYST_RB_CCU1, 0x04040404},
-	{A5XX_RBBM_CLOCK_HYST_RB_CCU2, 0x04040404},
-	{A5XX_RBBM_CLOCK_HYST_RB_CCU3, 0x04040404},
-	{A5XX_RBBM_CLOCK_HYST_RAC, 0x07444044},
-	{A5XX_RBBM_CLOCK_DELAY_RB_CCU_L1_0, 0x00000002},
-	{A5XX_RBBM_CLOCK_DELAY_RB_CCU_L1_1, 0x00000002},
-	{A5XX_RBBM_CLOCK_DELAY_RB_CCU_L1_2, 0x00000002},
-	{A5XX_RBBM_CLOCK_DELAY_RB_CCU_L1_3, 0x00000002},
-	{A5XX_RBBM_CLOCK_DELAY_RAC, 0x00010011},
-	{A5XX_RBBM_CLOCK_CNTL_TSE_RAS_RBBM, 0x04222222},
-	{A5XX_RBBM_CLOCK_MODE_GPC, 0x02222222},
-	{A5XX_RBBM_CLOCK_MODE_VFD, 0x00002222},
-	{A5XX_RBBM_CLOCK_HYST_TSE_RAS_RBBM, 0x00000000},
-	{A5XX_RBBM_CLOCK_HYST_GPC, 0x04104004},
-	{A5XX_RBBM_CLOCK_HYST_VFD, 0x00000000},
-	{A5XX_RBBM_CLOCK_DELAY_HLSQ, 0x00000000},
-	{A5XX_RBBM_CLOCK_DELAY_TSE_RAS_RBBM, 0x00004000},
-	{A5XX_RBBM_CLOCK_DELAY_GPC, 0x00000200},
-	{A5XX_RBBM_CLOCK_DELAY_VFD, 0x00002222},
-	{A5XX_RBBM_CLOCK_HYST_GPMU, 0x00000222},
-	{A5XX_RBBM_CLOCK_DELAY_GPMU, 0x00000770},
-	{A5XX_RBBM_CLOCK_HYST_GPMU, 0x00000004}
-};
-
-static const struct kgsl_hwcg_reg a512_hwcg_regs[] = {
-	{A5XX_RBBM_CLOCK_CNTL_SP0, 0x02222222},
-	{A5XX_RBBM_CLOCK_CNTL_SP1, 0x02222222},
-	{A5XX_RBBM_CLOCK_CNTL2_SP0, 0x02222220},
-	{A5XX_RBBM_CLOCK_CNTL2_SP1, 0x02222220},
-	{A5XX_RBBM_CLOCK_HYST_SP0, 0x0000F3CF},
-	{A5XX_RBBM_CLOCK_HYST_SP1, 0x0000F3CF},
-	{A5XX_RBBM_CLOCK_DELAY_SP0, 0x00000080},
-	{A5XX_RBBM_CLOCK_DELAY_SP1, 0x00000080},
-	{A5XX_RBBM_CLOCK_CNTL_TP0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_TP1, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_TP0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_TP1, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL3_TP0, 0x00002222},
-	{A5XX_RBBM_CLOCK_CNTL3_TP1, 0x00002222},
-	{A5XX_RBBM_CLOCK_HYST_TP0, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST_TP1, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST2_TP0, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST2_TP1, 0x77777777},
-	{A5XX_RBBM_CLOCK_HYST3_TP0, 0x00007777},
-	{A5XX_RBBM_CLOCK_HYST3_TP1, 0x00007777},
-	{A5XX_RBBM_CLOCK_DELAY_TP0, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY_TP1, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY2_TP0, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY2_TP1, 0x11111111},
-	{A5XX_RBBM_CLOCK_DELAY3_TP0, 0x00001111},
-	{A5XX_RBBM_CLOCK_DELAY3_TP1, 0x00001111},
-	{A5XX_RBBM_CLOCK_CNTL_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL3_UCHE, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL4_UCHE, 0x00222222},
-	{A5XX_RBBM_CLOCK_HYST_UCHE, 0x00444444},
-	{A5XX_RBBM_CLOCK_DELAY_UCHE, 0x00000002},
-	{A5XX_RBBM_CLOCK_CNTL_RB0, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL_RB1, 0x22222222},
-	{A5XX_RBBM_CLOCK_CNTL2_RB0, 0x00222222},
-	{A5XX_RBBM_CLOCK_CNTL2_RB1, 0x00222222},
-	{A5XX_RBBM_CLOCK_CNTL_CCU0, 0x00022220},
-	{A5XX_RBBM_CLOCK_CNTL_CCU1, 0x00022220},
-	{A5XX_RBBM_CLOCK_CNTL_RAC, 0x05522222},
-	{A5XX_RBBM_CLOCK_CNTL2_RAC, 0x00505555},
-	{A5XX_RBBM_CLOCK_HYST_RB_CCU0, 0x04040404},
-	{A5XX_RBBM_CLOCK_HYST_RB_CCU1, 0x04040404},
-	{A5XX_RBBM_CLOCK_HYST_RAC, 0x07444044},
-	{A5XX_RBBM_CLOCK_DELAY_RB_CCU_L1_0, 0x00000002},
-	{A5XX_RBBM_CLOCK_DELAY_RB_CCU_L1_1, 0x00000002},
-	{A5XX_RBBM_CLOCK_DELAY_RAC, 0x00010011},
-	{A5XX_RBBM_CLOCK_CNTL_TSE_RAS_RBBM, 0x04222222},
-	{A5XX_RBBM_CLOCK_MODE_GPC, 0x02222222},
-	{A5XX_RBBM_CLOCK_MODE_VFD, 0x00002222},
-	{A5XX_RBBM_CLOCK_HYST_TSE_RAS_RBBM, 0x00000000},
-	{A5XX_RBBM_CLOCK_HYST_GPC, 0x04104004},
-	{A5XX_RBBM_CLOCK_HYST_VFD, 0x00000000},
-	{A5XX_RBBM_CLOCK_DELAY_HLSQ, 0x00000000},
-	{A5XX_RBBM_CLOCK_DELAY_TSE_RAS_RBBM, 0x00004000},
-	{A5XX_RBBM_CLOCK_DELAY_GPC, 0x00000200},
-	{A5XX_RBBM_CLOCK_DELAY_VFD, 0x00002222},
-};
-
-static const struct {
-	int (*devfunc)(struct adreno_device *adreno_dev);
-	const struct kgsl_hwcg_reg *regs;
-	unsigned int count;
-} a5xx_hwcg_registers[] = {
-	{ adreno_is_a540, a540_hwcg_regs, ARRAY_SIZE(a540_hwcg_regs) },
-	{ adreno_is_a530, a530_hwcg_regs, ARRAY_SIZE(a530_hwcg_regs) },
-	{ adreno_is_a512, a512_hwcg_regs, ARRAY_SIZE(a512_hwcg_regs) },
-	{ adreno_is_a509, a512_hwcg_regs, ARRAY_SIZE(a512_hwcg_regs) },
-	{ adreno_is_a510, a510_hwcg_regs, ARRAY_SIZE(a510_hwcg_regs) },
-	{ adreno_is_a505, a50x_hwcg_regs, ARRAY_SIZE(a50x_hwcg_regs) },
-	{ adreno_is_a506, a50x_hwcg_regs, ARRAY_SIZE(a50x_hwcg_regs) },
-	{ adreno_is_a508, a50x_hwcg_regs, ARRAY_SIZE(a50x_hwcg_regs) },
-};
-
 void a5xx_hwcg_set(struct adreno_device *adreno_dev, bool on)
 {
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
-	const struct kgsl_hwcg_reg *regs;
-	int i, j;
+	const struct adreno_a5xx_core *a5xx_core = to_a5xx_core(adreno_dev);
+	int i;
 
 	if (!test_bit(ADRENO_HWCG_CTRL, &adreno_dev->pwrctrl_flag))
 		return;
 
-	for (i = 0; i < ARRAY_SIZE(a5xx_hwcg_registers); i++) {
-		if (a5xx_hwcg_registers[i].devfunc(adreno_dev))
-			break;
-	}
-
-	if (i == ARRAY_SIZE(a5xx_hwcg_registers))
-		return;
-
-	regs = a5xx_hwcg_registers[i].regs;
-
-	for (j = 0; j < a5xx_hwcg_registers[i].count; j++)
-		kgsl_regwrite(device, regs[j].off, on ? regs[j].val : 0);
+	for (i = 0; i < a5xx_core->hwcg_count; i++)
+		kgsl_regwrite(device, a5xx_core->hwcg[i].offset,
+			on ? a5xx_core->hwcg[i].value : 0);
 
 	/* enable top level HWCG */
 	kgsl_regwrite(device, A5XX_RBBM_CLOCK_CNTL, on ? 0xAAA8AA00 : 0);
 	kgsl_regwrite(device, A5XX_RBBM_ISDB_CNT, on ? 0x00000182 : 0x00000180);
 }
 
-static int _read_fw2_block_header(uint32_t *header, uint32_t remain,
-			uint32_t id, uint32_t major, uint32_t minor)
+static int _read_fw2_block_header(struct kgsl_device *device,
+		uint32_t *header, uint32_t remain,
+		uint32_t id, uint32_t major, uint32_t minor)
 {
 	uint32_t header_size;
 	int i = 1;
@@ -1265,7 +876,7 @@ static int _read_fw2_block_header(uint32_t *header, uint32_t remain,
 		case HEADER_MAJOR:
 			if ((major > header[i + 1]) &&
 				header[i + 1]) {
-				KGSL_CORE_ERR(
+				dev_err(device->dev,
 					"GPMU major version mis-match %d, %d\n",
 					major, header[i + 1]);
 				return -EINVAL;
@@ -1273,7 +884,7 @@ static int _read_fw2_block_header(uint32_t *header, uint32_t remain,
 			break;
 		case HEADER_MINOR:
 			if (minor > header[i + 1])
-				KGSL_CORE_ERR(
+				dev_err(device->dev,
 					"GPMU minor version mis-match %d %d\n",
 					minor, header[i + 1]);
 			break;
@@ -1281,7 +892,7 @@ static int _read_fw2_block_header(uint32_t *header, uint32_t remain,
 		case HEADER_TIME:
 			break;
 		default:
-			KGSL_CORE_ERR("GPMU unknown header ID %d\n",
+			dev_err(device->dev, "GPMU unknown header ID %d\n",
 					header[i]);
 		}
 	}
@@ -1313,21 +924,26 @@ static int _read_fw2_block_header(uint32_t *header, uint32_t remain,
 static void _load_regfile(struct adreno_device *adreno_dev)
 {
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
+	const struct adreno_a5xx_core *a5xx_core = to_a5xx_core(adreno_dev);
 	const struct firmware *fw;
 	uint64_t block_size = 0, block_total = 0;
 	uint32_t fw_size, *block;
 	int ret = -EINVAL;
+	u32 lm_major = 1;
 
-	if (!adreno_dev->gpucore->regfw_name)
+	if (!a5xx_core->regfw_name)
 		return;
 
-	ret = request_firmware(&fw, adreno_dev->gpucore->regfw_name,
-			device->dev);
+	ret = request_firmware(&fw, a5xx_core->regfw_name, device->dev);
 	if (ret) {
-		KGSL_PWR_ERR(device, "request firmware failed %d, %s\n",
-				ret, adreno_dev->gpucore->regfw_name);
+		dev_err(device->dev, "request firmware failed %d, %s\n",
+				ret, a5xx_core->regfw_name);
 		return;
 	}
+
+	/* a530v2 lm_major was 3. a530v3 lm_major was 1 */
+	if (adreno_is_a530v2(adreno_dev))
+		lm_major = 3;
 
 	fw_size = fw->size / sizeof(uint32_t);
 	/* Min valid file of size 6, see file description */
@@ -1345,11 +961,9 @@ static void _load_regfile(struct adreno_device *adreno_dev)
 
 		/* For now ignore blocks other than the LM sequence */
 		if (block[4] == LM_SEQUENCE_ID) {
-			ret = _read_fw2_block_header(&block[2],
-				block_size - 2,
-				GPMU_SEQUENCE_ID,
-				adreno_dev->gpucore->lm_major,
-				adreno_dev->gpucore->lm_minor);
+			ret = _read_fw2_block_header(device, &block[2],
+				block_size - 2, GPMU_SEQUENCE_ID,
+				lm_major, 0);
 			if (ret)
 				goto err;
 
@@ -1368,10 +982,9 @@ static void _load_regfile(struct adreno_device *adreno_dev)
 
 err:
 	release_firmware(fw);
-	KGSL_PWR_ERR(device,
-		"Register file failed to load sz=%d bsz=%llu header=%d\n",
-		fw_size, block_size, ret);
-	return;
+	dev_err(device->dev,
+		     "Register file failed to load sz=%d bsz=%llu header=%d\n",
+		     fw_size, block_size, ret);
 }
 
 static int _execute_reg_sequence(struct adreno_device *adreno_dev,
@@ -1411,12 +1024,13 @@ static uint32_t _write_voltage_table(struct adreno_device *adreno_dev,
 {
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
+	const struct adreno_a5xx_core *a5xx_core = to_a5xx_core(adreno_dev);
 	int i;
 	struct dev_pm_opp *opp;
 	int levels = pwr->num_pwrlevels - 1;
 	unsigned int mvolt = 0;
 
-	kgsl_regwrite(device, addr++, adreno_dev->gpucore->max_power);
+	kgsl_regwrite(device, addr++, a5xx_core->max_power);
 	kgsl_regwrite(device, addr++, levels);
 
 	/* Write voltage in mV and frequency in MHz */
@@ -1424,8 +1038,10 @@ static uint32_t _write_voltage_table(struct adreno_device *adreno_dev,
 		opp = dev_pm_opp_find_freq_exact(&device->pdev->dev,
 				pwr->pwrlevels[i].gpu_freq, true);
 		/* _opp_get returns uV, convert to mV */
-		if (!IS_ERR(opp))
+		if (!IS_ERR(opp)) {
 			mvolt = dev_pm_opp_get_voltage(opp) / 1000;
+			dev_pm_opp_put(opp);
+		}
 		kgsl_regwrite(device, addr++, mvolt);
 		kgsl_regwrite(device, addr++,
 				pwr->pwrlevels[i].gpu_freq / 1000000);
@@ -1454,6 +1070,7 @@ static void a530_lm_init(struct adreno_device *adreno_dev)
 {
 	uint32_t length;
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
+	const struct adreno_a5xx_core *a5xx_core = to_a5xx_core(adreno_dev);
 
 	if (!ADRENO_FEATURE(adreno_dev, ADRENO_LM) ||
 		!test_bit(ADRENO_LM_CTRL, &adreno_dev->pwrctrl_flag))
@@ -1468,13 +1085,12 @@ static void a530_lm_init(struct adreno_device *adreno_dev)
 				adreno_dev->lm_size)) {
 		/* If the sequence is invalid, it's not getting better */
 		adreno_dev->lm_sequence = NULL;
-		KGSL_PWR_WARN(device,
+		dev_warn(device->dev,
 				"Invalid LM sequence\n");
 		return;
 	}
 
-	kgsl_regwrite(device, A5XX_GPMU_TEMP_SENSOR_ID,
-			adreno_dev->gpucore->gpmu_tsens);
+	kgsl_regwrite(device, A5XX_GPMU_TEMP_SENSOR_ID, a5xx_core->gpmu_tsens);
 	kgsl_regwrite(device, A5XX_GPMU_DELTA_TEMP_THRESHOLD, 0x1);
 	kgsl_regwrite(device, A5XX_GPMU_TEMP_SENSOR_CONFIG, 0x1);
 
@@ -1548,7 +1164,7 @@ static void a540_lm_init(struct adreno_device *adreno_dev)
 		kgsl_regread(device, A5XX_GPMU_TEMP_SENSOR_CONFIG, &r);
 
 		if ((r & GPMU_ISENSE_STATUS) == GPMU_ISENSE_END_POINT_CAL_ERR) {
-			KGSL_CORE_ERR(
+			dev_err(device->dev,
 				"GPMU: ISENSE end point calibration failure\n");
 			agc_lm_config |= AGC_LM_CONFIG_ENABLE_ERROR;
 		}
@@ -1620,14 +1236,7 @@ static void a5xx_pwrlevel_change_settings(struct adreno_device *adreno_dev,
 {
 	int on = 0;
 
-	/*
-	 * On pre A540 HW only call through if PPD or LMx
-	 * is supported and enabled
-	 */
-	if (ADRENO_FEATURE(adreno_dev, ADRENO_PPD) &&
-		test_bit(ADRENO_PPD_CTRL, &adreno_dev->pwrctrl_flag))
-		on = ADRENO_PPD;
-
+	/* On pre A540 HW only call through if LMx is supported and enabled */
 	if (ADRENO_FEATURE(adreno_dev, ADRENO_LM) &&
 		test_bit(ADRENO_LM_CTRL, &adreno_dev->pwrctrl_flag))
 		on = ADRENO_LM;
@@ -1641,13 +1250,13 @@ static void a5xx_pwrlevel_change_settings(struct adreno_device *adreno_dev,
 	if (!on)
 		return;
 
-	if (post == 0) {
+	if (!post) {
 		if (gpmu_set_level(adreno_dev, (0x80000010 | postlevel)))
-			KGSL_CORE_ERR(
+			dev_err(KGSL_DEVICE(adreno_dev)->dev,
 				"GPMU pre powerlevel did not stabilize\n");
 	} else {
 		if (gpmu_set_level(adreno_dev, (0x80000000 | postlevel)))
-			KGSL_CORE_ERR(
+			dev_err(KGSL_DEVICE(adreno_dev)->dev,
 				"GPMU post powerlevel did not stabilize\n");
 	}
 }
@@ -1657,7 +1266,7 @@ static void a5xx_clk_set_options(struct adreno_device *adreno_dev,
 {
 
 	if (!adreno_is_a540(adreno_dev) && !adreno_is_a512(adreno_dev) &&
-		!adreno_is_a508(adreno_dev) && !adreno_is_a509(adreno_dev))
+		!adreno_is_a508(adreno_dev))
 		return;
 
 	/* Handle clock settings for GFX PSCBCs */
@@ -1688,24 +1297,6 @@ static void a5xx_count_throttles(struct adreno_device *adreno_dev,
 		adreno_dev->lm_threshold_cross = adj;
 }
 
-static int a5xx_enable_pwr_counters(struct adreno_device *adreno_dev,
-		unsigned int counter)
-{
-	/*
-	 * On 5XX we have to emulate the PWR counters which are physically
-	 * missing. Program countable 6 on RBBM_PERFCTR_RBBM_0 as a substitute
-	 * for PWR:1. Don't emulate PWR:0 as nobody uses it and we don't want
-	 * to take away too many of the generic RBBM counters.
-	 */
-
-	if (counter == 0)
-		return -EINVAL;
-
-	kgsl_regwrite(KGSL_DEVICE(adreno_dev), A5XX_RBBM_PERFCTR_RBBM_SEL_0, 6);
-
-	return 0;
-}
-
 /* FW driven idle 10% throttle */
 #define IDLE_10PCT 0
 /* number of cycles when clock is throttled by 50% (CRC) */
@@ -1715,9 +1306,10 @@ static int a5xx_enable_pwr_counters(struct adreno_device *adreno_dev,
 /* number of cycles when clock is throttle by less than 50% (CRC) */
 #define CRC_LESS50PCT 3
 
-static uint64_t a5xx_read_throttling_counters(struct adreno_device *adreno_dev)
+static int64_t a5xx_read_throttling_counters(struct adreno_device *adreno_dev)
 {
-	int i, adj;
+	int i;
+	int64_t adj;
 	uint32_t th[ADRENO_GPMU_THROTTLE_COUNTERS];
 	struct adreno_busy_data *busy = &adreno_dev->busy_data;
 
@@ -1851,6 +1443,7 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 {
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 	struct adreno_gpudev *gpudev = ADRENO_GPU_DEVICE(adreno_dev);
+	const struct adreno_a5xx_core *a5xx_core = to_a5xx_core(adreno_dev);
 	unsigned int bit;
 	int ret;
 
@@ -1868,11 +1461,15 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 
 	_setup_throttling_counters(adreno_dev);
 
-	adreno_vbif_start(adreno_dev, a5xx_vbif_platforms,
-			ARRAY_SIZE(a5xx_vbif_platforms));
+	/* Set up VBIF registers from the GPU core definition */
+	adreno_reglist_write(adreno_dev, a5xx_core->vbif,
+		a5xx_core->vbif_count);
 
 	/* Make all blocks contribute to the GPU BUSY perf counter */
 	kgsl_regwrite(device, A5XX_RBBM_PERFCTR_GPU_BUSY_MASKED, 0xFFFFFFFF);
+
+	/* Program RBBM counter 0 to report GPU busy for frequency scaling */
+	kgsl_regwrite(device, A5XX_RBBM_PERFCTR_RBBM_SEL_0, 6);
 
 	/*
 	 * Enable the RBBM error reporting bits.  This lets us get
@@ -1906,21 +1503,17 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 	}
 
 	/*
-	 * Turn on hang detection for a530 v2 and beyond. This spews a
-	 * lot of useful information into the RBBM registers on a hang.
+	 * Turn on hang detection. This spews a lot of useful information
+	 * into the RBBM registers on a hang.
 	 */
-	if (!adreno_is_a530v1(adreno_dev)) {
-
-		set_bit(ADRENO_DEVICE_HANG_INTR, &adreno_dev->priv);
-		gpudev->irq->mask |= (1 << A5XX_INT_MISC_HANG_DETECT);
-		/*
-		 * Set hang detection threshold to 4 million cycles
-		 * (0x3FFFF*16)
-		 */
-		kgsl_regwrite(device, A5XX_RBBM_INTERFACE_HANG_INT_CNTL,
-					  (1 << 30) | 0x3FFFF);
-	}
-
+	set_bit(ADRENO_DEVICE_HANG_INTR, &adreno_dev->priv);
+	gpudev->irq->mask |= (1 << A5XX_INT_MISC_HANG_DETECT);
+	/*
+	 * Set hang detection threshold to 4 million cycles
+	 * (0x3FFFF*16)
+	 */
+	kgsl_regwrite(device, A5XX_RBBM_INTERFACE_HANG_INT_CNTL,
+				  (1 << 30) | 0x3FFFF);
 
 	/* Turn on performance counters */
 	kgsl_regwrite(device, A5XX_RBBM_PERFCTR_CNTL, 0x01);
@@ -1942,18 +1535,18 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 
 	/* Program the GMEM VA range for the UCHE path */
 	kgsl_regwrite(device, A5XX_UCHE_GMEM_RANGE_MIN_LO,
-				ADRENO_UCHE_GMEM_BASE);
+			adreno_dev->uche_gmem_base);
 	kgsl_regwrite(device, A5XX_UCHE_GMEM_RANGE_MIN_HI, 0x0);
 	kgsl_regwrite(device, A5XX_UCHE_GMEM_RANGE_MAX_LO,
-				ADRENO_UCHE_GMEM_BASE +
-				adreno_dev->gmem_size - 1);
+			adreno_dev->uche_gmem_base +
+			adreno_dev->gpucore->gmem_size - 1);
 	kgsl_regwrite(device, A5XX_UCHE_GMEM_RANGE_MAX_HI, 0x0);
 
 	/*
 	 * Below CP registers are 0x0 by default, program init
 	 * values based on a5xx flavor.
 	 */
-	if (adreno_is_a505_or_a506(adreno_dev) || adreno_is_a508(adreno_dev)) {
+	if (adreno_is_a504_to_a506(adreno_dev) || adreno_is_a508(adreno_dev)) {
 		kgsl_regwrite(device, A5XX_CP_MEQ_THRESHOLDS, 0x20);
 		kgsl_regwrite(device, A5XX_CP_MERCIU_SIZE, 0x400);
 		kgsl_regwrite(device, A5XX_CP_ROQ_THRESHOLDS_2, 0x40000030);
@@ -1963,8 +1556,7 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 		kgsl_regwrite(device, A5XX_CP_MERCIU_SIZE, 0x20);
 		kgsl_regwrite(device, A5XX_CP_ROQ_THRESHOLDS_2, 0x40000030);
 		kgsl_regwrite(device, A5XX_CP_ROQ_THRESHOLDS_1, 0x20100D0A);
-	} else if (adreno_is_a540(adreno_dev) || adreno_is_a512(adreno_dev) ||
-			adreno_is_a509(adreno_dev)) {
+	} else if (adreno_is_a540(adreno_dev) || adreno_is_a512(adreno_dev)) {
 		kgsl_regwrite(device, A5XX_CP_MEQ_THRESHOLDS, 0x40);
 		kgsl_regwrite(device, A5XX_CP_MERCIU_SIZE, 0x400);
 		kgsl_regwrite(device, A5XX_CP_ROQ_THRESHOLDS_2, 0x80000060);
@@ -1980,29 +1572,15 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 	 * vtxFifo and primFifo thresholds default values
 	 * are different.
 	 */
-	if (adreno_is_a505_or_a506(adreno_dev) || adreno_is_a508(adreno_dev))
+	if (adreno_is_a504_to_a506(adreno_dev) || adreno_is_a508(adreno_dev))
 		kgsl_regwrite(device, A5XX_PC_DBG_ECO_CNTL,
 						(0x100 << 11 | 0x100 << 22));
-	else if (adreno_is_a510(adreno_dev) || adreno_is_a512(adreno_dev) ||
-			adreno_is_a509(adreno_dev))
+	else if (adreno_is_a510(adreno_dev) || adreno_is_a512(adreno_dev))
 		kgsl_regwrite(device, A5XX_PC_DBG_ECO_CNTL,
 						(0x200 << 11 | 0x200 << 22));
 	else
 		kgsl_regwrite(device, A5XX_PC_DBG_ECO_CNTL,
 						(0x400 << 11 | 0x300 << 22));
-
-	/*
-	 * A5x USP LDST non valid pixel wrongly update read combine offset
-	 * In A5xx we added optimization for read combine. There could be cases
-	 * on a530 v1 there is no valid pixel but the active masks is not
-	 * cleared and the offset can be wrongly updated if the invalid address
-	 * can be combined. The wrongly latched value will make the returning
-	 * data got shifted at wrong offset. workaround this issue by disabling
-	 * LD combine, bit[25] of SP_DBG_ECO_CNTL (sp chicken bit[17]) need to
-	 * be set to 1, default is 0(enable)
-	 */
-	if (adreno_is_a530v1(adreno_dev))
-		kgsl_regrmw(device, A5XX_SP_DBG_ECO_CNTL, 0, (1 << 25));
 
 	if (ADRENO_QUIRK(adreno_dev, ADRENO_QUIRK_TWO_PASS_USE_WFI)) {
 		/*
@@ -2032,10 +1610,10 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 	if (test_bit(ADRENO_DEVICE_ISDB_ENABLED, &adreno_dev->priv)) {
 		if (!kgsl_active_count_get(device)) {
 			/*
-			* Disable ME/PFP split timeouts when the debugger is
-			* enabled because the CP doesn't know when a shader is
-			* in active debug
-			*/
+			 * Disable ME/PFP split timeouts when the debugger is
+			 * enabled because the CP doesn't know when a shader is
+			 * in active debug
+			 */
 			kgsl_regwrite(device, A5XX_RBBM_AHB_CNTL1, 0x06FFFFFF);
 
 			/* Force the SP0/SP1 clocks on to enable ISDB */
@@ -2052,38 +1630,29 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 			kgsl_regwrite(device, A5XX_RBBM_CLOCK_CNTL, 0x0);
 			kgsl_regwrite(device, A5XX_RBBM_ISDB_CNT, 0x0);
 		} else
-			KGSL_CORE_ERR(
-				"Active count failed while turning on ISDB.");
+			dev_err(device->dev,
+				"Active count failed while turning on ISDB\n");
 	} else {
 		/* if not in ISDB mode enable ME/PFP split notification */
 		kgsl_regwrite(device, A5XX_RBBM_AHB_CNTL1, 0xA6FFFFFF);
 	}
 
 	kgsl_regwrite(device, A5XX_RBBM_AHB_CNTL2, 0x0000003F);
+	bit = adreno_dev->highest_bank_bit ?
+		(adreno_dev->highest_bank_bit - 13) & 0x03 : 0;
 
-	if (!of_property_read_u32(device->pdev->dev.of_node,
-		"qcom,highest-bank-bit", &bit)) {
-		if (bit >= 13 && bit <= 16) {
-			bit = (bit - 13) & 0x03;
+	/*
+	 * Program the highest DDR bank bit that was passed in
+	 * from the DT in a handful of registers. Some of these
+	 * registers will also be written by the UMD, but we
+	 * want to program them in case we happen to use the
+	 * UCHE before the UMD does
+	 */
 
-			/*
-			 * Program the highest DDR bank bit that was passed in
-			 * from the DT in a handful of registers. Some of these
-			 * registers will also be written by the UMD, but we
-			 * want to program them in case we happen to use the
-			 * UCHE before the UMD does
-			 */
-
-			kgsl_regwrite(device, A5XX_TPL1_MODE_CNTL, bit << 7);
-			kgsl_regwrite(device, A5XX_RB_MODE_CNTL, bit << 1);
-			if (adreno_is_a540(adreno_dev) ||
-				adreno_is_a512(adreno_dev) ||
-				adreno_is_a509(adreno_dev))
-				kgsl_regwrite(device, A5XX_UCHE_DBG_ECO_CNTL_2,
-					bit);
-		}
-
-	}
+	kgsl_regwrite(device, A5XX_TPL1_MODE_CNTL, bit << 7);
+	kgsl_regwrite(device, A5XX_RB_MODE_CNTL, bit << 1);
+	if (adreno_is_a540(adreno_dev) || adreno_is_a512(adreno_dev))
+		kgsl_regwrite(device, A5XX_UCHE_DBG_ECO_CNTL_2, bit);
 
 	/* Disable All flat shading optimization */
 	kgsl_regrmw(device, A5XX_VPC_DBG_ECO_CNTL, 0, 0x1 << 10);
@@ -2115,8 +1684,7 @@ static int _preemption_init(
 	uint64_t gpuaddr = rb->preemption_desc.gpuaddr;
 
 	/* Turn CP protection OFF */
-	*cmds++ = cp_type7_packet(CP_SET_PROTECTED_MODE, 1);
-	*cmds++ = 0;
+	cmds += cp_protected_mode(adreno_dev, cmds, 0);
 	/*
 	 * CP during context switch will save context switch info to
 	 * a5xx_cp_preemption_record pointed by CONTEXT_SWITCH_SAVE_ADDR
@@ -2127,8 +1695,7 @@ static int _preemption_init(
 	*cmds++ = upper_32_bits(gpuaddr);
 
 	/* Turn CP protection ON */
-	*cmds++ = cp_type7_packet(CP_SET_PROTECTED_MODE, 1);
-	*cmds++ = 1;
+	cmds += cp_protected_mode(adreno_dev, cmds, 1);
 
 	*cmds++ = cp_type7_packet(CP_PREEMPT_ENABLE_GLOBAL, 1);
 	*cmds++ = 0;
@@ -2163,7 +1730,8 @@ static int a5xx_post_start(struct adreno_device *adreno_dev)
 	if (IS_ERR(cmds)) {
 		struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 
-		KGSL_DRV_ERR(device, "error allocating preemtion init cmds");
+		dev_err(device->dev,
+			     "error allocating preemtion init cmds\n");
 		return PTR_ERR(cmds);
 	}
 	start = cmds;
@@ -2177,14 +1745,17 @@ static int a5xx_post_start(struct adreno_device *adreno_dev)
 		*cmds++ = 0xF;
 	}
 
-	if (adreno_is_preemption_enabled(adreno_dev))
+	if (adreno_is_preemption_enabled(adreno_dev)) {
 		cmds += _preemption_init(adreno_dev, rb, cmds, NULL);
+		rb->_wptr = rb->_wptr - (42 - (cmds - start));
+		ret = adreno_ringbuffer_submit_spin_nosync(rb, NULL, 2000);
+	} else {
+		rb->_wptr = rb->_wptr - (42 - (cmds - start));
+		ret = adreno_ringbuffer_submit_spin(rb, NULL, 2000);
+	}
 
-	rb->_wptr = rb->_wptr - (42 - (cmds - start));
-
-	ret = adreno_ringbuffer_submit_spin(rb, NULL, 2000);
 	if (ret)
-		spin_idle_debug(KGSL_DEVICE(adreno_dev),
+		adreno_spin_idle_debug(adreno_dev,
 				"hw initialization failed to idle\n");
 
 	return ret;
@@ -2209,55 +1780,44 @@ static int a5xx_gpmu_init(struct adreno_device *adreno_dev)
 	return 0;
 }
 
-static int a5xx_switch_to_unsecure_mode(struct adreno_device *adreno_dev,
-				struct adreno_ringbuffer *rb)
-{
-	unsigned int *cmds;
-	int ret;
-
-	cmds = adreno_ringbuffer_allocspace(rb, 2);
-	if (IS_ERR(cmds))
-		return PTR_ERR(cmds);
-	if (cmds == NULL)
-		return -ENOSPC;
-
-	cmds += cp_secure_mode(adreno_dev, cmds, 0);
-
-	ret = adreno_ringbuffer_submit_spin(rb, NULL, 2000);
-	if (ret)
-		spin_idle_debug(KGSL_DEVICE(adreno_dev),
-				"Switch to unsecure failed to idle\n");
-
-	return ret;
-}
-
 /*
  * a5xx_microcode_load() - Load microcode
  * @adreno_dev: Pointer to adreno device
  */
 static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 {
+	void *ptr;
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
+	struct adreno_firmware *pm4_fw = ADRENO_FW(adreno_dev, ADRENO_FW_PM4);
+	struct adreno_firmware *pfp_fw = ADRENO_FW(adreno_dev, ADRENO_FW_PFP);
+	const struct adreno_a5xx_core *a5xx_core = to_a5xx_core(adreno_dev);
 	uint64_t gpuaddr;
 
-	gpuaddr = adreno_dev->pm4.gpuaddr;
+	gpuaddr = pm4_fw->memdesc.gpuaddr;
 	kgsl_regwrite(device, A5XX_CP_PM4_INSTR_BASE_LO,
 				lower_32_bits(gpuaddr));
 	kgsl_regwrite(device, A5XX_CP_PM4_INSTR_BASE_HI,
 				upper_32_bits(gpuaddr));
 
-	gpuaddr = adreno_dev->pfp.gpuaddr;
+	gpuaddr = pfp_fw->memdesc.gpuaddr;
 	kgsl_regwrite(device, A5XX_CP_PFP_INSTR_BASE_LO,
 				lower_32_bits(gpuaddr));
 	kgsl_regwrite(device, A5XX_CP_PFP_INSTR_BASE_HI,
 				upper_32_bits(gpuaddr));
 
 	/*
+	 * Do not invoke to load zap shader if MMU does
+	 * not support secure mode.
+	 */
+	if (!device->mmu.secured)
+		return 0;
+
+	/*
 	 * Resume call to write the zap shader base address into the
 	 * appropriate register,
 	 * skip if retention is supported for the CPZ register
 	 */
-	if (zap_ucode_loaded && !(ADRENO_FEATURE(adreno_dev,
+	if (adreno_dev->zap_loaded && !(ADRENO_FEATURE(adreno_dev,
 		ADRENO_CPZ_RETENTION))) {
 		int ret;
 		struct scm_desc desc = {0};
@@ -2266,36 +1826,26 @@ static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 		desc.args[1] = 13;
 		desc.arginfo = SCM_ARGS(2);
 
-		ret = scm_call2_atomic(SCM_SIP_FNID(SCM_SVC_BOOT, 0xA), &desc);
+		ret = scm_call2(SCM_SIP_FNID(SCM_SVC_BOOT, 0xA), &desc);
 		if (ret) {
-			pr_err("SCM resume call failed with error %d\n", ret);
+			dev_err(device->dev,
+				"SCM resume call failed with error %d\n", ret);
 			return ret;
 		}
 
 	}
 
 	/* Load the zap shader firmware through PIL if its available */
-	if (adreno_dev->gpucore->zap_name && !zap_ucode_loaded) {
-		zap_handle_ptr = subsystem_get(adreno_dev->gpucore->zap_name);
+	if (a5xx_core->zap_name && !adreno_dev->zap_loaded) {
+		ptr = subsystem_get(a5xx_core->zap_name);
 
 		/* Return error if the zap shader cannot be loaded */
-		if (IS_ERR_OR_NULL(zap_handle_ptr))
-			return (zap_handle_ptr == NULL) ?
-					-ENODEV : PTR_ERR(zap_handle_ptr);
-
-		zap_ucode_loaded = 1;
+		if (IS_ERR_OR_NULL(ptr))
+			return (ptr == NULL) ? -ENODEV : PTR_ERR(ptr);
+		adreno_dev->zap_loaded = 1;
 	}
 
 	return 0;
-}
-
-static void a5xx_zap_shader_unload(struct adreno_device *adreno_dev)
-{
-	if (!IS_ERR_OR_NULL(zap_handle_ptr)) {
-		subsystem_put(zap_handle_ptr);
-		zap_handle_ptr = NULL;
-		zap_ucode_loaded = 0;
-	}
 }
 
 static int _me_init_ucode_workarounds(struct adreno_device *adreno_dev)
@@ -2303,6 +1853,7 @@ static int _me_init_ucode_workarounds(struct adreno_device *adreno_dev)
 	switch (ADRENO_GPUREV(adreno_dev)) {
 	case ADRENO_REV_A510:
 		return 0x00000001; /* Ucode workaround for token end syncs */
+	case ADRENO_REV_A504:
 	case ADRENO_REV_A505:
 	case ADRENO_REV_A506:
 	case ADRENO_REV_A530:
@@ -2312,14 +1863,6 @@ static int _me_init_ucode_workarounds(struct adreno_device *adreno_dev)
 		 * WFI after every 2D Mode 3 draw.
 		 */
 		return 0x0000000B;
-	case ADRENO_REV_A540:
-		/*
-		 * WFI after every direct-render 3D mode draw and
-		 * WFI after every 2D Mode 3 draw. This is needed
-		 * only on a540v1.
-		 */
-		if (adreno_is_a540v1(adreno_dev))
-			return 0x0000000A;
 	default:
 		return 0x00000000; /* No ucode workarounds enabled */
 	}
@@ -2360,18 +1903,8 @@ static void _set_ordinals(struct adreno_device *adreno_dev,
 	/* Enabled ordinal mask */
 	*cmds++ = CP_INIT_MASK;
 
-	if (CP_INIT_MASK & CP_INIT_MAX_CONTEXT) {
-		/*
-		 * Multiple HW ctxs are unreliable on a530v1,
-		 * use single hw context.
-		 * Use multiple contexts if bit set, otherwise serialize:
-		 *      3D (bit 0) 2D (bit 1)
-		 */
-		if (adreno_is_a530v1(adreno_dev))
-			*cmds++ = 0x00000000;
-		else
-			*cmds++ = 0x00000003;
-	}
+	if (CP_INIT_MASK & CP_INIT_MAX_CONTEXT)
+		*cmds++ = 0x00000003;
 
 	if (CP_INIT_MASK & CP_INIT_ERROR_DETECTION_CONTROL)
 		*cmds++ = 0x20000000;
@@ -2398,7 +1931,7 @@ static void _set_ordinals(struct adreno_device *adreno_dev,
 		*cmds++ = 0x0;
 }
 
-static int a5xx_critical_packet_submit(struct adreno_device *adreno_dev,
+int a5xx_critical_packet_submit(struct adreno_device *adreno_dev,
 					struct adreno_ringbuffer *rb)
 {
 	unsigned int *cmds;
@@ -2417,7 +1950,7 @@ static int a5xx_critical_packet_submit(struct adreno_device *adreno_dev,
 
 	ret = adreno_ringbuffer_submit_spin(rb, NULL, 20);
 	if (ret)
-		spin_idle_debug(KGSL_DEVICE(adreno_dev),
+		adreno_spin_idle_debug(adreno_dev,
 			"Critical packet submission failed to idle\n");
 
 	return ret;
@@ -2448,29 +1981,8 @@ static int a5xx_send_me_init(struct adreno_device *adreno_dev,
 
 	ret = adreno_ringbuffer_submit_spin(rb, NULL, 2000);
 	if (ret)
-		spin_idle_debug(KGSL_DEVICE(adreno_dev),
+		adreno_spin_idle_debug(adreno_dev,
 				"CP initialization failed to idle\n");
-
-	return ret;
-}
-
-static int a5xx_set_unsecured_mode(struct adreno_device *adreno_dev,
-		struct adreno_ringbuffer *rb)
-{
-	int ret = 0;
-
-	if (ADRENO_QUIRK(adreno_dev, ADRENO_QUIRK_CRITICAL_PACKETS)) {
-		ret = a5xx_critical_packet_submit(adreno_dev, rb);
-		if (ret)
-			return ret;
-	}
-
-	/* GPU comes up in secured mode, make it unsecured by default */
-	if (ADRENO_FEATURE(adreno_dev, ADRENO_CONTENT_PROTECTION))
-		ret = a5xx_switch_to_unsecure_mode(adreno_dev, rb);
-	else
-		kgsl_regwrite(&adreno_dev->dev,
-				A5XX_RBBM_SECVID_TRUST_CNTL, 0x0);
 
 	return ret;
 }
@@ -2478,10 +1990,8 @@ static int a5xx_set_unsecured_mode(struct adreno_device *adreno_dev,
 /*
  * a5xx_rb_start() - Start the ringbuffer
  * @adreno_dev: Pointer to adreno device
- * @start_type: Warm or cold start
  */
-static int a5xx_rb_start(struct adreno_device *adreno_dev,
-			 unsigned int start_type)
+static int a5xx_rb_start(struct adreno_device *adreno_dev)
 {
 	struct adreno_ringbuffer *rb = ADRENO_CURRENT_RINGBUFFER(adreno_dev);
 	struct kgsl_device *device = &adreno_dev->dev;
@@ -2518,7 +2028,7 @@ static int a5xx_rb_start(struct adreno_device *adreno_dev,
 		return ret;
 
 	/* GPU comes up in secured mode, make it unsecured by default */
-	ret = a5xx_set_unsecured_mode(adreno_dev, rb);
+	ret = adreno_set_unsecured_mode(adreno_dev, rb);
 	if (ret)
 		return ret;
 
@@ -2532,8 +2042,7 @@ static int a5xx_rb_start(struct adreno_device *adreno_dev,
 }
 
 static int _load_firmware(struct kgsl_device *device, const char *fwfile,
-			  struct kgsl_memdesc *ucode, size_t *ucode_size,
-			  unsigned int *ucode_version)
+			struct adreno_firmware *firmware)
 {
 	const struct firmware *fw = NULL;
 	int ret;
@@ -2541,20 +2050,20 @@ static int _load_firmware(struct kgsl_device *device, const char *fwfile,
 	ret = request_firmware(&fw, fwfile, device->dev);
 
 	if (ret) {
-		KGSL_DRV_ERR(device, "request_firmware(%s) failed: %d\n",
+		dev_err(device->dev, "request_firmware(%s) failed: %d\n",
 				fwfile, ret);
 		return ret;
 	}
 
-	ret = kgsl_allocate_global(device, ucode, fw->size - 4,
+	ret = kgsl_allocate_global(device, &firmware->memdesc, fw->size - 4,
 				KGSL_MEMFLAGS_GPUREADONLY, 0, "ucode");
 
 	if (ret)
 		goto done;
 
-	memcpy(ucode->hostptr, &fw->data[4], fw->size - 4);
-	*ucode_size = (fw->size - 4) / sizeof(uint32_t);
-	*ucode_version = *(unsigned int *)&fw->data[4];
+	memcpy(firmware->memdesc.hostptr, &fw->data[4], fw->size - 4);
+	firmware->size = (fw->size - 4) / sizeof(uint32_t);
+	firmware->version = adreno_get_ucode_version((u32 *)fw->data);
 
 done:
 	release_firmware(fw);
@@ -2569,23 +2078,20 @@ done:
 static int a5xx_microcode_read(struct adreno_device *adreno_dev)
 {
 	int ret;
+	struct adreno_firmware *pm4_fw = ADRENO_FW(adreno_dev, ADRENO_FW_PM4);
+	struct adreno_firmware *pfp_fw = ADRENO_FW(adreno_dev, ADRENO_FW_PFP);
+	const struct adreno_a5xx_core *a5xx_core = to_a5xx_core(adreno_dev);
 
-	if (adreno_dev->pm4.hostptr == NULL) {
+	if (pm4_fw->memdesc.hostptr == NULL) {
 		ret = _load_firmware(KGSL_DEVICE(adreno_dev),
-				 adreno_dev->gpucore->pm4fw_name,
-				 &adreno_dev->pm4,
-				 &adreno_dev->pm4_fw_size,
-				 &adreno_dev->pm4_fw_version);
+				 a5xx_core->pm4fw_name, pm4_fw);
 		if (ret)
 			return ret;
 	}
 
-	if (adreno_dev->pfp.hostptr == NULL) {
+	if (pfp_fw->memdesc.hostptr == NULL) {
 		ret = _load_firmware(KGSL_DEVICE(adreno_dev),
-				 adreno_dev->gpucore->pfpfw_name,
-				 &adreno_dev->pfp,
-				 &adreno_dev->pfp_fw_size,
-				 &adreno_dev->pfp_fw_version);
+				 a5xx_core->pfpfw_name, pfp_fw);
 		if (ret)
 			return ret;
 	}
@@ -2618,11 +2124,11 @@ static struct adreno_perfcount_register a5xx_perfcounters_cp[] = {
 		A5XX_RBBM_PERFCTR_CP_7_HI, 7, A5XX_CP_PERFCTR_CP_SEL_7 },
 };
 
-/*
- * Note that PERFCTR_RBBM_0 is missing - it is used to emulate the PWR counters.
- * See below.
- */
 static struct adreno_perfcount_register a5xx_perfcounters_rbbm[] = {
+	/*
+	 * A5XX_RBBM_PERFCTR_RBBM_0 is used for frequency scaling and omitted
+	 * from the poool of available counters
+	 */
 	{ KGSL_PERFCOUNTER_NOT_USED, 0, 0, A5XX_RBBM_PERFCTR_RBBM_1_LO,
 		A5XX_RBBM_PERFCTR_RBBM_1_HI, 9, A5XX_RBBM_PERFCTR_RBBM_SEL_1 },
 	{ KGSL_PERFCOUNTER_NOT_USED, 0, 0, A5XX_RBBM_PERFCTR_RBBM_2_LO,
@@ -2871,22 +2377,6 @@ static struct adreno_perfcount_register a5xx_perfcounters_alwayson[] = {
 		A5XX_RBBM_ALWAYSON_COUNTER_HI, -1 },
 };
 
-/*
- * 5XX targets don't really have physical PERFCTR_PWR registers - we emulate
- * them using similar performance counters from the RBBM block. The difference
- * betweeen using this group and the RBBM group is that the RBBM counters are
- * reloaded after a power collapse which is not how the PWR counters behaved on
- * legacy hardware. In order to limit the disruption on the rest of the system
- * we go out of our way to ensure backwards compatability. Since RBBM counters
- * are in short supply, we don't emulate PWR:0 which nobody uses - mark it as
- * broken.
- */
-static struct adreno_perfcount_register a5xx_perfcounters_pwr[] = {
-	{ KGSL_PERFCOUNTER_BROKEN, 0, 0, 0, 0, -1, 0 },
-	{ KGSL_PERFCOUNTER_NOT_USED, 0, 0, A5XX_RBBM_PERFCTR_RBBM_0_LO,
-		A5XX_RBBM_PERFCTR_RBBM_0_HI, -1, 0},
-};
-
 static struct adreno_perfcount_register a5xx_pwrcounters_sp[] = {
 	{ KGSL_PERFCOUNTER_NOT_USED, 0, 0, A5XX_SP_POWER_COUNTER_0_LO,
 		A5XX_SP_POWER_COUNTER_0_HI, -1, A5XX_SP_POWERCTR_SP_SEL_0 },
@@ -3006,8 +2496,6 @@ static struct adreno_perfcount_group a5xx_perfcounter_groups
 	A5XX_PERFCOUNTER_GROUP(SP, sp),
 	A5XX_PERFCOUNTER_GROUP(RB, rb),
 	A5XX_PERFCOUNTER_GROUP(VSC, vsc),
-	A5XX_PERFCOUNTER_GROUP_FLAGS(PWR, pwr,
-		ADRENO_PERFCOUNTER_GROUP_FIXED),
 	A5XX_PERFCOUNTER_GROUP(VBIF, vbif),
 	A5XX_PERFCOUNTER_GROUP_FLAGS(VBIF_PWR, vbif_pwr,
 		ADRENO_PERFCOUNTER_GROUP_FIXED),
@@ -3041,7 +2529,6 @@ static unsigned int a5xx_int_bits[ADRENO_INT_BITS_MAX] = {
 
 /* Register offset defines for A5XX, in order of enum adreno_regs */
 static unsigned int a5xx_register_offsets[ADRENO_REG_REGISTER_MAX] = {
-	ADRENO_REG_DEFINE(ADRENO_REG_CP_WFI_PEND_CTR, A5XX_CP_WFI_PEND_CTR),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_RB_BASE, A5XX_CP_RB_BASE),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_RB_BASE_HI, A5XX_CP_RB_BASE_HI),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_RB_RPTR_ADDR_LO,
@@ -3068,6 +2555,7 @@ static unsigned int a5xx_register_offsets[ADRENO_REG_REGISTER_MAX] = {
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_MEQ_ADDR, A5XX_CP_MEQ_DBG_ADDR),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_MEQ_DATA, A5XX_CP_MEQ_DBG_DATA),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_PROTECT_REG_0, A5XX_CP_PROTECT_REG_0),
+	ADRENO_REG_DEFINE(ADRENO_REG_CP_HW_FAULT, A5XX_CP_HW_FAULT),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_PREEMPT, A5XX_CP_CONTEXT_SWITCH_CNTL),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_PREEMPT_DEBUG, ADRENO_REG_SKIP),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_PREEMPT_DISABLE, ADRENO_REG_SKIP),
@@ -3127,6 +2615,8 @@ static unsigned int a5xx_register_offsets[ADRENO_REG_REGISTER_MAX] = {
 				A5XX_VBIF_XIN_HALT_CTRL1),
 	ADRENO_REG_DEFINE(ADRENO_REG_VBIF_VERSION,
 				A5XX_VBIF_VERSION),
+	ADRENO_REG_DEFINE(ADRENO_REG_GPMU_POWER_COUNTER_ENABLE,
+				A5XX_GPMU_POWER_COUNTER_ENABLE),
 };
 
 static const struct adreno_reg_offsets a5xx_reg_offsets = {
@@ -3153,31 +2643,31 @@ static void a5xx_cp_hw_err_callback(struct adreno_device *adreno_dev, int bit)
 		kgsl_regread(device, A5XX_CP_PFP_STAT_DATA, &val);
 		kgsl_regread(device, A5XX_CP_PFP_STAT_DATA, &val);
 
-		KGSL_DRV_CRIT_RATELIMIT(device,
-			"ringbuffer opcode error | possible opcode=0x%8.8X\n",
-			val);
+		dev_crit_ratelimited(device->dev,
+					"ringbuffer opcode error | possible opcode=0x%8.8X\n",
+					val);
 	}
 	if (status1 & BIT(A5XX_CP_RESERVED_BIT_ERROR))
-		KGSL_DRV_CRIT_RATELIMIT(device,
+		dev_crit_ratelimited(device->dev,
 					"ringbuffer reserved bit error interrupt\n");
 	if (status1 & BIT(A5XX_CP_HW_FAULT_ERROR)) {
 		kgsl_regread(device, A5XX_CP_HW_FAULT, &status2);
-		KGSL_DRV_CRIT_RATELIMIT(device,
+		dev_crit_ratelimited(device->dev,
 					"CP | Ringbuffer HW fault | status=%x\n",
 					status2);
 	}
 	if (status1 & BIT(A5XX_CP_DMA_ERROR))
-		KGSL_DRV_CRIT_RATELIMIT(device, "CP | DMA error\n");
+		dev_crit_ratelimited(device->dev, "CP | DMA error\n");
 	if (status1 & BIT(A5XX_CP_REGISTER_PROTECTION_ERROR)) {
 		kgsl_regread(device, A5XX_CP_PROTECT_STATUS, &status2);
-		KGSL_DRV_CRIT_RATELIMIT(device,
+		dev_crit_ratelimited(device->dev,
 					"CP | Protected mode error| %s | addr=%x | status=%x\n",
 					status2 & (1 << 24) ? "WRITE" : "READ",
 					(status2 & 0xFFFFF) >> 2, status2);
 	}
 	if (status1 & BIT(A5XX_CP_AHB_ERROR)) {
 		kgsl_regread(device, A5XX_CP_AHB_FAULT, &status2);
-		KGSL_DRV_CRIT_RATELIMIT(device,
+		dev_crit_ratelimited(device->dev,
 					"ringbuffer AHB error interrupt | status=%x\n",
 					status2);
 	}
@@ -3196,50 +2686,58 @@ static void a5xx_err_callback(struct adreno_device *adreno_dev, int bit)
 		 * Return the word address of the erroring register so that it
 		 * matches the register specification
 		 */
-		KGSL_DRV_CRIT_RATELIMIT(device,
-			"RBBM | AHB bus error | %s | addr=%x | ports=%x:%x\n",
-			reg & (1 << 28) ? "WRITE" : "READ",
-			(reg & 0xFFFFF) >> 2, (reg >> 20) & 0x3,
-			(reg >> 24) & 0xF);
+		dev_crit_ratelimited(device->dev,
+					"RBBM | AHB bus error | %s | addr=%x | ports=%x:%x\n",
+					reg & (1 << 28) ? "WRITE" : "READ",
+					(reg & 0xFFFFF) >> 2,
+					(reg >> 20) & 0x3,
+					(reg >> 24) & 0xF);
 
 		/* Clear the error */
 		kgsl_regwrite(device, A5XX_RBBM_AHB_CMD, (1 << 4));
 		break;
 	}
 	case A5XX_INT_RBBM_TRANSFER_TIMEOUT:
-		KGSL_DRV_CRIT_RATELIMIT(device, "RBBM: AHB transfer timeout\n");
+		dev_crit_ratelimited(device->dev,
+					"RBBM: AHB transfer timeout\n");
 		break;
 	case A5XX_INT_RBBM_ME_MS_TIMEOUT:
 		kgsl_regread(device, A5XX_RBBM_AHB_ME_SPLIT_STATUS, &reg);
-		KGSL_DRV_CRIT_RATELIMIT(device,
-			"RBBM | ME master split timeout | status=%x\n", reg);
+		dev_crit_ratelimited(device->dev,
+					"RBBM | ME master split timeout | status=%x\n",
+					reg);
 		break;
 	case A5XX_INT_RBBM_PFP_MS_TIMEOUT:
 		kgsl_regread(device, A5XX_RBBM_AHB_PFP_SPLIT_STATUS, &reg);
-		KGSL_DRV_CRIT_RATELIMIT(device,
-			"RBBM | PFP master split timeout | status=%x\n", reg);
+		dev_crit_ratelimited(device->dev,
+					"RBBM | PFP master split timeout | status=%x\n",
+					reg);
 		break;
 	case A5XX_INT_RBBM_ETS_MS_TIMEOUT:
-		KGSL_DRV_CRIT_RATELIMIT(device,
-			"RBBM: ME master split timeout\n");
+		dev_crit_ratelimited(device->dev,
+					"RBBM: ME master split timeout\n");
 		break;
 	case A5XX_INT_RBBM_ATB_ASYNC_OVERFLOW:
-		KGSL_DRV_CRIT_RATELIMIT(device, "RBBM: ATB ASYNC overflow\n");
+		dev_crit_ratelimited(device->dev,
+					"RBBM: ATB ASYNC overflow\n");
 		break;
 	case A5XX_INT_RBBM_ATB_BUS_OVERFLOW:
-		KGSL_DRV_CRIT_RATELIMIT(device, "RBBM: ATB bus overflow\n");
+		dev_crit_ratelimited(device->dev,
+					"RBBM: ATB bus overflow\n");
 		break;
 	case A5XX_INT_UCHE_OOB_ACCESS:
-		KGSL_DRV_CRIT_RATELIMIT(device, "UCHE: Out of bounds access\n");
+		dev_crit_ratelimited(device->dev,
+					"UCHE: Out of bounds access\n");
 		break;
 	case A5XX_INT_UCHE_TRAP_INTR:
-		KGSL_DRV_CRIT_RATELIMIT(device, "UCHE: Trap interrupt\n");
+		dev_crit_ratelimited(device->dev, "UCHE: Trap interrupt\n");
 		break;
 	case A5XX_INT_GPMU_VOLTAGE_DROOP:
-		KGSL_DRV_CRIT_RATELIMIT(device, "GPMU: Voltage droop\n");
+		dev_crit_ratelimited(device->dev, "GPMU: Voltage droop\n");
 		break;
 	default:
-		KGSL_DRV_CRIT_RATELIMIT(device, "Unknown interrupt %d\n", bit);
+		dev_crit_ratelimited(device->dev, "Unknown interrupt %d\n",
+					bit);
 	}
 }
 
@@ -3267,7 +2765,7 @@ static void a5xx_irq_storm_worker(struct work_struct *work)
 			gpudev->irq->mask);
 	clear_bit(ADRENO_DEVICE_CACHE_FLUSH_TS_SUSPENDED, &adreno_dev->priv);
 
-	KGSL_DRV_WARN(device, "Re-enabled A5XX_INT_CP_CACHE_FLUSH_TS");
+	dev_warn(device->dev, "Re-enabled A5XX_INT_CP_CACHE_FLUSH_TS\n");
 	mutex_unlock(&device->mutex);
 
 	/* Reschedule just to make sure everything retires */
@@ -3342,9 +2840,9 @@ static void a5xx_gpmu_int_callback(struct adreno_device *adreno_dev, int bit)
 	kgsl_regread(device, A5XX_GPMU_RBBM_INTR_INFO, &reg);
 
 	if (reg & (~VALID_GPMU_IRQ)) {
-		KGSL_DRV_CRIT_RATELIMIT(device,
-			"GPMU: Unknown IRQ mask 0x%08lx in 0x%08x\n",
-				reg & (~VALID_GPMU_IRQ), reg);
+		dev_crit_ratelimited(device->dev,
+					"GPMU: Unknown IRQ mask 0x%08lx in 0x%08x\n",
+					reg & (~VALID_GPMU_IRQ), reg);
 	}
 
 	for (i = 0; i < 32; i++)
@@ -3364,20 +2862,20 @@ static void a5xx_gpmu_int_callback(struct adreno_device *adreno_dev, int bit)
 		case BIT(ISENS_ERR_INTR):
 		case BIT(ISENS_IDLE_ERR_INTR):
 		case BIT(ISENS_PWR_ON_ERR_INTR):
-			KGSL_DRV_CRIT_RATELIMIT(device,
-				"GPMU: interrupt %s(%08lx)\n",
-				gpmu_int_msg[i],
-				BIT(i));
+			dev_crit_ratelimited(device->dev,
+						"GPMU: interrupt %s(%08lx)\n",
+						gpmu_int_msg[i],
+						BIT(i));
 			break;
 	}
 }
 
 /*
-* a5x_gpc_err_int_callback() - Isr for GPC error interrupts
-* @adreno_dev: Pointer to device
-* @bit: Interrupt bit
-*/
-void a5x_gpc_err_int_callback(struct adreno_device *adreno_dev, int bit)
+ * a5xx_gpc_err_int_callback() - Isr for GPC error interrupts
+ * @adreno_dev: Pointer to device
+ * @bit: Interrupt bit
+ */
+static void a5xx_gpc_err_int_callback(struct adreno_device *adreno_dev, int bit)
 {
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 
@@ -3387,7 +2885,7 @@ void a5x_gpc_err_int_callback(struct adreno_device *adreno_dev, int bit)
 	 * with help of register dump.
 	 */
 
-	KGSL_DRV_CRIT(device, "RBBM: GPC error\n");
+	dev_crit_ratelimited(device->dev, "RBBM: GPC error\n");
 	adreno_irqctrl(adreno_dev, 0);
 
 	/* Trigger a fault in the dispatcher - this will effect a restart */
@@ -3425,7 +2923,7 @@ static struct adreno_irq_funcs a5xx_irq_funcs[32] = {
 	ADRENO_IRQ_CALLBACK(a5xx_err_callback),
 	/* 6 - RBBM_ATB_ASYNC_OVERFLOW */
 	ADRENO_IRQ_CALLBACK(a5xx_err_callback),
-	ADRENO_IRQ_CALLBACK(a5x_gpc_err_int_callback), /* 7 - GPC_ERR */
+	ADRENO_IRQ_CALLBACK(a5xx_gpc_err_int_callback), /* 7 - GPC_ERR */
 	ADRENO_IRQ_CALLBACK(a5xx_preempt_callback),/* 8 - CP_SW */
 	ADRENO_IRQ_CALLBACK(a5xx_cp_hw_err_callback), /* 9 - CP_HW_ERROR */
 	/* 10 - CP_CCU_FLUSH_DEPTH_TS */
@@ -3678,7 +3176,7 @@ struct adreno_gpudev adreno_a5xx_gpudev = {
 	.int_bits = a5xx_int_bits,
 	.ft_perf_counters = a5xx_ft_perf_counters,
 	.ft_perf_counters_count = ARRAY_SIZE(a5xx_ft_perf_counters),
-	.coresight = &a5xx_coresight,
+	.coresight = {&a5xx_coresight},
 	.start = a5xx_start,
 	.snapshot = a5xx_snapshot,
 	.irq = &a5xx_irq,
@@ -3698,15 +3196,14 @@ struct adreno_gpudev adreno_a5xx_gpudev = {
 	.pwrlevel_change_settings = a5xx_pwrlevel_change_settings,
 	.read_throttling_counters = a5xx_read_throttling_counters,
 	.count_throttles = a5xx_count_throttles,
-	.enable_pwr_counters = a5xx_enable_pwr_counters,
 	.preemption_pre_ibsubmit = a5xx_preemption_pre_ibsubmit,
 	.preemption_yield_enable =
 				a5xx_preemption_yield_enable,
 	.preemption_post_ibsubmit =
 			a5xx_preemption_post_ibsubmit,
 	.preemption_init = a5xx_preemption_init,
+	.preemption_close = a5xx_preemption_close,
 	.preemption_schedule = a5xx_preemption_schedule,
 	.enable_64bit = a5xx_enable_64bit,
 	.clk_set_options = a5xx_clk_set_options,
-	.zap_shader_unload = a5xx_zap_shader_unload,
 };

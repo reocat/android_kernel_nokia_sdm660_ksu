@@ -331,7 +331,7 @@ static int h_memstick_read_dev_id(struct memstick_dev *card,
 	struct ms_id_register id_reg;
 
 	if (!(*mrq)) {
-		memstick_init_req(&card->current_mrq, MS_TPC_READ_REG, NULL,
+		memstick_init_req(&card->current_mrq, MS_TPC_READ_REG, &id_reg,
 				  sizeof(struct ms_id_register));
 		*mrq = &card->current_mrq;
 		return 0;
@@ -416,6 +416,7 @@ static struct memstick_dev *memstick_alloc_card(struct memstick_host *host)
 	return card;
 err_out:
 	host->card = old_card;
+	kfree_const(card->dev.kobj.name);
 	kfree(card);
 	return NULL;
 }
@@ -471,8 +472,10 @@ static void memstick_check(struct work_struct *work)
 				put_device(&card->dev);
 				host->card = NULL;
 			}
-		} else
+		} else {
+			kfree_const(card->dev.kobj.name);
 			kfree(card);
+		}
 	}
 
 out_power_off:

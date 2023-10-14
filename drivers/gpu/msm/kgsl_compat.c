@@ -1,24 +1,10 @@
-/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2013-2019, 2021, The Linux Foundation. All rights reserved.
  */
 
-#include <linux/fs.h>
-#include <linux/file.h>
-#include <linux/uaccess.h>
-#include <asm/ioctl.h>
-
-#include "kgsl.h"
-#include "kgsl_compat.h"
 #include "kgsl_device.h"
+#include "kgsl_compat.h"
 #include "kgsl_sync.h"
 
 static long
@@ -274,18 +260,6 @@ kgsl_ioctl_gpumem_get_info_compat(struct kgsl_device_private *dev_priv,
 	return result;
 }
 
-static long kgsl_ioctl_cff_syncmem_compat(struct kgsl_device_private *dev_priv,
-					unsigned int cmd, void *data)
-{
-	struct kgsl_cff_syncmem_compat *param32 = data;
-	struct kgsl_cff_syncmem param;
-
-	param.gpuaddr = (unsigned long)param32->gpuaddr;
-	param.len = (size_t)param32->len;
-
-	return kgsl_ioctl_cff_syncmem(dev_priv, cmd, &param);
-}
-
 static long kgsl_ioctl_timestamp_event_compat(struct kgsl_device_private
 				*dev_priv, unsigned int cmd, void *data)
 {
@@ -330,10 +304,6 @@ static const struct kgsl_ioctl kgsl_compat_ioctl_funcs[] = {
 			kgsl_ioctl_sharedmem_flush_cache_compat),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_GPUMEM_ALLOC_COMPAT,
 			kgsl_ioctl_gpumem_alloc_compat),
-	KGSL_IOCTL_FUNC(IOCTL_KGSL_CFF_SYNCMEM_COMPAT,
-			kgsl_ioctl_cff_syncmem_compat),
-	KGSL_IOCTL_FUNC(IOCTL_KGSL_CFF_USER_EVENT,
-			kgsl_ioctl_cff_user_event),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_TIMESTAMP_EVENT_COMPAT,
 			kgsl_ioctl_timestamp_event_compat),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_SETPROPERTY_COMPAT,
@@ -356,8 +326,6 @@ static const struct kgsl_ioctl kgsl_compat_ioctl_funcs[] = {
 			kgsl_ioctl_syncsource_create_fence),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_SYNCSOURCE_SIGNAL_FENCE,
 			kgsl_ioctl_syncsource_signal_fence),
-	KGSL_IOCTL_FUNC(IOCTL_KGSL_CFF_SYNC_GPUOBJ,
-			kgsl_ioctl_cff_sync_gpuobj),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_GPUOBJ_ALLOC,
 			kgsl_ioctl_gpuobj_alloc),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_GPUOBJ_FREE,
@@ -384,6 +352,20 @@ static const struct kgsl_ioctl kgsl_compat_ioctl_funcs[] = {
 			kgsl_ioctl_sparse_bind),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_GPU_SPARSE_COMMAND,
 			kgsl_ioctl_gpu_sparse_command),
+	KGSL_IOCTL_FUNC(IOCTL_KGSL_GPU_AUX_COMMAND,
+			kgsl_ioctl_gpu_aux_command),
+	KGSL_IOCTL_FUNC(IOCTL_KGSL_TIMELINE_CREATE,
+			kgsl_ioctl_timeline_create),
+	KGSL_IOCTL_FUNC(IOCTL_KGSL_TIMELINE_WAIT,
+			kgsl_ioctl_timeline_wait),
+	KGSL_IOCTL_FUNC(IOCTL_KGSL_TIMELINE_FENCE_GET,
+			kgsl_ioctl_timeline_fence_get),
+	KGSL_IOCTL_FUNC(IOCTL_KGSL_TIMELINE_QUERY,
+			kgsl_ioctl_timeline_query),
+	KGSL_IOCTL_FUNC(IOCTL_KGSL_TIMELINE_SIGNAL,
+			kgsl_ioctl_timeline_signal),
+	KGSL_IOCTL_FUNC(IOCTL_KGSL_TIMELINE_DESTROY,
+			kgsl_ioctl_timeline_destroy),
 };
 
 long kgsl_compat_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
@@ -402,8 +384,6 @@ long kgsl_compat_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 	if (ret == -ENOIOCTLCMD) {
 		if (device->ftbl->compat_ioctl != NULL)
 			return device->ftbl->compat_ioctl(dev_priv, cmd, arg);
-
-		KGSL_DRV_INFO(device, "invalid ioctl code 0x%08X\n", cmd);
 	}
 
 	return ret;

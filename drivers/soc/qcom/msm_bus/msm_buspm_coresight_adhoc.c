@@ -1,13 +1,6 @@
-/* Copyright (c) 2014 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2016 The Linux Foundation. All rights reserved.
  */
 
 #include <linux/clk.h>
@@ -98,6 +91,7 @@ static int buspm_of_get_clk_adhoc(struct device_node *of_node,
 	struct msmbus_coresight_adhoc_drvdata *drvdata, const char *name)
 {
 	struct msmbus_coresight_adhoc_clock_drvdata *clk;
+
 	clk = devm_kzalloc(drvdata->dev, sizeof(*clk), GFP_KERNEL);
 
 	if (!clk)
@@ -136,10 +130,8 @@ int msmbus_coresight_init_adhoc(struct platform_device *pdev,
 	drvdata = platform_get_drvdata(pdev);
 	if (IS_ERR_OR_NULL(drvdata)) {
 		drvdata = devm_kzalloc(dev, sizeof(*drvdata), GFP_KERNEL);
-		if (!drvdata) {
-			pr_err("coresight: Alloc for drvdata failed\n");
+		if (!drvdata)
 			return -ENOMEM;
-		}
 		INIT_LIST_HEAD(&drvdata->clocks);
 		drvdata->dev = &pdev->dev;
 		platform_set_drvdata(pdev, drvdata);
@@ -153,7 +145,6 @@ int msmbus_coresight_init_adhoc(struct platform_device *pdev,
 
 	desc = devm_kzalloc(dev, sizeof(*desc), GFP_KERNEL);
 	if (!desc) {
-		pr_err("coresight: Error allocating memory\n");
 		ret = -ENOMEM;
 		goto err1;
 	}

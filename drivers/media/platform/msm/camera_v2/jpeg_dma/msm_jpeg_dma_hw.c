@@ -1,4 +1,5 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2015-2018, 2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -72,15 +73,17 @@ static const struct msm_jpegdma_block msm_jpegdma_block_sel[] = {
 };
 
 /*
-* jpegdma_do_div - long division.
-* @num: dividend
-* @den: divisor
-* returns quotient value.
-*/
+ * jpegdma_do_div - long division.
+ * @num: dividend
+ * @den: divisor
+ * returns quotient value.
+ */
 static inline long long jpegdma_do_div(long long num, long long den)
 {
-	do_div(num, den);
-	return num;
+	uint64_t n = (uint64_t) num;
+
+	do_div(n, (uint32_t)den);
+	return n;
 }
 
 /*
@@ -182,7 +185,7 @@ static int msm_jpegdma_hw_get_num_pipes(struct msm_jpegdma_device *dma)
  * @dma: Pointer to dma device.
  * @clk_name: clock name.
  */
-int msm_jpegdma_hw_get_clock_index(struct msm_jpegdma_device *dma,
+static int msm_jpegdma_hw_get_clock_index(struct msm_jpegdma_device *dma,
 		const char *clk_name)
 {
 	uint32_t i = 0;
@@ -217,9 +220,9 @@ static int msm_jpegdma_hw_reset(struct msm_jpegdma_device *dma)
 }
 
 /*
-* msm_jpegdma_hw_halt - Halt jpeg dma core.
-* @dma: Pointer to dma device.
-*/
+ * msm_jpegdma_hw_halt - Halt jpeg dma core.
+ * @dma: Pointer to dma device.
+ */
 static int msm_jpegdma_hw_halt(struct msm_jpegdma_device *dma)
 {
 	unsigned long time;
@@ -239,9 +242,9 @@ static int msm_jpegdma_hw_halt(struct msm_jpegdma_device *dma)
 }
 
 /*
-* msm_jpegdma_hw_run - Enable dma processing.
-* @dma: Pointer to dma device.
-*/
+ * msm_jpegdma_hw_run - Enable dma processing.
+ * @dma: Pointer to dma device.
+ */
 static int msm_jpegdma_hw_run(struct msm_jpegdma_device *dma)
 {
 	msm_jpegdma_hw_write_reg(dma, MSM_JPEGDMA_IOMEM_CORE,
@@ -486,7 +489,7 @@ static int msm_jpegdma_hw_fe_1_size(struct msm_jpegdma_device *dma,
 /*
  * msm_jpegdma_hw_fe_0_addr - Set fetch engine 0 address.
  * @dma: Pointer to dma device.
- * @addr: Fetch engine addres.
+ * @addr: Fetch engine address.
  */
 static int msm_jpegdma_hw_fe_0_addr(struct msm_jpegdma_device *dma, u32 addr)
 {
@@ -502,7 +505,7 @@ static int msm_jpegdma_hw_fe_0_addr(struct msm_jpegdma_device *dma, u32 addr)
 /*
  * msm_jpegdma_hw_fe_1_addr - Set fetch engine 1 address.
  * @dma: Pointer to dma device.
- * @addr: Fetch engine addres.
+ * @addr: Fetch engine address.
  */
 static int msm_jpegdma_hw_fe_1_addr(struct msm_jpegdma_device *dma, u32 addr)
 {
@@ -644,7 +647,7 @@ static int msm_jpegdma_hw_we_1_size(struct msm_jpegdma_device *dma,
 /*
  * msm_jpegdma_hw_we_0_addr - Set write engine 0 address.
  * @dma: Pointer to dma device.
- * @addr: Fetch engine addres.
+ * @addr: Fetch engine address.
  */
 static int msm_jpegdma_hw_we_0_addr(struct msm_jpegdma_device *dma, u32 addr)
 {
@@ -660,7 +663,7 @@ static int msm_jpegdma_hw_we_0_addr(struct msm_jpegdma_device *dma, u32 addr)
 /*
  * msm_jpegdma_hw_we_1_addr - Set write engine 1 address.
  * @dma: Pointer to dma device.
- * @addr: Fetch engine addres.
+ * @addr: Fetch engine address.
  */
 static int msm_jpegdma_hw_we_1_addr(struct msm_jpegdma_device *dma, u32 addr)
 {
@@ -745,7 +748,6 @@ static void msm_jpegdma_hw_config_qos(struct msm_jpegdma_device *dma)
 		msm_jpegdma_hw_write_reg(dma, MSM_JPEGDMA_IOMEM_CORE,
 			dma->qos_regs[i].reg, dma->qos_regs[i].val);
 
-	return;
 }
 
 /*
@@ -763,7 +765,6 @@ static void msm_jpegdma_hw_config_vbif(struct msm_jpegdma_device *dma)
 		msm_jpegdma_hw_write_reg(dma, MSM_JPEGDMA_IOMEM_VBIF,
 			dma->vbif_regs[i].reg, dma->vbif_regs[i].val);
 
-	return;
 }
 
 /*
@@ -798,18 +799,18 @@ static void msm_jpegdma_hw_config_mmu_prefetch(struct msm_jpegdma_device *dma,
 }
 
 /*
-* msm_jpegdma_hw_calc_speed - Calculate speed based on framerate and size.
-* @dma: Pointer to dma device.
-* @size: Dma user size configuration.
-* @speed: Calculated speed.
-*/
+ * msm_jpegdma_hw_calc_speed - Calculate speed based on framerate and size.
+ * @dma: Pointer to dma device.
+ * @size: Dma user size configuration.
+ * @speed: Calculated speed.
+ */
 static int msm_jpegdma_hw_calc_speed(struct msm_jpegdma_device *dma,
 	struct msm_jpegdma_size_config *size,
 	struct msm_jpegdma_speed *speed)
 {
 	u64 width;
 	u64 height;
-	u64 real_clock;
+	long real_clock;
 	u64 calc_rate;
 	int core_clk_idx;
 
@@ -842,11 +843,11 @@ static int msm_jpegdma_hw_calc_speed(struct msm_jpegdma_device *dma,
 }
 
 /*
-* msm_jpegdma_hw_set_speed - Configure clock and bus bandwidth based on
-*   requested speed and dma clients.
-* @size: Jpeg dma size configuration.
-* @speed: Requested dma speed.
-*/
+ * msm_jpegdma_hw_set_speed - Configure clock and bus bandwidth based on
+ *   requested speed and dma clients.
+ * @size: Jpeg dma size configuration.
+ * @speed: Requested dma speed.
+ */
 static int msm_jpegdma_hw_set_speed(struct msm_jpegdma_device *dma,
 	struct msm_jpegdma_size_config *size,
 	struct msm_jpegdma_speed *speed)
@@ -895,11 +896,11 @@ static int msm_jpegdma_hw_set_speed(struct msm_jpegdma_device *dma,
 }
 
 /*
-* msm_jpegdma_hw_add_plane_offset - Add plane offset to all pipelines.
-* @plane: Jpeg dma plane configuration.
-* @in_offset: Input plane offset.
-* @out_offset: Output plane offset.
-*/
+ * msm_jpegdma_hw_add_plane_offset - Add plane offset to all pipelines.
+ * @plane: Jpeg dma plane configuration.
+ * @in_offset: Input plane offset.
+ * @out_offset: Output plane offset.
+ */
 static int msm_jpegdma_hw_add_plane_offset(struct msm_jpegdma_plane *plane,
 	unsigned int in_offset, unsigned int out_offset)
 {
@@ -914,14 +915,14 @@ static int msm_jpegdma_hw_add_plane_offset(struct msm_jpegdma_plane *plane,
 }
 
 /*
-* msm_jpegdma_hw_calc_config - Calculate plane configuration.
-* @size_cfg: Size configuration.
-* @plane: Plane configuration need to be calculated.
-*/
+ * msm_jpegdma_hw_calc_config - Calculate plane configuration.
+ * @size_cfg: Size configuration.
+ * @plane: Plane configuration need to be calculated.
+ */
 static int msm_jpegdma_hw_calc_config(struct msm_jpegdma_size_config *size_cfg,
 	struct msm_jpegdma_plane *plane)
 {
-	u64 scale_hor, scale_ver, phase;
+	u64 scale_hor, scale_ver, phase = 0;
 	u64 in_width, in_height;
 	u64 out_width, out_height;
 	struct msm_jpegdma_config *config;
@@ -962,7 +963,7 @@ static int msm_jpegdma_hw_calc_config(struct msm_jpegdma_size_config *size_cfg,
 	if (plane->active_pipes > 1) {
 		phase = jpegdma_do_div((out_height * scale_ver +
 			(plane->active_pipes - 1)), plane->active_pipes);
-		phase &= (MSM_JPEGDMA_SCALE_UNI - 1);
+		phase &= (u64)(MSM_JPEGDMA_SCALE_UNI - 1);
 		out_height = jpegdma_do_div((out_height +
 			(plane->active_pipes - 1)), plane->active_pipes);
 		in_height = (out_height * scale_ver) / MSM_JPEGDMA_SCALE_UNI;
@@ -1010,10 +1011,10 @@ static int msm_jpegdma_hw_calc_config(struct msm_jpegdma_size_config *size_cfg,
 }
 
 /*
-* msm_jpegdma_hw_check_config - Check configuration based on size is possible.
+ * msm_jpegdma_hw_check_config - Check configuration based on size is possible.
  *@dma: Pointer to dma device.
-* @size_cfg: Size configuration.
-*/
+ * @size_cfg: Size configuration.
+ */
 int msm_jpegdma_hw_check_config(struct msm_jpegdma_device *dma,
 	struct msm_jpegdma_size_config *size_cfg)
 {
@@ -1043,11 +1044,11 @@ int msm_jpegdma_hw_check_config(struct msm_jpegdma_device *dma,
 }
 
 /*
-* msm_jpegdma_hw_set_config - Set dma configuration based on size.
+ * msm_jpegdma_hw_set_config - Set dma configuration based on size.
  *@dma: Pointer to dma device.
-* @size_cfg: Size configuration.
-* @plane_cfg: Calculated plane configuration.
-*/
+ * @size_cfg: Size configuration.
+ * @plane_cfg: Calculated plane configuration.
+ */
 int msm_jpegdma_hw_set_config(struct msm_jpegdma_device *dma,
 	struct msm_jpegdma_size_config *size_cfg,
 	struct msm_jpegdma_plane_config *plane_cfg)
@@ -1134,12 +1135,12 @@ int msm_jpegdma_hw_set_config(struct msm_jpegdma_device *dma,
 }
 
 /*
-* msm_jpegdma_hw_start - Start dma processing.
+ * msm_jpegdma_hw_start - Start dma processing.
  *@dma: Pointer to dma device.
-* @addr: Input address.
-* @plane: Plane configuration.
-* @speed: Clock and bus bandwidth configuration.
-*/
+ * @addr: Input address.
+ * @plane: Plane configuration.
+ * @speed: Clock and bus bandwidth configuration.
+ */
 int msm_jpegdma_hw_start(struct msm_jpegdma_device *dma,
 	struct msm_jpegdma_addr *addr,
 	struct msm_jpegdma_plane *plane,
@@ -1215,9 +1216,9 @@ int msm_jpegdma_hw_start(struct msm_jpegdma_device *dma,
 }
 
 /*
-* msm_jpegdma_hw_abort - abort dma processing.
+ * msm_jpegdma_hw_abort - abort dma processing.
  *@dma: Pointer to dma device.
-*/
+ */
 int msm_jpegdma_hw_abort(struct msm_jpegdma_device *dma)
 {
 	int ret;
@@ -1665,7 +1666,7 @@ int msm_jpegdma_hw_get(struct msm_jpegdma_device *dma)
 	mutex_lock(&dma->lock);
 	if (dma->ref_count == 0) {
 
-		dev_dbg(dma->dev, "msm_jpegdma_hw_get E\n");
+		dev_dbg(dma->dev, "%s : E\n", __func__);
 		/* enable all the regulators */
 		ret = msm_camera_regulator_enable(dma->dma_vdd,
 				dma->num_reg, true);
@@ -1703,7 +1704,7 @@ int msm_jpegdma_hw_get(struct msm_jpegdma_device *dma)
 		msm_jpegdma_hw_enable_irq(dma);
 	}
 	dma->ref_count++;
-	dev_dbg(dma->dev, "msm_jpegdma_hw_get X\n");
+	dev_dbg(dma->dev, "%s : X\n", __func__);
 	mutex_unlock(&dma->lock);
 
 	return 0;
@@ -1729,7 +1730,9 @@ error_regulators_get:
 void msm_jpegdma_hw_put(struct msm_jpegdma_device *dma)
 {
 	mutex_lock(&dma->lock);
-	BUG_ON(dma->ref_count == 0);
+
+	if (WARN_ON(!dma->ref_count))
+		goto err;
 
 	if (--dma->ref_count == 0) {
 		msm_jpegdma_hw_halt(dma);
@@ -1747,6 +1750,7 @@ void msm_jpegdma_hw_put(struct msm_jpegdma_device *dma)
 	}
 	/* Reset clock rate, need to be updated on next processing */
 	dma->active_clock_rate = -1;
+err:
 	mutex_unlock(&dma->lock);
 }
 

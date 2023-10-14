@@ -32,7 +32,11 @@
 #ifndef _DRM_SAREA_H_
 #define _DRM_SAREA_H_
 
-#include <drm/drm.h>
+#include "drm.h"
+
+#if defined(__cplusplus)
+extern "C" {
+#endif
 
 #if defined(__cplusplus)
 extern "C" {

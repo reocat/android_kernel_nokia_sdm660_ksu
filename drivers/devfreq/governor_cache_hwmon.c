@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2014-2015, 2019, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "cache-hwmon: " fmt
@@ -64,7 +56,7 @@ static ssize_t show_##name(struct device *dev,				\
 {									\
 	struct devfreq *df = to_devfreq(dev);				\
 	struct cache_hwmon_node *hw = df->data;				\
-	return snprintf(buf, PAGE_SIZE, "%u\n", hw->name);		\
+	return scnprintf(buf, PAGE_SIZE, "%u\n", hw->name);		\
 }
 
 #define store_attr(name, _min, _max) \
@@ -76,9 +68,9 @@ static ssize_t store_##name(struct device *dev,				\
 	unsigned int val;						\
 	struct devfreq *df = to_devfreq(dev);				\
 	struct cache_hwmon_node *hw = df->data;				\
-	ret = sscanf(buf, "%u", &val);					\
-	if (ret != 1)							\
-		return -EINVAL;						\
+	ret = kstrtoint(buf, 10, &val);					\
+	if (ret)							\
+		return ret;						\
 	val = max(val, _min);						\
 	val = min(val, _max);						\
 	hw->name = val;							\
@@ -87,7 +79,7 @@ static ssize_t store_##name(struct device *dev,				\
 
 #define gov_attr(__attr, min, max)	\
 show_attr(__attr)			\
-store_attr(__attr, min, max)		\
+store_attr(__attr, (min), (max))	\
 static DEVICE_ATTR(__attr, 0644, show_##__attr, store_##__attr)
 
 #define MIN_MS	10U
@@ -226,8 +218,7 @@ int update_cache_hwmon(struct cache_hwmon *hwmon)
 }
 
 static int devfreq_cache_hwmon_get_freq(struct devfreq *df,
-					unsigned long *freq,
-					u32 *flag)
+					unsigned long *freq)
 {
 	struct mrps_stats stat;
 	struct cache_hwmon_node *node = df->data;
@@ -388,10 +379,8 @@ int register_cache_hwmon(struct device *dev, struct cache_hwmon *hwmon)
 		return -EINVAL;
 
 	node = devm_kzalloc(dev, sizeof(*node), GFP_KERNEL);
-	if (!node) {
-		dev_err(dev, "Unable to register gov. Out of memory!\n");
+	if (!node)
 		return -ENOMEM;
-	}
 
 	node->cycles_per_med_req = 20;
 	node->cycles_per_high_req = 35;

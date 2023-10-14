@@ -1,14 +1,6 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _KGSL_SNAPSHOT_H_
@@ -58,6 +50,9 @@ struct kgsl_snapshot_section_header {
 #define KGSL_SNAPSHOT_SECTION_MEMLIST      0x0E01
 #define KGSL_SNAPSHOT_SECTION_MEMLIST_V2   0x0E02
 #define KGSL_SNAPSHOT_SECTION_SHADER       0x1201
+#define KGSL_SNAPSHOT_SECTION_MVC          0x1501
+#define KGSL_SNAPSHOT_SECTION_GMU          0x1601
+#define KGSL_SNAPSHOT_SECTION_GMU_MEMORY   0x1701
 
 #define KGSL_SNAPSHOT_SECTION_END          0xFFFF
 
@@ -182,6 +177,21 @@ struct kgsl_snapshot_ib_v2 {
 	__u64 size;    /* Size of the IB */
 } __packed;
 
+/* GMU memory ID's */
+#define SNAPSHOT_GMU_MEM_UNKNOWN	0x00
+#define SNAPSHOT_GMU_MEM_HFI		0x01
+#define SNAPSHOT_GMU_MEM_LOG		0x02
+#define SNAPSHOT_GMU_MEM_BWTABLE	0x03
+#define SNAPSHOT_GMU_MEM_DEBUG		0x04
+#define SNAPSHOT_GMU_MEM_BIN_BLOCK	0x05
+
+/* GMU memory section data */
+struct kgsl_snapshot_gmu_mem {
+	int type;
+	uint64_t hostaddr;
+	uint64_t gmuaddr;
+	uint64_t gpuaddr;
+} __packed;
 
 /* Register sub-section header */
 struct kgsl_snapshot_regs {
@@ -194,6 +204,12 @@ struct kgsl_snapshot_indexed_regs {
 	__u32 data_reg;  /* Offset of the data register for this section */
 	int start;     /* Starting index */
 	int count;     /* Number of dwords in the data */
+} __packed;
+
+/* MVC register sub-section header */
+struct kgsl_snapshot_mvc_regs {
+	int ctxt_id;
+	int cluster_id;
 } __packed;
 
 /* Istore sub-section header */
@@ -218,6 +234,14 @@ struct kgsl_snapshot_istore {
 #define SNAPSHOT_DEBUG_CP_ROQ     10
 #define SNAPSHOT_DEBUG_SHADER_MEMORY 11
 #define SNAPSHOT_DEBUG_CP_MERCIU 12
+#define SNAPSHOT_DEBUG_SQE_VERSION 14
+
+/* GMU Version information */
+#define SNAPSHOT_DEBUG_GMU_CORE_VERSION 15
+#define SNAPSHOT_DEBUG_GMU_CORE_DEV_VERSION 16
+#define SNAPSHOT_DEBUG_GMU_PWR_VERSION 17
+#define SNAPSHOT_DEBUG_GMU_PWR_DEV_VERSION 18
+#define SNAPSHOT_DEBUG_GMU_HFI_VERSION 19
 
 struct kgsl_snapshot_debug {
 	int type;    /* Type identifier for the attached tata */
@@ -255,6 +279,10 @@ struct kgsl_snapshot_gpu_object_v2 {
 	__u64 size;    /* Size of the object (in dwords) */
 } __packed;
 
-void kgsl_snapshot_push_object(struct kgsl_process_private *process,
-	uint64_t gpuaddr, uint64_t dwords);
+struct kgsl_device;
+struct kgsl_process_private;
+
+void kgsl_snapshot_push_object(struct kgsl_device *device,
+		struct kgsl_process_private *process,
+		uint64_t gpuaddr, uint64_t dwords);
 #endif

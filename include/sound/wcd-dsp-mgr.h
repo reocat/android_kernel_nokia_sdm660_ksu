@@ -1,20 +1,13 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __WCD_DSP_MGR_H__
 #define __WCD_DSP_MGR_H__
 
 #include <linux/types.h>
+#include <linux/device.h>
 
 /*
  * These enums correspond to the component types
@@ -63,6 +56,9 @@ enum wdsp_event_type {
 	/* Suspend/Resume related */
 	WDSP_EVENT_SUSPEND,
 	WDSP_EVENT_RESUME,
+
+	/* Misc */
+	WDSP_EVENT_GET_DEVOPS
 };
 
 enum wdsp_signal {
@@ -73,6 +69,10 @@ enum wdsp_signal {
 	/* Other signals */
 	WDSP_CDC_DOWN_SIGNAL,
 	WDSP_CDC_UP_SIGNAL,
+
+	/* Software generated signal indicating debug dumps to be collected */
+	WDSP_DEBUG_DUMP,
+	WDSP_DEBUG_DUMP_INTERNAL,
 };
 
 /*
@@ -85,9 +85,9 @@ enum wdsp_signal {
  *		   by the manager as per sequence
  */
 struct wdsp_cmpnt_ops {
-	int (*init)(struct device *, void *priv_data);
-	int (*deinit)(struct device *, void *priv_data);
-	int (*event_handler)(struct device *, void *priv_data,
+	int (*init)(struct device *dev, void *priv_data);
+	int (*deinit)(struct device *dev, void *priv_data);
+	int (*event_handler)(struct device *dev, void *priv_data,
 			     enum wdsp_event_type, void *data);
 };
 
@@ -109,6 +109,8 @@ struct wdsp_err_signal_arg {
  *			their own ops to manager driver
  * @get_dev_for_cmpnt: components can use this to get handle
  *		       to struct device * of any other component
+ * @get_devops_for_cmpnt: components can use this to get ops
+ *			  from other related components.
  * @signal_handler: callback to notify manager driver that signal
  *		    has occurred. Cannot be called from interrupt
  *		    context as this can sleep
@@ -126,6 +128,8 @@ struct wdsp_mgr_ops {
 				  struct wdsp_cmpnt_ops *ops);
 	struct device *(*get_dev_for_cmpnt)(struct device *wdsp_dev,
 					    enum wdsp_cmpnt_type type);
+	int (*get_devops_for_cmpnt)(struct device *wdsp_dev,
+				    enum wdsp_cmpnt_type type, void *data);
 	int (*signal_handler)(struct device *wdsp_dev,
 			      enum wdsp_signal signal, void *arg);
 	int (*vote_for_dsp)(struct device *wdsp_dev, bool vote);
@@ -133,4 +137,6 @@ struct wdsp_mgr_ops {
 	int (*resume)(struct device *wdsp_dev);
 };
 
+int wcd_dsp_mgr_init(void);
+void wcd_dsp_mgr_exit(void);
 #endif /* end of __WCD_DSP_MGR_H__ */

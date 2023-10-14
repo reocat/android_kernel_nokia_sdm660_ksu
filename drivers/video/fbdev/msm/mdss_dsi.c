@@ -1,15 +1,5 @@
-/* Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2012-2021, The Linux Foundation. All rights reserved. */
 
 #include <linux/module.h>
 #include <linux/interrupt.h>
@@ -21,7 +11,6 @@
 #include <linux/gpio.h>
 #include <linux/err.h>
 #include <linux/regulator/consumer.h>
-#include <linux/leds-qpnp-wled.h>
 #include <linux/clk.h>
 #include <linux/uaccess.h>
 #include <linux/msm-bus.h>
@@ -35,17 +24,6 @@
 #include "mdss_dsi_phy.h"
 #include "mdss_dba_utils.h"
 
-#if defined(CONFIG_PXLW_IRIS3)
-#include "mdss_dsi_iris3.h"
-#endif
-
-//SW4-HL-Display-GlanceMode-00+{_20170524
-#ifdef CONFIG_AOD_FEATURE
-#include "fih/fih_msm_mdss_aod.h"
-#endif
-//SW4-HL-Display-GlanceMode-00+}_20170524
-#include <linux/platform_data/boost_nt50356.h> //B2N
-
 #define CMDLINE_DSI_CTL_NUM_STRING_LEN 2
 
 /* Master structure to hold all the information about the DSI/panel */
@@ -54,83 +32,7 @@ static struct mdss_dsi_data *mdss_dsi_res;
 #define DSI_DISABLE_PC_LATENCY 100
 #define DSI_ENABLE_PC_LATENCY PM_QOS_DEFAULT_VALUE
 
-//SW4-HL-Display-BBox-03+{_20161028
-/* Black Box */
-#define BBOX_LCM_OEM_FUNCTIONS_FAIL	do {printk("BBox;%s: LCM OEM functions (CE or CT or BLF or CABC) functions fail!\n", __func__); printk("BBox::UEC;0::8\n");} while (0);
-//SW4-HL-Display-BBox-03+}_20161028
-
-//SW4-HL-Display-ImplementCECTCABC-00+{_20160126
-static struct mdss_dsi_ctrl_pdata *gpdata  = NULL;
-
-unsigned long ce_en = 0;
-unsigned long ct_set = 0;
-unsigned long cabc_set = 0;
-unsigned long aie_set = 0;
-
-int CE_enable = 0;
-int CT_enable = 0;
-int CABC_enable = 0;
-int AIE_enable = 0;
-
-int SendCEOnlyAfterResume = 0;
-int SendCTOnlyAfterResume = 0;
-int SendCABCOnlyAfterResume = 0;
-int SendAIEOnlyAfterResume = 0;
-
-#if 0
-int vddio_enable = 0;
-int avdd_enable = 0;
-int avee_enable = 0;
-#endif
-//SW4-HL-Display-ImplementCECTCABC-00+}_20160126
-
-//SW4-HL-Display-SendCECTCABCBeforeInit-00+{_20161213
-int SendCEBeforeInit = 0;
-int SendCTBeforeInit = 0;
-int SendCABCBeforeInit = 0;
-int SendAIEBeforeInit = 0;
-//SW4-HL-Display-SendCECTCABCBeforeInit-00+}_20161213
-
 static struct pm_qos_request mdss_dsi_pm_qos_request;
-
-//SW4-HL-Display-GlanceMode-00+{_20170524
-#ifndef CONFIG_AOD_FEATURE
-unsigned int fih_get_panel_id(void){return 0;}
-int fih_set_aod(int enable){return 0;}
-int fih_get_aod(void){return 0;}
-int fih_get_blank_mode(void){return 0;}
-int fih_set_blank_mode(int mode){return 0;}
-int fih_get_aod_wled_state(void){return 0;}
-int fih_set_aod_wled_state(int enable){return 0;}
-EXPORT_SYMBOL(fih_set_aod);
-EXPORT_SYMBOL(fih_get_aod);
-EXPORT_SYMBOL(fih_get_panel_id);
-EXPORT_SYMBOL(fih_set_aod_wled_state);
-EXPORT_SYMBOL(fih_get_aod_wled_state);
-EXPORT_SYMBOL(fih_set_blank_mode);
-EXPORT_SYMBOL(fih_get_blank_mode);
-#endif
-//SW4-HL-Display-GlanceMode-00+}_20170524
-
-//SW4-HL-Display-HDR-Ping-00+{_20180323
-//HDR Ping
-int HDR_enable = 0;
-//extern int gHdrChipId;
-//SW4-HL-Display-HDR-Ping-00+}_20180323
-
-extern void fih_tp_lcm_suspend_lpwg_on(void);	//SW4-HL-Touch-ImplementDoubleTap-00+_20170623
-extern int gdouble_tap_enable;						//SW4-HL-Touch-ImplementDoubleTap-00+_20170623
-extern void hlt_tp_lcm_resume(void);//add by snow
-
-extern int gdouble_tap_enable_nvt;	//SW4-HL-TP-B2N-NT36672-DoubleTap-00+_20180302
-
-//SW4-HL-Display-HDR-SetFsCurr-00+{_20180515
-u32 px8418_fs_curr_ua;
-extern int qpnp_wled_fs_curr_ua_set(int data);
-int fs_curr_ua_set;
-int g_fs_curr=0;
-extern int g_wled_fs_curr_ua;
-//SW4-HL-Display-HDR-SetFsCurr-00+}_20180515
 
 void mdss_dump_dsi_debug_bus(u32 bus_dump_flag,
 	u32 **dump_mem)
@@ -188,7 +90,7 @@ void mdss_dump_dsi_debug_bus(u32 bus_dump_flag,
 		if (dsi0_active) {
 			writel_relaxed(sdata->dbg_bus[i],
 					m_ctrl->ctrl_base + 0x124);
-			wmb(); /* ensure regsiter is committed */
+			wmb(); /* ensure register is committed */
 		}
 		if (dsi1_active) {
 			writel_relaxed(sdata->dbg_bus[i],
@@ -257,7 +159,7 @@ static void mdss_dsi_pm_qos_remove_request(struct dsi_shared_data *sdata)
 	if (sdata->pm_qos_req_cnt) {
 		sdata->pm_qos_req_cnt--;
 		if (!sdata->pm_qos_req_cnt) {
-			pr_debug("%s: remove request", __func__);
+			pr_debug("%s: remove request\n", __func__);
 			pm_qos_remove_request(&mdss_dsi_pm_qos_request);
 		}
 	} else {
@@ -268,20 +170,14 @@ static void mdss_dsi_pm_qos_remove_request(struct dsi_shared_data *sdata)
 
 static void mdss_dsi_pm_qos_update_request(int val)
 {
-	pr_debug("%s: update request %d", __func__, val);
+	pr_debug("%s: update request %d\n", __func__, val);
 	pm_qos_update_request(&mdss_dsi_pm_qos_request, val);
 }
 
 static int mdss_dsi_pinctrl_set_state(struct mdss_dsi_ctrl_pdata *ctrl_pdata,
 					bool active);
 
-//SW4-HL-Display-GlanceMode-00*{_20170524
-#ifdef CONFIG_AOD_FEATURE
-struct mdss_dsi_ctrl_pdata *mdss_dsi_get_ctrl(u32 ctrl_id)
-#else
 static struct mdss_dsi_ctrl_pdata *mdss_dsi_get_ctrl(u32 ctrl_id)
-#endif
-//SW4-HL-Display-GlanceMode-00*}_20170524
 {
 	if (ctrl_id >= DSI_CTRL_MAX || !mdss_dsi_res)
 		return NULL;
@@ -324,24 +220,24 @@ static void mdss_dsi_config_clk_src(struct platform_device *pdev)
 			return;
 		}
 
-		pr_debug("%s: default: DSI0 <--> PLL0, DSI1 <--> %s", __func__,
+		pr_debug("%s:default: DSI0 <--> PLL0, DSI1 <--> %s\n", __func__,
 			mdss_dsi_is_hw_config_split(sdata) ? "PLL0" : "PLL1");
 	} else {
 		/*
 		 * For split-dsi and single-dsi use cases, map the PLL source
 		 * based on the pll source configuration. It is possible that
 		 * for split-dsi case, the only supported config is to source
-		 * the clocks from PLL0. This is not explictly checked here as
+		 * the clocks from PLL0. This is not explicitly checked here as
 		 * it should have been already enforced when validating the
 		 * board configuration.
 		 */
 		if (mdss_dsi_is_pll_src_pll0(sdata)) {
-			pr_debug("%s: single source: PLL0", __func__);
+			pr_debug("%s: single source: PLL0\n", __func__);
 			sdata->byte0_parent = sdata->ext_byte0_clk;
 			sdata->pixel0_parent = sdata->ext_pixel0_clk;
 		} else if (mdss_dsi_is_pll_src_pll1(sdata)) {
 			if (sdata->ext_byte1_clk && sdata->ext_pixel1_clk) {
-				pr_debug("%s: single source: PLL1", __func__);
+				pr_debug("%s: single source: PLL1\n", __func__);
 				sdata->byte0_parent = sdata->ext_byte1_clk;
 				sdata->pixel0_parent = sdata->ext_pixel1_clk;
 			} else {
@@ -353,8 +249,6 @@ static void mdss_dsi_config_clk_src(struct platform_device *pdev)
 		sdata->byte1_parent = sdata->byte0_parent;
 		sdata->pixel1_parent = sdata->pixel0_parent;
 	}
-
-	return;
 }
 
 static char const *mdss_dsi_get_clk_src(struct mdss_dsi_ctrl_pdata *ctrl)
@@ -421,7 +315,7 @@ static int mdss_dsi_set_clk_src(struct mdss_dsi_ctrl_pdata *ctrl)
 		goto error;
 	}
 
-	pr_debug("%s: ctrl%d clock source set to %s", __func__, ctrl->ndx,
+	pr_debug("%s: ctrl%d clock source set to %s\n", __func__, ctrl->ndx,
 		mdss_dsi_get_clk_src(ctrl));
 
 error:
@@ -461,8 +355,6 @@ static int mdss_dsi_panel_power_off(struct mdss_panel_data *pdata)
 	int ret = 0;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 
-	pr_debug("\n\n******************** [HL] %s +++ **********************\n\n", __func__);
-
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
 		ret = -EINVAL;
@@ -472,427 +364,23 @@ static int mdss_dsi_panel_power_off(struct mdss_panel_data *pdata)
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
 
-	switch (ctrl_pdata->panel_data.panel_info.panel_id)
-	{
-		//SW4-HL-Display-BringUpCTCOTM1911A-00+{_20180116
-		case FIH_CTC_OTM1911A_FHD_VIDEO_PANEL:
-		case FIH_AUO_OTM1911A_FHD_VIDEO_PANEL:		//SW4-HL-Display-OTM1911A-AUO-BringUp-00+_20180221
-        case FIH_CTC_JD9522Z_FHD_VIDEO_PANEL:           //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-                        {
-                                pr_debug("\n\n******************** [HL]%s: DRG All Panels\n", __func__);
-
-				ret = mdss_dsi_panel_reset(pdata, 0);
-				if (ret) {
-						pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
-						ret = 0;
-				}
-								
-                                //Follow Spec., RST need delay 120ms
-                                msleep(120);
-                        }
-                        break;
-		case FIH_CTL_CTC_OTM1911A_FHD_VIDEO_PANEL:	//SW4-HL-Display-CTL-GT915L-CTC_n_AUO-BringUp-00+_20180226
-                case FIH_CTL_AUO_OTM1911A_FHD_VIDEO_PANEL:      //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-                case FIH_CTL_CTC_JD9522Z_FHD_VIDEO_PANEL:       //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-			{
-                                pr_debug("\n\n******************** [HL]%s: CTL All Panels\n", __func__);
-                                ret = mdss_dsi_panel_reset(pdata, 0);
-                                if (ret) {
-                                        pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
-                                        ret = 0;
-                                }
-
-                                //Follow Spec., RST need delay 120ms
-                                msleep(120);
-			}
-			break;
-		//SW4-HL-Display-BringUpCTCOTM1911A-00+}_20180116
-		case FIH_ILI7807E_1080P_VIDEO_PANEL:
-			{
-				if (!gdouble_tap_enable)
-				{
-					pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is FALSE\n", __func__);
-
-					ret = mdss_dsi_panel_reset(pdata, 0);
-					if (ret) {
-						pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
-						ret = 0;
-					}
-				}
-				else
-				{
-					pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is TRUE\n", __func__);
-
-					//No Nothing
-					pr_debug("\n\n******************** [HL]%s: NOOOOOOOOOOOOOOOOOO Pull LOW LCM Reset Pin\n", __func__);
-				}
-			}
-			break;
-		case FIH_FT8716U_1080P_CTC_VIDEO_PANEL:
-			{
-				if (!gdouble_tap_enable)
-				{
-					ret = mdss_dsi_panel_reset(pdata, 0);
-					if (ret) {
-						pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
-						ret = 0;
-					}
-				}
-				else
-				pr_debug("********************%s,do nothing about reset**********************\n\n", __func__);
-			}
-			break;
-		case FIH_FT8719_1080P_VIDEO_PANEL:
-			break;
-		//ZZDC sunqiupeng add for bringup PL2 2nd panel@20171226 start
-		case FIH_R69338_1080P_VIDEO_PANEL_PL2:
-			{
-				if (!gdouble_tap_enable || ctrl_pdata->esd_need_reset)
-				{
-					ret = mdss_dsi_panel_reset(pdata, 0);
-					if (ret) {
-						pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
-						ret = 0;
-					}
-				}
-				else
-				pr_debug("********************%s,do nothing about reset**********************\n\n", __func__);
-			}
-			break;
-			//ZZDC sunqiupeng add for bringup PL2 2nd panel@20171226 end
-		case FIH_FT8716U_FHD_CTC_B2N_VIDEO_PANEL:
-			{
-				if (!gdouble_tap_enable)
-				{
-					ret = mdss_dsi_panel_reset(pdata, 0);
-					if (ret) {
-						pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
-						ret = 0;
-					}
-				}
-				else{
-				pr_debug("********************%s,do nothing about reset**********************\n\n", __func__);
-                }
-			}
-			break;
-		case FIH_NT36672_FHD_CTC_B2N_VIDEO_PANEL:
-		case FIH_NT36672_H_GLASS_FHD_CTC_B2N_VIDEO_PANEL:
-			{
-				//SW4-HL-TP-B2N-NT36672-DoubleTap-00*{_20180302
-				pr_debug("\n\n******************** [HL]%s, %d: FIH_NT36672_FHD_CTC_B2N_VIDEO_PANEL\n", __func__, __LINE__);
-				pr_debug("\n\n******************** [HL]%s, %d: gdouble_tap_enable_nvt = %d\n", __func__, __LINE__, gdouble_tap_enable_nvt);
-				if (!gdouble_tap_enable_nvt)
-				{
-					udelay(1 * 1000);
-					
-					nt50356_suspend();
-					
-					udelay(3 * 1000);
-					
-					ret = mdss_dsi_panel_reset(pdata, 0);
-					if (ret)
-					{
-						pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
-						ret = 0;
-					}
-				}
-				else
-				{
-					pr_debug("\n\n******************** [HL]%s: NOOOOOOOOOOOOOOOOOO Pull LOW LCM Reset Pin\n", __func__);
-		                }
-				//SW4-HL-TP-B2N-NT36672-DoubleTap-00*}_20180302
-			}
-			break;
-		case FIH_FT8716U_FFD_VIDEO_PANEL:
-			{
-				if (!gdouble_tap_enable)
-				{
-					ret = mdss_dsi_panel_reset(pdata, 0);
-					if (ret) {
-						pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
-						ret = 0;
-					}
-				}
-				else
-				pr_debug("********************%s,do nothing about reset**********************\n\n", __func__);
-			}
-			break;
-		default:
-			{
-				ret = mdss_dsi_panel_reset(pdata, 0);
-				if (ret) {
-					pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
-					ret = 0;
-				}
-			}
-			break;
+	ret = mdss_dsi_panel_reset(pdata, 0);
+	if (ret) {
+		pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
+		ret = 0;
 	}
 
 	if (mdss_dsi_pinctrl_set_state(ctrl_pdata, false))
 		pr_debug("reset disable: pinctrl not enabled\n");
 
-#if (0)
 	ret = msm_dss_enable_vreg(
 		ctrl_pdata->panel_power_data.vreg_config,
 		ctrl_pdata->panel_power_data.num_vreg, 0);
 	if (ret)
 		pr_err("%s: failed to disable vregs for %s\n",
 			__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-#else
-	switch (ctrl_pdata->panel_data.panel_info.panel_id)
-	{
-		//SW4-HL-Display-BringUpCTCOTM1911A-00+{_20180116
-		case FIH_CTC_OTM1911A_FHD_VIDEO_PANEL:
-		case FIH_AUO_OTM1911A_FHD_VIDEO_PANEL:	//SW4-HL-Display-OTM1911A-AUO-BringUp-00+_20180221
-        case FIH_CTC_JD9522Z_FHD_VIDEO_PANEL:           //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-			{
-                                pr_debug("\n\n******************** [HL]%s: DRG All Panels\n", __func__);
-
-				/* original qualcomm default */
-				ret = msm_dss_enable_vreg(
-				ctrl_pdata->panel_power_data.vreg_config,
-					ctrl_pdata->panel_power_data.num_vreg, 0);
-				if (ret)
-					pr_err("%s: failed to disable vregs for %s\n",
-						__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-			}
-			break;
-		//SW4-HL-Display-BringUpCTCOTM1911A-00+}_20180116
-		//SW4-HL-Display-CTL-GT915L-CTC_n_AUO-BringUp-00+{_20180226		
-		case FIH_CTL_CTC_OTM1911A_FHD_VIDEO_PANEL:
-                case FIH_CTL_AUO_OTM1911A_FHD_VIDEO_PANEL:      //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-                case FIH_CTL_CTC_JD9522Z_FHD_VIDEO_PANEL:       //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-			{
-                                pr_debug("\n\n******************** [HL]%s: CTL All Panels\n", __func__);
-                                //***********************************************************
-                                //* HDR PX8418 1P8 EN PIN Pull Low
-                                //***********************************************************
-                                pr_debug("\n\n******************** [HL] %s, ctrl_pdata->hdr_1p8_en_gpio = %d	**********************\n\n", __func__, ctrl_pdata->hdr_1p8_en_gpio);
-                                gpio_set_value((ctrl_pdata->hdr_1p8_en_gpio), 0);
-                                gpio_free(ctrl_pdata->hdr_1p8_en_gpio);
-                                pr_debug("\n\n******************** [HL] %s, ctrl_pdata->hdr_1p8_en_gpio = %d	**********************\n\n", __func__, ctrl_pdata->hdr_1p8_en_gpio);
-
-                                /* original qualcomm default */
-                                ret = msm_dss_enable_vreg(
-                                ctrl_pdata->panel_power_data.vreg_config,
-                                        ctrl_pdata->panel_power_data.num_vreg, 0);
-                                if (ret)
-                                        pr_err("%s: failed to disable vregs for %s\n",
-                                                __func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-			}
-			break;		
-		//SW4-HL-Display-CTL-GT915L-CTC_n_AUO-BringUp-00+}_20180226		
-		case FIH_FT8716_1080P_VIDEO_EVT_PANEL:
-		case FIH_FT8716_FFD_VIDEO_PANEL:
-			pr_debug("[ALAN] panel_id=%d specific power off flow\n", ctrl_pdata->panel_data.panel_info.panel_id);
-			udelay(3 * 1000);
-			/* VSP/VSN off */
-			msm_dss_enable_vreg(&(ctrl_pdata->panel_power_data.vreg_config[1]), ctrl_pdata->panel_power_data.num_vreg - 1, 0);
-			udelay(15 * 1000);
-			/* VDDIO off */
-			msm_dss_enable_vreg(ctrl_pdata->panel_power_data.vreg_config, 1, 0);
-			break;
-		//SW4-JasonSH-Display-BringUpFT8716U-00+{_20170619
-		case FIH_FT8716U_1080P_CTC_VIDEO_PANEL:
-			{
-				pr_err("\n\n******************** [JasonSH] %s, FIH_FT8716U_1080P_CTC_VIDEO_PANEL **********************\n\n", __func__);
-				if (!gdouble_tap_enable)
-				{
-					udelay(1 * 1000);					
-					ret = msm_dss_enable_vreg(
-					ctrl_pdata->panel_power_data.vreg_config,
-					ctrl_pdata->panel_power_data.num_vreg, 0);
-					if (ret)
-						pr_err("%s: failed to disable vregs for %s\n",
-						__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-					udelay(6 * 1000);
-					gpio_set_value(ctrl_pdata->iovdd_enable, 0);
-					gpio_free(ctrl_pdata->iovdd_enable);
-				}
-				else
-					pr_debug("********************%s, do nothing about power **********************\n\n", __func__);
-			}
-			break;
-		//SW4-JasonSH-Display-BringUpFT8716U-00+}_20170619
-		case FIH_FT8719_1080P_VIDEO_PANEL:
-			{
-				#if 0
-				pr_err("\n\n********************%s, FIH_FT8719_1080P_VIDEO_PANEL **********************\n\n", __func__);
-				if (!gdouble_tap_enable)
-				{
-					udelay(5 * 1000);
-					ret = msm_dss_enable_vreg(ctrl_pdata->panel_power_data.vreg_config, ctrl_pdata->panel_power_data.num_vreg, 0);
-					if (ret)
-						pr_err("%s: failed to disable vregs for %s\n", __func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-				}
-				else
-					pr_debug("********************%s, do nothing about power **********************\n\n", __func__);
-				#endif
-			}
-			break;
-		//ZZDC sunqiupeng add for bringup PL2 2nd panel@20171226 start
-		case FIH_R69338_1080P_VIDEO_PANEL_PL2:
-			{
-				pr_err("\n\n******************** [JasonSH] %s, FIH_R69338_1080P_VIDEO_PANEL_PL2 **********************\n\n", __func__);
-				if (!gdouble_tap_enable || ctrl_pdata->esd_need_reset)
-				{
-					udelay(7 * 1000);
-					ret = msm_dss_enable_vreg(
-					ctrl_pdata->panel_power_data.vreg_config,
-					ctrl_pdata->panel_power_data.num_vreg, 0);
-					if (ret)
-						pr_err("%s: failed to disable vregs for %s\n",
-						__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-					udelay(11 * 1000);
-					gpio_set_value(ctrl_pdata->iovdd_enable, 0);
-					gpio_free(ctrl_pdata->iovdd_enable);
-				}
-				else
-					pr_debug("********************%s, do nothing about power **********************\n\n", __func__);
-			}
-			break;
-			//ZZDC sunqiupeng add for bringup PL2 2nd panel@20171226 end
-		//SW4-HL-Touch-ImplementDoubleTap-00+{_20170623
-		case FIH_ILI7807E_1080P_VIDEO_PANEL:
-			if (!gdouble_tap_enable)
-			{
-				pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is FALSE\n", __func__);
-
-				/* original qualcomm default */
-				ret = msm_dss_enable_vreg(
-				ctrl_pdata->panel_power_data.vreg_config,
-					ctrl_pdata->panel_power_data.num_vreg, 0);
-				if (ret)
-					pr_err("%s: failed to disable vregs for %s\n",
-						__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-
-			}
-			else
-			{
-				pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is TRUE\n", __func__);
-				//Do Nothing
-				pr_debug("\n\n******************** [HL]%s: NOOOOOOOOOOOOOOOOOO Cuf off LCM Powers\n", __func__);
-			}
-			break;
-		//SW4-HL-Touch-ImplementDoubleTap-00+}_20170623
-		/* B2N - gatycclu - Add B2N setting */
-		case FIH_FT8716U_FHD_CTC_B2N_VIDEO_PANEL:
-			if (!gdouble_tap_enable)
-			{
-				pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is FALSE\n", __func__);
-
-				udelay(1 * 1000);
-				nt50356_suspend();
-				udelay(3 * 1000);
-				/* original qualcomm default */
-				ret = msm_dss_enable_vreg(
-				ctrl_pdata->panel_power_data.vreg_config,
-					ctrl_pdata->panel_power_data.num_vreg, 0);
-				if (ret)
-					pr_err("%s: failed to disable vregs for %s\n",
-						__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-
-			}
-			else
-			{
-				pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is TRUE\n", __func__);
-				//Do Nothing
-				pr_debug("\n\n******************** [HL]%s: NOOOOOOOOOOOOOOOOOO Cuf off LCM Powers\n", __func__);
-			}
-			break;
-		case FIH_NT36672_FHD_CTC_B2N_VIDEO_PANEL:
-		case FIH_NT36672_H_GLASS_FHD_CTC_B2N_VIDEO_PANEL:
-			//SW4-HL-TP-B2N-NT36672-DoubleTap-00*{_20180302
-			pr_debug("\n\n******************** [HL]%s, %d: FIH_NT36672_FHD_CTC_B2N_VIDEO_PANEL\n", __func__, __LINE__);
-			pr_debug("\n\n******************** [HL]%s, %d: gdouble_tap_enable_nvt = %d\n", __func__, __LINE__, gdouble_tap_enable_nvt);
-			if (!gdouble_tap_enable_nvt)
-			{
-				pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is FALSE\n", __func__);
-
-				/* original qualcomm default */
-				ret = msm_dss_enable_vreg(
-				ctrl_pdata->panel_power_data.vreg_config,
-					ctrl_pdata->panel_power_data.num_vreg, 0);
-				if (ret)
-					pr_err("%s: failed to disable vregs for %s\n",
-						__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-
-			}
-			else
-			{
-				pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is TRUE\n", __func__);
-				//Do Nothing
-				pr_debug("\n\n******************** [HL]%s: NOOOOOOOOOOOOOOOOOO Cuf off LCM Powers\n", __func__);
-			}
-			//SW4-HL-TP-B2N-NT36672-DoubleTap-00*}_20180302
-			break;
-		/* end B2N */
-		case FIH_FT8716U_FFD_VIDEO_PANEL:
-			if (!gdouble_tap_enable)
-			{
-			    pr_debug("[ALAN] panel_id=%d specific power off flow\n", ctrl_pdata->panel_data.panel_info.panel_id);
-			    udelay(3 * 1000);
-			    /* VSP/VSN off */
-			    msm_dss_enable_vreg(&(ctrl_pdata->panel_power_data.vreg_config[1]), ctrl_pdata->panel_power_data.num_vreg - 1, 0);
-			    udelay(15 * 1000);
-			    /* VDDIO off */
-			    msm_dss_enable_vreg(ctrl_pdata->panel_power_data.vreg_config, 1, 0);
-			}
-			else
-			{
-				pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is TRUE\n", __func__);
-				//Do Nothing
-				pr_debug("\n\n******************** [HL]%s: NOOOOOOOOOOOOOOOOOO Cuf off LCM Powers\n", __func__);
-			}
-			break;
-		default:
-			/* original qualcomm default */
-			ret = msm_dss_enable_vreg(
-			ctrl_pdata->panel_power_data.vreg_config,
-				ctrl_pdata->panel_power_data.num_vreg, 0);
-			if (ret)
-				pr_err("%s: failed to disable vregs for %s\n",
-					__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-			break;
-	}
-#endif
-
-	//SW4-HL-Display-BringUpILI7807E-00+{_20170327
-	pr_debug("\n\n******************** [HL] %s: ctrl_pdata->panel_data.panel_info.panel_id = %d	**********************\n\n",__func__, ctrl_pdata->panel_data.panel_info.panel_id);
-	switch (ctrl_pdata->panel_data.panel_info.panel_id)
-	{
-		case FIH_ILI7807E_1080P_VIDEO_PANEL:
-			{
-				if (!gdouble_tap_enable)
-				{
-					pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is FALSE\n", __func__);
-
-					mdelay(5);
-
-					//Pull LOW TP Rest Pin
-					pr_debug("\n\n******************** [HL] %s, ctrl_pdata->tp_rst_gpio = %d	**********************\n\n", __func__, ctrl_pdata->tp_rst_gpio);
-					gpio_set_value(ctrl_pdata->tp_rst_gpio, 0);
-					gpio_free(ctrl_pdata->tp_rst_gpio);
-				}
-				else
-				{
-					pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is TRUE\n", __func__);
-
-					//No Nothing
-					pr_debug("\n\n******************** [HL]%s: NOOOOOOOOOOOOOOOOOO Pull LOW TP Reset Pin\n", __func__);
-				}
-			}
-			break;
-		default:
-			break;
-	}
-	//SW4-HL-Display-BringUpILI7807E-00+}_20170327
-
-	pr_debug("\n\n******************** [HL] %s ---, ret = %d **********************\n\n", __func__, ret);
 
 end:
-	pr_debug("\n\n******************** [HL] %s end ---, ret = %d **********************\n\n", __func__, ret);
-
 	return ret;
 }
 
@@ -900,8 +388,6 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata)
 {
 	int ret = 0;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
-
-	pr_debug("\n\n******************** [HL] %s +++ **********************\n\n", __func__);
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -911,7 +397,6 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata)
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
 
-#if (0)
 	ret = msm_dss_enable_vreg(
 		ctrl_pdata->panel_power_data.vreg_config,
 		ctrl_pdata->panel_power_data.num_vreg, 1);
@@ -920,376 +405,6 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata)
 			__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
 		return ret;
 	}
-#else
-	switch (ctrl_pdata->panel_data.panel_info.panel_id)
-	{
-		//SW4-HL-Display-BringUpCTCOTM1911A-00+{_20180116
-		case FIH_CTC_OTM1911A_FHD_VIDEO_PANEL:
-		case FIH_AUO_OTM1911A_FHD_VIDEO_PANEL:	//SW4-HL-Display-OTM1911A-AUO-BringUp-00+_20180221
-        case FIH_CTC_JD9522Z_FHD_VIDEO_PANEL:           //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-			{
-                                pr_debug("\n\n******************** [HL]%s: DRG All Panels\n", __func__);
-
-				/* original qualcomm default */
-				ret = msm_dss_enable_vreg(
-					ctrl_pdata->panel_power_data.vreg_config,
-					ctrl_pdata->panel_power_data.num_vreg, 1);
-				if (ret) {
-					pr_err("%s: failed to enable vregs for %s\n",
-						__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-					return ret;
-				}
-				
-				//Follow spec., need delay 10ms
-				udelay(10 * 1000);
-			}
-			break;
-		//SW4-HL-Display-BringUpCTCOTM1911A-00+}_20180116
-		//SW4-HL-Display-CTL-GT915L-CTC_n_AUO-BringUp-00+{_20180226
-		case FIH_CTL_CTC_OTM1911A_FHD_VIDEO_PANEL:
-                case FIH_CTL_AUO_OTM1911A_FHD_VIDEO_PANEL:      //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-                case FIH_CTL_CTC_JD9522Z_FHD_VIDEO_PANEL:       //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-			{
-                            pr_debug("\n\n******************** [HL]%s: CTL All Panels\n", __func__);
-
-                            /* original qualcomm default */
-                            ret = msm_dss_enable_vreg(
-                            ctrl_pdata->panel_power_data.vreg_config,
-                            ctrl_pdata->panel_power_data.num_vreg, 1);
-                            if (ret) {
-                                pr_err("%s: failed to enable vregs for %s\n",
-                                                __func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-                                return ret;
-                            }
-
-                            //SW4-HL-LCM-CTL-OTM1911A-FixNotBeAbleToLightedUpInOS-00+{_20180315
-                            //*********************************************************
-                            //HDR PX8418 1P8 Enable Pin Pull High
-                            //*********************************************************
-                            pr_debug("\n\n******************** [HL] %s, ctrl_pdata->hdr_1p8_en_gpio = %d	**********************\n\n", __func__, ctrl_pdata->hdr_1p8_en_gpio);
-                            if (gpio_request(ctrl_pdata->hdr_1p8_en_gpio, "hdr_1p8_en")) {
-                                    pr_err("%s:request tp hdr_1p8_en gpio failed\n", __func__);
-                                    //BBOX_LCM_GPIO_FAIL
-                                    gpio_free(ctrl_pdata->hdr_1p8_en_gpio);
-                                    return -ENODEV;
-                            }
-                            gpio_set_value(ctrl_pdata->hdr_1p8_en_gpio, 1);
-                            pr_debug("\n\n******************** [HL] %s: gpio_set_value(ctrl_pdata->hdr_1p8_en_gpio, 1) **********************\n\n", __func__);
-                            //SW4-HL-LCM-CTL-OTM1911A-FixNotBeAbleToLightedUpInOS-00+}_20180315
-
-                            //Follow spec., need delay 10ms
-                            udelay(10 * 1000);
-			}
-			break;		
-		//SW4-HL-Display-CTL-GT915L-CTC_n_AUO-BringUp-00+}_20180226			
-		case FIH_FT8716_1080P_VIDEO_EVT_PANEL:
-		case FIH_FT8716_FFD_VIDEO_PANEL:
-			pr_debug("[ALAN] panel_id=%d specific power on flow\n", ctrl_pdata->panel_data.panel_info.panel_id);
-			/* VDDIO on */
-			msm_dss_enable_vreg(&(ctrl_pdata->panel_power_data.vreg_config[0]), 1, 1);
-			udelay(3 * 1000);
-			/* VSP/VSN on, but delay controlled by PM660L 0x0001EC66 LCDB_PWRUP_PWRDN_CTL  */
-			msm_dss_enable_vreg(&(ctrl_pdata->panel_power_data.vreg_config[1]), 1, 1);
-			udelay(11 * 1000);
-			msm_dss_enable_vreg(&(ctrl_pdata->panel_power_data.vreg_config[2]), 1, 1);
-			udelay(3 * 1000);
-			break;
-		case FIH_FT8716U_FFD_VIDEO_PANEL:
-			{
-			    if (!gdouble_tap_enable)
-			    {
-			        pr_debug("[ALAN] panel_id=%d specific power on flow\n", ctrl_pdata->panel_data.panel_info.panel_id);
-			        /* VDDIO on */
-			        msm_dss_enable_vreg(&(ctrl_pdata->panel_power_data.vreg_config[0]), 1, 1);
-			        udelay(3 * 1000);
-			        /* VSP/VSN on, but delay controlled by PM660L 0x0001EC66 LCDB_PWRUP_PWRDN_CTL  */
-			        msm_dss_enable_vreg(&(ctrl_pdata->panel_power_data.vreg_config[1]), 1, 1);
-			        udelay(11 * 1000);
-			        msm_dss_enable_vreg(&(ctrl_pdata->panel_power_data.vreg_config[2]), 1, 1);
-			        udelay(3 * 1000);
-			        break;
-			    }
-			    else
-			    {
-			        pr_debug("%s: gdouble_tap_enable is TRUE\n", __func__);
-			        //No Nothing
-			        pr_debug("%s: do nothing about Power\n", __func__);
-			    }
-			}
-			break;
-		//SW4-JasonSH-Display-BringUpFT8716U-00+{_20170619
-		case FIH_FT8716U_1080P_CTC_VIDEO_PANEL:
-		case FIH_FT8719_1080P_VIDEO_PANEL:
-			{
-				/*int gpio_status = 0;
-				pr_debug("\n\n******************** [JasonSH] %s, FIH_FT8716U_1080P_CTC_VIDEO_PANEL **********************\n\n", __func__);
-				if (gpio_is_valid(ctrl_pdata->iovdd_enable)) {
-					gpio_status = gpio_request(ctrl_pdata->iovdd_enable, "iovdd_enable");
-					if (gpio_status) {
-						pr_err("request iovdd_enable gpio failed,gpio_status=%d\n",gpio_status);
-					}
-
-					gpio_set_value(ctrl_pdata->iovdd_enable, 1);
-
-					udelay(10 * 1000);
-				}
-				else
-				{
-					pr_err("iovdd_enable gpio is invalid\n");
-				}*/
-				if (!gdouble_tap_enable)
-					{
-						int gpio_status = 0;
-						pr_debug("\n\n******************** [JasonSH] %s, FIH_FT8716U_1080P_CTC_VIDEO_PANEL **********************\n\n", __func__);
-						if (gpio_is_valid(ctrl_pdata->iovdd_enable)) {
-							gpio_status = gpio_request(ctrl_pdata->iovdd_enable, "iovdd_enable");
-							if (gpio_status) {
-								pr_err("request iovdd_enable gpio failed,gpio_status=%d\n",gpio_status);
-							}
-
-							gpio_set_value(ctrl_pdata->iovdd_enable, 1);
-							udelay(10 * 1000);
-						}
-						else
-						{
-							pr_err("iovdd_enable gpio is invalid\n");
-						}
-						ret = msm_dss_enable_vreg(
-						ctrl_pdata->panel_power_data.vreg_config,
-						ctrl_pdata->panel_power_data.num_vreg, 1);
-						if (ret) {
-							pr_err("%s: failed to enable vregs for %s\n",
-								__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-							return ret;
-						}
-					}
-				else
-					{
-						pr_debug("%s: gdouble_tap_enable is TRUE\n", __func__);
-
-						//No Nothing
-						pr_debug("%s: do nothing about Power\n", __func__);
-					}
-			}
-			break;
-		//SW4-JasonSH-Display-BringUpFT8716U-00+}_20170619
-		//ZZDC sunqiupeng add for bringup PL2 2nd panel@20171226 start
-		case FIH_R69338_1080P_VIDEO_PANEL_PL2:
-			{
-				if (!gdouble_tap_enable || ctrl_pdata->esd_need_reset)
-					{
-						int gpio_status = 0;
-						pr_debug("\n\n******************** [JasonSH] %s, FIH_R69338_1080P_VIDEO_PANEL_PL2 **********************\n\n", __func__);
-						if (gpio_is_valid(ctrl_pdata->iovdd_enable)) {
-							gpio_status = gpio_request(ctrl_pdata->iovdd_enable, "iovdd_enable");
-							if (gpio_status) {
-								pr_err("request iovdd_enable gpio failed,gpio_status=%d\n",gpio_status);
-							}
-
-							gpio_set_value(ctrl_pdata->iovdd_enable, 1);
-							udelay(2 * 1000);
-						}
-						else
-						{
-							pr_err("iovdd_enable gpio is invalid\n");
-						}
-						ret = msm_dss_enable_vreg(
-						ctrl_pdata->panel_power_data.vreg_config,
-						ctrl_pdata->panel_power_data.num_vreg, 1);
-						if (ret) {
-							pr_err("%s: failed to enable vregs for %s\n",
-								__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-							return ret;
-						}
-					}
-				else
-					{
-						pr_debug("%s: gdouble_tap_enable is TRUE\n", __func__);
-
-						//No Nothing
-						pr_debug("%s: do nothing about Power\n", __func__);
-					}
-			}
-			break;
-			//ZZDC sunqiupeng add for bringup PL2 2nd panel@20171226 end
-		case FIH_ILI7807E_1080P_VIDEO_PANEL:
-			{
-				if (pdata->panel_info.cont_splash_enabled)
-				{
-					/* original qualcomm default */
-					ret = msm_dss_enable_vreg(
-						ctrl_pdata->panel_power_data.vreg_config,
-						ctrl_pdata->panel_power_data.num_vreg, 1);
-					if (ret) {
-						pr_err("%s: failed to enable vregs for %s\n",
-							__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-						return ret;
-					}
-				}
-				else
-				{
-					if (!gdouble_tap_enable)
-					{
-						pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is FALSE\n", __func__);
-
-						/* original qualcomm default */
-						ret = msm_dss_enable_vreg(
-							ctrl_pdata->panel_power_data.vreg_config,
-							ctrl_pdata->panel_power_data.num_vreg, 1);
-						if (ret) {
-							pr_err("%s: failed to enable vregs for %s\n",
-								__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-							return ret;
-						}
-					}
-					else
-					{
-						pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is TRUE\n", __func__);
-
-						//No Nothing
-						pr_debug("\n\n******************** [HL]%s: NOOOOOOOOOOOOOOOOOO Give LCM Powers\n", __func__);
-					}
-				}
-			}
-			break;
-		/* B2N - gatycclu - Add B2N setting */
-		case FIH_FT8716U_FHD_CTC_B2N_VIDEO_PANEL:
-			{
-				if (pdata->panel_info.cont_splash_enabled)
-				{
-					/* original qualcomm default */
-					ret = msm_dss_enable_vreg(
-						ctrl_pdata->panel_power_data.vreg_config,
-						ctrl_pdata->panel_power_data.num_vreg, 1);
-					if (ret) {
-						pr_err("%s: failed to enable vregs for %s\n",
-							__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-						return ret;
-					}
-				}
-				else
-				{
-					if (!gdouble_tap_enable)
-					{
-						pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is FALSE\n", __func__);
-
-						/* original qualcomm default */
-						ret = msm_dss_enable_vreg(
-							ctrl_pdata->panel_power_data.vreg_config,
-							ctrl_pdata->panel_power_data.num_vreg, 1);
-						if (ret) {
-							pr_err("%s: failed to enable vregs for %s\n",
-								__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-							return ret;
-						}
-						/* BIAS voltageg enable */
-						nt50356_resume();
-					}
-					else
-					{
-						pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is TRUE\n", __func__);
-
-						//No Nothing
-						pr_debug("\n\n******************** [HL]%s: NOOOOOOOOOOOOOOOOOO Give LCM Powers\n", __func__);
-					}
-				}
-			}
-			break;
-		case FIH_NT36672_FHD_CTC_B2N_VIDEO_PANEL:
-		case FIH_NT36672_H_GLASS_FHD_CTC_B2N_VIDEO_PANEL:
-			{
-				pr_debug("\n\n******************** [HL]%s, %d: FIH_NT36672_FHD_CTC_B2N_VIDEO_PANEL\n", __func__, __LINE__);
-				if (pdata->panel_info.cont_splash_enabled)
-				{
-					/* original qualcomm default */
-					ret = msm_dss_enable_vreg(
-						ctrl_pdata->panel_power_data.vreg_config,
-						ctrl_pdata->panel_power_data.num_vreg, 1);
-					if (ret) {
-						pr_err("%s: failed to enable vregs for %s\n",
-							__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-						return ret;
-					}
-				}
-				else
-				{
-					//SW4-HL-TP-B2N-NT36672-DoubleTap-00*_20180302
-					pr_debug("\n\n******************** [HL]%s, %d: gdouble_tap_enable_nvt = %d\n", __func__, __LINE__, gdouble_tap_enable_nvt);
-					if (!gdouble_tap_enable_nvt)
-					{
-						pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is FALSE\n", __func__);
-
-						/* original qualcomm default */
-						ret = msm_dss_enable_vreg(
-							ctrl_pdata->panel_power_data.vreg_config,
-							ctrl_pdata->panel_power_data.num_vreg, 1);
-						if (ret) {
-							pr_err("%s: failed to enable vregs for %s\n",
-								__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-							return ret;
-						}
-						/* BIAS voltageg enable */
-						nt50356_resume();
-					}
-					else
-					{
-						pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is TRUE\n", __func__);
-
-						//No Nothing
-						pr_debug("\n\n******************** [HL]%s: NOOOOOOOOOOOOOOOOOO Give LCM Powers\n", __func__);
-					}
-				}
-			}
-			break;
-		/* end B2N */
-		default:
-			/* original qualcomm default */
-			ret = msm_dss_enable_vreg(
-				ctrl_pdata->panel_power_data.vreg_config,
-				ctrl_pdata->panel_power_data.num_vreg, 1);
-			if (ret) {
-				pr_err("%s: failed to enable vregs for %s\n",
-					__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-				return ret;
-			}
-			break;
-	}
-#endif
-
-	//SW4-HL-Display-BringUpILI7807E-00+{_20170327
-	pr_debug("\n\n******************** [HL] %s: ctrl_pdata->panel_data.panel_info.panel_id = %d	**********************\n\n",__func__, ctrl_pdata->panel_data.panel_info.panel_id);
-	switch (ctrl_pdata->panel_data.panel_info.panel_id)
-	{
-		case FIH_ILI7807E_1080P_VIDEO_PANEL:
-			{
-				if (!gdouble_tap_enable)
-				{
-					pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is FALSE\n", __func__);
-
-					//Pull HIGH TP RESET Pin
-					pr_debug("\n\n******************** [HL] %s, ctrl_pdata->tp_rst_gpio = %d	**********************\n\n", __func__, ctrl_pdata->tp_rst_gpio);
-					if (gpio_request(ctrl_pdata->tp_rst_gpio, "tp_rst")) {
-						pr_err("%s:request tp reset gpio failed\n", __func__);
-						//BBOX_LCM_GPIO_FAIL
-						gpio_free(ctrl_pdata->tp_rst_gpio);
-						return -ENODEV;
-					}
-					gpio_set_value(ctrl_pdata->tp_rst_gpio, 1);
-					pr_debug("\n\n******************** [HL] %s: gpio_set_value(ctrl_pdata->tp_rst_gpio, 1) **********************\n\n", __func__);
-				}
-				else
-				{
-					pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is TRUE\n", __func__);
-
-					//Do Nothing
-					pr_debug("\n\n******************** [HL]%s: NOOOOOOOOOOOOOOOOOO Pull HIGH TP Reset Pin\n", __func__);
-				}
-			}
-			break;
-		default:
-			break;
-	}
-	//SW4-HL-Display-BringUpILI7807E-00+}_20170327
 
 	/*
 	 * If continuous splash screen feature is enabled, then we need to
@@ -1299,208 +414,14 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata)
 	 */
 	if (pdata->panel_info.cont_splash_enabled ||
 		!pdata->panel_info.mipi.lp11_init) {
-
-		pr_debug("\n\n******************** [HL]%s, %d: Pull RESE Pin here!\n", __func__, __LINE__);
-		
 		if (mdss_dsi_pinctrl_set_state(ctrl_pdata, true))
 			pr_debug("reset enable: pinctrl not enabled\n");
 
-
-		switch (ctrl_pdata->panel_data.panel_info.panel_id)
-		{
-			//SW4-HL-Display-BringUpCTCOTM1911A-00+{_20180116
-                        case FIH_CTC_OTM1911A_FHD_VIDEO_PANEL:
-                        case FIH_AUO_OTM1911A_FHD_VIDEO_PANEL:		//SW4-HL-Display-OTM1911A-AUO-BringUp-00+_20180221
-                        case FIH_CTC_JD9522Z_FHD_VIDEO_PANEL:           //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-                            {
-					pr_debug("\n\n******************** [HL]%s: DRG All Panels\n", __func__);
-
-					ret = mdss_dsi_panel_reset(pdata, 1);
-					if (ret)
-						pr_err("%s: Panel reset failed. rc=%d\n",
-							__func__, ret);
-                            }
-                            break;
-                        case FIH_CTL_CTC_OTM1911A_FHD_VIDEO_PANEL:	//SW4-HL-Display-CTL-GT915L-CTC_n_AUO-BringUp-00+_20180226
-                        case FIH_CTL_AUO_OTM1911A_FHD_VIDEO_PANEL:      //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-                        case FIH_CTL_CTC_JD9522Z_FHD_VIDEO_PANEL:       //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-				{
-                                        pr_debug("\n\n******************** [HL]%s: CTL All Panels\n", __func__);
-
-                                        ret = mdss_dsi_panel_reset(pdata, 1);
-                                        if (ret)
-                                                pr_err("%s: Panel reset failed. rc=%d\n",
-                                                        __func__, ret);
-				}
-				break;
-			//SW4-HL-Display-BringUpCTCOTM1911A-00+}_20180116
-			case FIH_ILI7807E_1080P_VIDEO_PANEL:
-				{
-					if (!gdouble_tap_enable)
-					{
-						pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is FALSE\n", __func__);
-
-
-						ret = mdss_dsi_panel_reset(pdata, 1);
-						if (ret)
-							pr_err("%s: Panel reset failed. rc=%d\n",
-									__func__, ret);
-					}
-					else
-					{
-						pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is TRUE\n", __func__);
-
-						//No Nothing
-						pr_debug("\n\n******************** [HL]%s: NOOOOOOOOOOOOOOOOOO Pull HIGH TP Reset Pin\n", __func__);
-					}
-				}
-				break;
-			case FIH_FT8716U_1080P_CTC_VIDEO_PANEL:
-				{
-					if (!gdouble_tap_enable)
-					{
-						ret = mdss_dsi_panel_reset(pdata, 1);
-						if (ret)
-							pr_err("%s: Panel reset failed. rc=%d\n",
-									__func__, ret);
-					}
-					else
-					{
-						gpio_set_value((ctrl_pdata->rst_gpio), 0);
-						gpio_set_value((ctrl_pdata->tp_rst_gpio), 0);
-						udelay(5*1000);
-						gpio_set_value((ctrl_pdata->rst_gpio), 1);
-						gpio_set_value((ctrl_pdata->tp_rst_gpio), 1);
-						pr_debug("********************%s,do something about reset**********************\n\n", __func__);
-					}
-				}
-				break;
-			case FIH_FT8719_1080P_VIDEO_PANEL:
-				{
-					if (!gdouble_tap_enable)
-					{
-						ret = mdss_dsi_panel_reset(pdata, 1);
-						if (ret)
-						pr_err("%s: Panel reset failed. rc=%d\n", __func__, ret);
-					}
-					else
-					{
-						gpio_set_value((ctrl_pdata->rst_gpio), 0);
-						udelay(5*1000);
-						gpio_set_value((ctrl_pdata->rst_gpio), 1);
-						pr_debug("********************%s,do something about reset**********************\n\n", __func__);
-					}
-				}
-				break;
-			//ZZDC sunqiupeng add for bringup PL2 2nd panel@20171226 start
-			case FIH_R69338_1080P_VIDEO_PANEL_PL2:
-				{
-					if (!gdouble_tap_enable || ctrl_pdata->esd_need_reset)
-					{
-						ret = mdss_dsi_panel_reset(pdata, 1);
-						if (ret)
-							pr_err("%s: Panel reset failed. rc=%d\n",
-									__func__, ret);
-					}
-					else
-					{
-						udelay(10*1000);
-						gpio_set_value((ctrl_pdata->rst_gpio), 0);
-						udelay(5*1000);
-						gpio_set_value((ctrl_pdata->rst_gpio), 1);
-						pr_debug("********************%s,pull high lcd reset**********************\n\n", __func__);
-					}
-					hlt_tp_lcm_resume();//add by snow
-				}
-				ctrl_pdata->esd_need_reset = false;
-				break;
-				//ZZDC sunqiupeng add for bringup PL2 2nd panel@20171226 end
-			case FIH_FT8716U_FHD_CTC_B2N_VIDEO_PANEL:
-				{
-					if (!gdouble_tap_enable)
-					{
-						ret = mdss_dsi_panel_reset(pdata, 1);
-						if (ret)
-							pr_err("%s: Panel reset failed. rc=%d\n",
-									__func__, ret);
-					}
-					else
-					{
-						gpio_set_value((ctrl_pdata->rst_gpio), 0);
-						gpio_set_value((ctrl_pdata->tp_rst_gpio), 0);
-						udelay(5*1000);
-						gpio_set_value((ctrl_pdata->rst_gpio), 1);
-						gpio_set_value((ctrl_pdata->tp_rst_gpio), 1);
-						pr_debug("********************%s,do something about reset**********************\n\n", __func__);
-					}
-				}
-				break;
-			case FIH_NT36672_FHD_CTC_B2N_VIDEO_PANEL:
-			case FIH_NT36672_H_GLASS_FHD_CTC_B2N_VIDEO_PANEL:
-				{
-					//SW4-HL-TP-B2N-NT36672-DoubleTap-00*{_20180302
-					pr_debug("\n\n******************** [HL]%s, %d: FIH_NT36672_FHD_CTC_B2N_VIDEO_PANEL\n", __func__, __LINE__);
-					pr_debug("\n\n******************** [HL]%s, %d: gdouble_tap_enable_nvt = %d\n", __func__, __LINE__, gdouble_tap_enable_nvt);					
-					if (!gdouble_tap_enable_nvt)
-					{
-						pr_err("\n\n\n[GGGG]%s: mdss_dsi_panel_reset 1\n", __func__);
-						pr_debug("\n\n******************** [HL]%s, %d: mdss_dsi_panel_reset() <-- START\n", __func__, __LINE__);
-						ret = mdss_dsi_panel_reset(pdata, 1);
-						pr_debug("\n\n******************** [HL]%s, %d: mdss_dsi_panel_reset() <-- END\n", __func__, __LINE__);
-						if (ret)
-							pr_err("%s: Panel reset failed. rc=%d\n",
-									__func__, ret);
-					}
-					//SW4-HL-TP-B2N-NT36672-DoubleTap-00*}_20180302
-					else
-					{
-						gpio_set_value((ctrl_pdata->rst_gpio), 0);
-						gpio_set_value((ctrl_pdata->tp_rst_gpio), 0);
-						udelay(5*1000);
-						gpio_set_value((ctrl_pdata->rst_gpio), 1);
-						gpio_set_value((ctrl_pdata->tp_rst_gpio), 1);
-						pr_debug("********************%s,do something about reset**********************\n\n", __func__);
-					}
-				}
-				break;
-			case FIH_FT8716U_FFD_VIDEO_PANEL:
-				{
-					if (!gdouble_tap_enable)
-					{
-						ret = mdss_dsi_panel_reset(pdata, 1);
-						if (ret)
-							pr_err("%s: Panel reset failed. rc=%d\n",
-									__func__, ret);
-					}
-					else
-					{
-						gpio_set_value((ctrl_pdata->rst_gpio), 0);
-						gpio_set_value((ctrl_pdata->tp_rst_gpio), 0);
-						udelay(5*1000);
-						gpio_set_value((ctrl_pdata->rst_gpio), 1);
-						gpio_set_value((ctrl_pdata->tp_rst_gpio), 1);
-						pr_debug("********************%s,do something about reset**********************\n\n", __func__);
-					}
-				}
-				break;
-			default:
-				{
-					ret = mdss_dsi_panel_reset(pdata, 1);
-					if (ret)
-						pr_err("%s: Panel reset failed. rc=%d\n",
-								__func__, ret);
-				}
-				break;
-		}
+		ret = mdss_dsi_panel_reset(pdata, 1);
+		if (ret)
+			pr_err("%s: Panel reset failed. rc=%d\n",
+					__func__, ret);
 	}
-	//SW4-HL-TP-B2N-NT36672-DoubleTap-00+{_20180302
-	else
-	{
-		pr_debug("\n\n******************** [HL]%s, %d: NOOOOOOOOOOOOOOOOOOOOOO Pull RESE Pin here!\n", __func__, __LINE__);
-	}
-	//SW4-HL-TP-B2N-NT36672-DoubleTap-00+}_20180302
-
-	pr_debug("\n\n******************** [HL] %s ---, ret = %d **********************\n\n", __func__, ret);
 
 	return ret;
 }
@@ -1516,9 +437,6 @@ static int mdss_dsi_panel_power_ctrl(struct mdss_panel_data *pdata,
 {
 	int ret = 0;
 	struct mdss_panel_info *pinfo;
-
-	//SW4-HL-Display-GlanceMode-00+_20170524
-	pr_debug("%s %d, power_state = %d\n", __func__, __LINE__, power_state);
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -1571,7 +489,7 @@ static int mdss_dsi_panel_power_ctrl(struct mdss_panel_data *pdata,
 	return ret;
 }
 
-static void mdss_dsi_put_dt_vreg_data(struct device *dev,
+void mdss_dsi_put_dt_vreg_data(struct device *dev,
 	struct dss_module_power *module_power)
 {
 	if (!module_power) {
@@ -1579,14 +497,10 @@ static void mdss_dsi_put_dt_vreg_data(struct device *dev,
 		return;
 	}
 
-	if (module_power->vreg_config) {
-		devm_kfree(dev, module_power->vreg_config);
-		module_power->vreg_config = NULL;
-	}
 	module_power->num_vreg = 0;
 }
 
-static int mdss_dsi_get_dt_vreg_data(struct device *dev,
+int mdss_dsi_get_dt_vreg_data(struct device *dev,
 	struct device_node *of_node, struct dss_module_power *mp,
 	enum dsi_pm_type module)
 {
@@ -1632,7 +546,6 @@ static int mdss_dsi_get_dt_vreg_data(struct device *dev,
 	mp->vreg_config = devm_kzalloc(dev, sizeof(struct dss_vreg) *
 		mp->num_vreg, GFP_KERNEL);
 	if (!mp->vreg_config) {
-		pr_err("%s: can't alloc vreg mem\n", __func__);
 		rc = -ENOMEM;
 		goto error;
 	}
@@ -1677,7 +590,7 @@ static int mdss_dsi_get_dt_vreg_data(struct device *dev,
 				__func__, rc);
 			goto error;
 		}
-		mp->vreg_config[i].enable_load = tmp;
+		mp->vreg_config[i].load[DSS_REG_MODE_ENABLE] = tmp;
 
 		/* disable-load */
 		rc = of_property_read_u32(supply_node,
@@ -1687,7 +600,7 @@ static int mdss_dsi_get_dt_vreg_data(struct device *dev,
 				__func__, rc);
 			goto error;
 		}
-		mp->vreg_config[i].disable_load = tmp;
+		mp->vreg_config[i].load[DSS_REG_MODE_DISABLE] = tmp;
 
 		/* pre-sleep */
 		rc = of_property_read_u32(supply_node,
@@ -1740,8 +653,8 @@ static int mdss_dsi_get_dt_vreg_data(struct device *dev,
 			mp->vreg_config[i].vreg_name,
 			mp->vreg_config[i].min_voltage,
 			mp->vreg_config[i].max_voltage,
-			mp->vreg_config[i].enable_load,
-			mp->vreg_config[i].disable_load,
+			mp->vreg_config[i].load[DSS_REG_MODE_ENABLE],
+			mp->vreg_config[i].load[DSS_REG_MODE_DISABLE],
 			mp->vreg_config[i].pre_on_sleep,
 			mp->vreg_config[i].post_on_sleep,
 			mp->vreg_config[i].pre_off_sleep,
@@ -1753,10 +666,6 @@ static int mdss_dsi_get_dt_vreg_data(struct device *dev,
 	return rc;
 
 error:
-	if (mp->vreg_config) {
-		devm_kfree(dev, mp->vreg_config);
-		mp->vreg_config = NULL;
-	}
 novreg:
 	mp->num_vreg = 0;
 
@@ -1822,9 +731,9 @@ static ssize_t mdss_dsi_cmd_state_read(struct file *file, char __user *buf,
 		return 0;
 
 	if ((*link_state) == DSI_HS_MODE)
-		blen = snprintf(buffer, sizeof(buffer), "dsi_hs_mode\n");
+		blen = scnprintf(buffer, sizeof(buffer), "dsi_hs_mode\n");
 	else
-		blen = snprintf(buffer, sizeof(buffer), "dsi_lp_mode\n");
+		blen = scnprintf(buffer, sizeof(buffer), "dsi_lp_mode\n");
 
 	if (blen < 0)
 		return 0;
@@ -1847,16 +756,10 @@ static ssize_t mdss_dsi_cmd_state_write(struct file *file,
 		return -EINVAL;
 	}
 
-	input = kmalloc(count, GFP_KERNEL);
-	if (!input) {
-		pr_err("%s: Failed to allocate memory\n", __func__);
-		return -ENOMEM;
-	}
+	input = memdup_user(p, count);
+	if (IS_ERR(input))
+		return PTR_ERR(input);
 
-	if (copy_from_user(input, p, count)) {
-		kfree(input);
-		return -EFAULT;
-	}
 	input[count-1] = '\0';
 
 	if (strnstr(input, "dsi_hs_mode", strlen("dsi_hs_mode")))
@@ -1906,7 +809,6 @@ static ssize_t mdss_dsi_cmd_read(struct file *file, char __user *buf,
 
 		buffer = kmalloc(bsize, GFP_KERNEL);
 		if (!buffer) {
-			pr_err("%s: Failed to allocate memory\n", __func__);
 			mutex_unlock(&pcmds->dbg_mutex);
 			return -ENOMEM;
 		}
@@ -1918,15 +820,16 @@ static ssize_t mdss_dsi_cmd_read(struct file *file, char __user *buf,
 					*((struct dsi_ctrl_hdr *)bp);
 			int dhrlen = sizeof(dchdr), dlen;
 			char *tmp = (char *)(&dchdr);
+
 			dlen = dchdr.dlen;
 			dchdr.dlen = htons(dchdr.dlen);
 			while (dhrlen--)
-				blen += snprintf(buffer+blen, bsize-blen,
+				blen += scnprintf(buffer+blen, bsize-blen,
 						 "%02x ", (*tmp++));
 
 			bp += sizeof(dchdr);
 			while (dlen--)
-				blen += snprintf(buffer+blen, bsize-blen,
+				blen += scnprintf(buffer+blen, bsize-blen,
 						 "%02x ", (*bp++));
 			buffer[blen-1] = '\n';
 		}
@@ -2031,6 +934,7 @@ static int mdss_dsi_cmd_flush(struct file *file, fl_owner_t id)
 	for (i = 0; i < blen; i++) {
 		uint32_t value = 0;
 		int step = 0;
+
 		if (sscanf(bufp, "%02x%n", &value, &step) > 0) {
 			*(buf+i) = (char)value;
 			bufp += step;
@@ -2111,11 +1015,8 @@ static int mdss_dsi_debugfs_setup(struct mdss_panel_data *pdata,
 				panel_data);
 
 	dfs = kzalloc(sizeof(*dfs), GFP_KERNEL);
-	if (!dfs) {
-		pr_err("%s: No memory to create dsi ctrl debugfs info",
-			__func__);
+	if (!dfs)
 		return -ENOMEM;
-	}
 
 	dfs->root = debugfs_create_dir("dsi_ctrl_pdata", parent);
 	if (IS_ERR_OR_NULL(dfs->root)) {
@@ -2178,7 +1079,7 @@ static int mdss_dsi_debugfs_init(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 		return rc;
 	}
 
-	pr_debug("%s: Initialized mdss_dsi_debugfs_init\n", __func__);
+	pr_debug("%s: Init complete\n", __func__);
 	return 0;
 }
 
@@ -2190,6 +1091,7 @@ static void mdss_dsi_debugfs_cleanup(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 		struct mdss_dsi_ctrl_pdata *ctrl = container_of(pdata,
 			struct mdss_dsi_ctrl_pdata, panel_data);
 		struct mdss_dsi_debugfs_info *dfs = ctrl->debugfs_info;
+
 		if (dfs && dfs->root)
 			debugfs_remove_recursive(dfs->root);
 		kfree(dfs);
@@ -2233,10 +1135,8 @@ static int _mdss_dsi_refresh_cmd(struct buf_data *new_cmds,
 
 	/* Reallocate space for dcs commands */
 	cmds = kzalloc(cnt * sizeof(struct dsi_cmd_desc), GFP_KERNEL);
-	if (!cmds) {
-		pr_err("%s: Failed to allocate memory\n", __func__);
+	if (!cmds)
 		return -ENOMEM;
-	}
 	kfree(original_pcmds->buf);
 	kfree(original_pcmds->cmds);
 	original_pcmds->cmd_cnt = cnt;
@@ -2452,7 +1352,6 @@ int mdss_dsi_switch_mode(struct mdss_panel_data *pdata, int mode)
 		pr_err("%s: Invalid input data\n", __func__);
 		return -EINVAL;
 	}
-
 	pr_debug("%s, start\n", __func__);
 
 	pinfo = &pdata->panel_info.mipi;
@@ -2525,7 +1424,6 @@ static int mdss_dsi_reconfig(struct mdss_panel_data *pdata, int mode)
 static int mdss_dsi_update_panel_config(struct mdss_dsi_ctrl_pdata *ctrl_pdata,
 				int mode)
 {
-	int ret = 0;
 	struct mdss_panel_info *pinfo = &(ctrl_pdata->panel_data.panel_info);
 
 	if (mode == DSI_CMD_MODE) {
@@ -2545,7 +1443,7 @@ static int mdss_dsi_update_panel_config(struct mdss_dsi_ctrl_pdata *ctrl_pdata,
 	ctrl_pdata->panel_mode = pinfo->mipi.mode;
 	mdss_panel_get_dst_fmt(pinfo->bpp, pinfo->mipi.mode,
 			pinfo->mipi.pixel_packing, &(pinfo->mipi.dst_format));
-	return ret;
+	return 0;
 }
 
 int mdss_dsi_on(struct mdss_panel_data *pdata)
@@ -2591,7 +1489,6 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 		pr_err("%s:Panel power on failed. rc=%d\n", __func__, ret);
 		goto end;
 	}
-	udelay(3*1000);
 
 	if (mdss_panel_is_power_on(cur_power_state)) {
 		pr_debug("%s: dsi_on from panel low power state\n", __func__);
@@ -2638,112 +1535,9 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 	 * data lanes for LP11 init
 	 */
 	if (mipi->lp11_init) {
-		pr_debug("\n\n*** [HL]%s: lp11_init enabled ***\n\n", __func__);
 		if (mdss_dsi_pinctrl_set_state(ctrl_pdata, true))
 			pr_debug("reset enable: pinctrl not enabled\n");
-
-		switch (ctrl_pdata->panel_data.panel_info.panel_id)
-		{
-			//SW4-HL-Display-BringUpCTCOTM1911A-00+{_20180116
-                        case FIH_CTC_OTM1911A_FHD_VIDEO_PANEL:
-                        case FIH_AUO_OTM1911A_FHD_VIDEO_PANEL:		//SW4-HL-Display-OTM1911A-AUO-BringUp-00+_20180221
-                        case FIH_CTC_JD9522Z_FHD_VIDEO_PANEL:           //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-                            {
-                                    pr_debug("\n\n******************** [HL]%s: DRG  All Panels\n", __func__);
-
-                                    mdss_dsi_panel_reset(pdata, 1);
-                            }
-                            break;
-                        case FIH_CTL_CTC_OTM1911A_FHD_VIDEO_PANEL:	//SW4-HL-Display-CTL-GT915L-CTC_n_AUO-BringUp-00+_20180226
-                        case FIH_CTL_AUO_OTM1911A_FHD_VIDEO_PANEL:      //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330
-                        case FIH_CTL_CTC_JD9522Z_FHD_VIDEO_PANEL:       //SW4-HL-CTL-HDR-ReadLcmSwId-00+_20180330				{
-                                {
-                                        pr_debug("\n\n******************** [HL]%s: CTL All Panels\n", __func__);
-                                        mdss_dsi_panel_reset(pdata, 1);
-				}
-				break;
-			//SW4-HL-Display-BringUpCTCOTM1911A-00+}_20180116
-			case FIH_ILI7807E_1080P_VIDEO_PANEL:
-				{
-					if (!gdouble_tap_enable)
-					{
-						pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is FALSE\n", __func__);
-
-
-						mdss_dsi_panel_reset(pdata, 1);
-					}
-					else
-					{
-						pr_debug("\n\n******************** [HL]%s: gdouble_tap_enable is TRUE\n", __func__);
-
-						//Do Nothing
-						pr_debug("\n\n******************** [HL]%s: NOOOOOOOOOOOOOOOOOO Pull HIGH TP Reset Pin\n", __func__);
-					}
-				}
-				break;
-			case FIH_FT8716U_1080P_CTC_VIDEO_PANEL:
-			case FIH_FT8719_1080P_VIDEO_PANEL:
-				{
-					if (!gdouble_tap_enable)
-						mdss_dsi_panel_reset(pdata, 1);
-					else
-					{
-
-						pr_debug("******************** %s,do nothing about reset**********************\n\n", __func__);
-					}
-				}
-				break;
-			//ZZDC sunqiupeng add for bringup PL2 2nd panel@20171226 start
-			case FIH_R69338_1080P_VIDEO_PANEL_PL2:
-				{
-					if (!gdouble_tap_enable)
-						mdss_dsi_panel_reset(pdata, 1);
-					else
-					{
-
-						pr_debug("******************** %s,do nothing about reset**********************\n\n", __func__);
-					}
-				}
-				break;
-				//ZZDC sunqiupeng add for bringup PL2 2nd panel@20171226 end
-			case FIH_FT8716U_FHD_CTC_B2N_VIDEO_PANEL:
-				{
-					if (!gdouble_tap_enable)
-						mdss_dsi_panel_reset(pdata, 1);
-					else
-					{
-
-						pr_debug("******************** %s,do nothing about reset**********************\n\n", __func__);
-					}
-				}
-				break;
-			case FIH_NT36672_FHD_CTC_B2N_VIDEO_PANEL:
-			case FIH_NT36672_H_GLASS_FHD_CTC_B2N_VIDEO_PANEL:
-				{
-					pr_debug("\n\n******************** [HL]%s, %d: FIH_NT36672_FHD_CTC_B2N_VIDEO_PANEL\n", __func__, __LINE__);
-					pr_debug("\n\n******************** [HL]%s, %d: gdouble_tap_enable_nvt = %d\n", __func__, __LINE__, gdouble_tap_enable_nvt);	
-					pr_debug("\n\n******************** [HL]%s, %d: mdss_dsi_panel_reset() <-- START\n", __func__, __LINE__);
-					mdss_dsi_panel_reset(pdata, 1);
-					pr_debug("\n\n******************** [HL]%s, %d: mdss_dsi_panel_reset() <-- END\n", __func__, __LINE__);						
-				}
-				break;
-			case FIH_FT8716U_FFD_VIDEO_PANEL:
-				{
-					if (!gdouble_tap_enable)
-						mdss_dsi_panel_reset(pdata, 1);
-					else
-					{
-
-						pr_debug("******************** %s,do nothing about reset**********************\n\n", __func__);
-					}
-				}
-				break;
-			default:
-				{
-					mdss_dsi_panel_reset(pdata, 1);
-				}
-				break;
-		}
+		mdss_dsi_panel_reset(pdata, 1);
 	}
 
 	if (mipi->init_delay)
@@ -2855,25 +1649,11 @@ static int mdss_dsi_unblank(struct mdss_panel_data *pdata)
 	if (ctrl_pdata->ctrl_state & CTRL_STATE_PANEL_LP) {
 		pr_debug("%s: dsi_unblank with panel always on\n", __func__);
 		if (ctrl_pdata->low_power_config)
-		{
-			pr_debug("\n\n******************** [HL]%s: ctrl_pdata->low_power_config(pdata, false) <-- START\n", __func__);
 			ret = ctrl_pdata->low_power_config(pdata, false);
-			pr_debug("\n\n******************** [HL]%s: ctrl_pdata->low_power_config(pdata, false) <-- END\n", __func__);
-		}
 		if (!ret)
 			ctrl_pdata->ctrl_state &= ~CTRL_STATE_PANEL_LP;
 		goto error;
 	}
-
-	//SW4-HL-Display-GlanceMode-00+{_20170524
-	#ifdef CONFIG_AOD_FEATURE
-	if (pdata->panel_info.aod_enabled)
-	{
-		mdss_lp_early_config(pdata);
-		pr_debug("%s: BossVee after lp early config\n", __func__);
-	}
-	#endif
-	//SW4-HL-Display-GlanceMode-00+}_20170524
 
 	if (!(ctrl_pdata->ctrl_state & CTRL_STATE_PANEL_INIT)) {
 		if (!pdata->panel_info.dynamic_switch_pending) {
@@ -2892,7 +1672,7 @@ static int mdss_dsi_unblank(struct mdss_panel_data *pdata)
 		mipi->vsync_enable && mipi->hw_vsync_mode) {
 		mdss_dsi_set_tear_on(ctrl_pdata);
 		if (mdss_dsi_is_te_based_esd(ctrl_pdata))
-			panel_update_te_irq(pdata, true);
+			enable_irq(gpio_to_irq(ctrl_pdata->disp_te_gpio));
 	}
 
 	ctrl_pdata->ctrl_state |= CTRL_STATE_PANEL_INIT;
@@ -2921,6 +1701,7 @@ static int mdss_dsi_blank(struct mdss_panel_data *pdata, int power_state)
 		pr_err("%s: Invalid input data\n", __func__);
 		return -EINVAL;
 	}
+
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
 	mipi = &pdata->panel_info.mipi;
@@ -2962,7 +1743,8 @@ static int mdss_dsi_blank(struct mdss_panel_data *pdata, int power_state)
 	if ((pdata->panel_info.type == MIPI_CMD_PANEL) &&
 		mipi->vsync_enable && mipi->hw_vsync_mode) {
 		if (mdss_dsi_is_te_based_esd(ctrl_pdata)) {
-			panel_update_te_irq(pdata, false);
+			disable_irq(gpio_to_irq(
+				ctrl_pdata->disp_te_gpio));
 			atomic_dec(&ctrl_pdata->te_irq_ready);
 		}
 		mdss_dsi_set_tear_off(ctrl_pdata);
@@ -3397,7 +2179,7 @@ static int __mdss_dsi_dfps_update_clks(struct mdss_panel_data *pdata)
 
 	rc = mdss_dsi_en_wait4dynamic_done(ctrl_pdata);
 	if (rc < 0) {
-		pr_err("Unsuccessful dynamic fps change");
+		pr_err("Unsuccessful dynamic fps change\n");
 		goto dfps_timeout;
 	}
 
@@ -3971,7 +2753,7 @@ static struct mdss_dsi_ctrl_pdata *mdss_dsi_get_drvdata(struct device *dev)
 	return ctrl_pdata;
 }
 
-static ssize_t supp_bitclk_list_sysfs_rda(struct device *dev,
+static ssize_t supported_bitclk_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	ssize_t ret = 0;
@@ -4011,7 +2793,7 @@ static ssize_t supp_bitclk_list_sysfs_rda(struct device *dev,
 	return ret;
 }
 
-static ssize_t dynamic_bitclk_sysfs_wta(struct device *dev,
+static ssize_t dynamic_bitclk_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	int rc = 0, i = 0;
@@ -4067,7 +2849,7 @@ static ssize_t dynamic_bitclk_sysfs_wta(struct device *dev,
 	return count;
 } /* dynamic_bitclk_sysfs_wta */
 
-static ssize_t dynamic_bitclk_sysfs_rda(struct device *dev,
+static ssize_t dynamic_bitclk_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	ssize_t ret;
@@ -4085,15 +2867,14 @@ static ssize_t dynamic_bitclk_sysfs_rda(struct device *dev,
 		return -ENODEV;
 	}
 
-	ret = snprintf(buf, PAGE_SIZE, "%llu\n", pinfo->clk_rate);
+	ret = scnprintf(buf, PAGE_SIZE, "%llu\n", pinfo->clk_rate);
 	pr_debug("%s: '%llu'\n", __func__, pinfo->clk_rate);
 
 	return ret;
 } /* dynamic_bitclk_sysfs_rda */
 
-static DEVICE_ATTR(dynamic_bitclk, S_IRUGO | S_IWUSR | S_IWGRP,
-	dynamic_bitclk_sysfs_rda, dynamic_bitclk_sysfs_wta);
-static DEVICE_ATTR(supported_bitclk, S_IRUGO, supp_bitclk_list_sysfs_rda, NULL);
+static DEVICE_ATTR_RW(dynamic_bitclk);
+static DEVICE_ATTR_RO(supported_bitclk);
 
 static struct attribute *dynamic_bitclk_fs_attrs[] = {
 	&dev_attr_dynamic_bitclk.attr,
@@ -4105,258 +2886,6 @@ static struct attribute_group mdss_dsi_fs_attrs_group = {
 	.attrs = dynamic_bitclk_fs_attrs,
 };
 
-//SW4-HL-Display-ImplementCECTCABC-00+{_20160126
-int fih_get_ce (void)
-{
-	return ce_en;
-}
-EXPORT_SYMBOL(fih_get_ce);
-
-int fih_set_ce (int ce)
-{
-	int res;
-
-	res = mdss_dsi_panel_ce_onoff(gpdata, ce);
-	if (!res) //SW4-HL-Display-EnhanceErrorHandling-00*_20150320
-	{
-		goto fail;
-	}
-
-	ce_en = ce;
-
-	return res;
-fail:
-	BBOX_LCM_OEM_FUNCTIONS_FAIL	//SW4-HL-Display-BBox-03+_20161028
-	return res;
-}
-EXPORT_SYMBOL(fih_set_ce);
-
-int fih_get_ct (void)
-{
-	return ct_set;
-}
-EXPORT_SYMBOL(fih_get_ct);
-
-int fih_set_ct (int ct)
-{
-	int res;
-
-	res = mdss_dsi_panel_ct_set(gpdata, ct);
-	if (!res)	 //SW4-HL-Display-EnhanceErrorHandling-00*_20150320
-	{
-		goto fail;
-	}
-
-	ct_set = ct;
-
-	return res;
-fail:
-	BBOX_LCM_OEM_FUNCTIONS_FAIL //SW4-HL-Display-BBox-03+_20161028
-	return res;
-}
-EXPORT_SYMBOL(fih_set_ct);
-
-int fih_get_cabc (void)
-{
-	return cabc_set;
-}
-EXPORT_SYMBOL(fih_get_cabc);
-
-int fih_set_cabc(int cabc)
-{
-	int res;
-
- #if defined(CONFIG_PXLW_IRIS3)
-	if (iris_is_valid_cfg()) {
-		return 1;
-	}
- #endif
-
-	res = mdss_dsi_panel_cabc_set(gpdata, cabc);
-	if (!res)	 //SW4-HL-Display-EnhanceErrorHandling-00*_20150320
-	{
-		goto fail;
-	}
-
-	cabc_set = cabc;
-
-	return res;
-fail:
-	BBOX_LCM_OEM_FUNCTIONS_FAIL //SW4-HL-Display-BBox-03+_20161028
-	return res;
-}
-EXPORT_SYMBOL(fih_set_cabc);
-
-int fih_get_aie (void)
-{
-	return aie_set;
-}
-EXPORT_SYMBOL(fih_get_aie);
-
-int fih_set_aie(int aie)
-{
-	int res;
-	res = mdss_dsi_panel_aie_set(gpdata, aie);
-	if (!res)
-	{
-		goto fail;
-	}
-
-	aie_set = aie;
-
-fail:
-	return res;
-}
-EXPORT_SYMBOL(fih_set_aie);
-
-//SW4-HL-Display-DynamicReadWriteRegister-00+{_20160729
-void fih_get_read_reg (char *reg_val)
-{
-	mdss_dsi_panel_read_reg_get(reg_val);
-
-	return;
-
-}
-EXPORT_SYMBOL(fih_get_read_reg);
-
-void fih_set_read_reg(unsigned int reg, unsigned int reg_len)
-{
-	mdss_dsi_panel_read_reg_set(gpdata, reg, reg_len);
-
-	return;
-}
-EXPORT_SYMBOL(fih_set_read_reg);
-
-void fih_set_write_reg(unsigned int len, char *data)
-{
-	mdss_dsi_panel_write_reg_set(gpdata, len, data);
-
-	return;
-}
-EXPORT_SYMBOL(fih_set_write_reg);
-//SW4-HL-Display-ImplementCECTCABC-00+}_20160126
-
-//SW4-HL-Display-HDR-Ping-00+{_20180323
-//HDR Ping
-extern void iris_read_chip_id(void);
-int fih_hdr_ping (void)
-{
-        //pr_err("[HL]%s, %d: gHdrChipId = %d\n", __func__, __LINE__, gHdrChipId);
-        //iris\\_read_chip_id();
-
-        //if (gHdrChipId == 999)
-        //{
-        //    pr_err("[HL]%s, %d: gHdrChipId == 999, START to parse hdr_exist in cmdline or not...\n", __func__, __LINE__);
-            if(strstr(saved_command_line, "hdr") != NULL)
-            {
-                pr_err("[HL]%s, %d: kernel cmdline finds the string - hdr_exist, return 1\n", __func__, __LINE__);
-                return 1;
-            }
-            else
-            {
-                pr_err("[HL]%s, %d: kernel cmdline CAN NOT find the string - hdr_exist, return 0\n", __func__, __LINE__);
-                return 0;
-            }
-        //}
-        //else
-        //{
-        //    pr_err("[HL]%s, %d: gHdrChipId != 999, return gHdrChipId\n", __func__, __LINE__);
-        //}
-
-        //return gHdrChipId;
-}
-EXPORT_SYMBOL(fih_hdr_ping);
-//SW4-HL-Display-HDR-Ping-00+}_20180323
-
-//SW4-HL-Display-HDR-SetFsCurr-00+{_20180515
-int fih_get_fs_curr (void)
-{
-	return fs_curr_ua_set;
-}
-EXPORT_SYMBOL(fih_get_fs_curr);
-
-int fih_set_fs_curr(int fs_curr)
-{
-	int res;
-	int real_fs_curr;
-	
-	pr_err("[HL]%s, %d: fs_curr = %d <-- START\n", __func__, __LINE__, fs_curr);
-
-	if(fs_curr > 0)
-		g_fs_curr++;
-	else
-		g_fs_curr--;
-
-	if(g_fs_curr<=0)
-		g_fs_curr = 0;
-
-	if (/*fs_curr*/g_fs_curr>0)
-	{
-		pr_err("[HL]%s, %d\n", __func__, __LINE__);
-		real_fs_curr = px8418_fs_curr_ua;
-	}
-	else
-	{
-		pr_err("[HL]%s, %d\n", __func__, __LINE__);
-		real_fs_curr = g_wled_fs_curr_ua;
-	}
-
-	pr_err("[HL]%s, %d\n", __func__, __LINE__);
-
-	res = qpnp_wled_fs_curr_ua_set(real_fs_curr);
-	if (res)
-	{
-		return res;
-	}
-
-	fs_curr_ua_set = /*fs_curr*/!!g_fs_curr;
-
-	pr_err("[HL]%s, %d: <-- END\n", __func__, __LINE__);
-
-	return res;
-}
-EXPORT_SYMBOL(fih_set_fs_curr);
-//SW4-HL-Display-HDR-SetFsCurr-00+}_20180515
-
-static int fih_set_feature(void)
-{
-	int rc = 0;
-
-	pr_debug("\n\n*** [HL] %s +++ ***\n\n", __func__);
-
-	if (!SendCEBeforeInit && CE_enable)
-	{
-		SendCEOnlyAfterResume = 1;
-		pr_debug("\n\n******************** [HL]%s: SendCEOnlyAfterResume = 1\n", __func__);
-	}
-
-	if (!SendCTBeforeInit && CT_enable)
-	{
-		SendCTOnlyAfterResume = 1;
-		pr_debug("\n\n******************** [HL]%s: SendCTOnlyAfterResume = 1\n", __func__);
-	}
-
-	if (!SendCABCBeforeInit && CABC_enable)
-	{
-		SendCABCOnlyAfterResume = 1;
-		pr_debug("\n\n******************** [HL]%s: SendCABCOnlyAfterResume = 1\n", __func__);
-	}
-
-	if (!SendAIEBeforeInit && AIE_enable)
-	{
-		SendAIEOnlyAfterResume = 1;
-	}
-
-	return rc;
-}
-EXPORT_SYMBOL(SendCEOnlyAfterResume);
-EXPORT_SYMBOL(SendCTOnlyAfterResume);
-EXPORT_SYMBOL(SendCABCOnlyAfterResume);
-EXPORT_SYMBOL(SendAIEOnlyAfterResume);
-//SW4-HL-Display-ImplementCECTCABC-00+}_20160126
-extern void fts_tp_lcm_suspend(void);//ZZDC-snow-Touch-_20170809
-extern void hlt_tp_lcm_suspend(void);//add by snow
-extern void fts_tp_lcm_suspend_8719(void);
 static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 				  int event, void *arg)
 {
@@ -4378,6 +2907,7 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 	pr_debug("%s+: ctrl=%d event=%d\n", __func__, ctrl_pdata->ndx, event);
 
 	MDSS_XLOG(event, arg, ctrl_pdata->ndx, 0x3333);
+
 	switch (event) {
 	case MDSS_EVENT_CHECK_PARAMS:
 		pr_debug("%s:Entered Case MDSS_EVENT_CHECK_PARAMS\n", __func__);
@@ -4393,176 +2923,38 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		ctrl_pdata->refresh_clk_rate = true;
 		break;
 	case MDSS_EVENT_LINK_READY:
-		pr_debug("[HL]%s: MDSS_EVENT_LINK_READY <-- start\n", __func__);
 		if (ctrl_pdata->refresh_clk_rate)
 			rc = mdss_dsi_clk_refresh(pdata,
 				ctrl_pdata->update_phy_timing);
 
 		rc = mdss_dsi_on(pdata);
-                pr_debug("[HL]%s: MDSS_EVENT_LINK_READY <-- end\n", __func__);
 		break;
 	case MDSS_EVENT_UNBLANK:
-		pr_debug("[HL]%s: MDSS_EVENT_UNBLANK <-- start\n", __func__);
-#if defined(CONFIG_PXLW_IRIS3)
-		iris_display_prepare();
-#endif
 		if (ctrl_pdata->on_cmds.link_state == DSI_LP_MODE)
 			rc = mdss_dsi_unblank(pdata);
-		pr_debug("[HL]%s: MDSS_EVENT_UNBLANK <-- end\n", __func__);
 		break;
 	case MDSS_EVENT_POST_PANEL_ON:
-		pr_debug("[HL]%s: MDSS_EVENT_POST_PANEL_ON <-- start\n", __func__);
 		rc = mdss_dsi_post_panel_on(pdata);
-		pr_debug("[HL]%s: MDSS_EVENT_POST_PANEL_ON <-- end\n", __func__);
 		break;
 	case MDSS_EVENT_PANEL_ON:
-		pr_debug("[HL]%s: MDSS_EVENT_PANEL_ON <-- start\n", __func__);
 		ctrl_pdata->ctrl_state |= CTRL_STATE_MDP_ACTIVE;
 		if (ctrl_pdata->on_cmds.link_state == DSI_HS_MODE)
 			rc = mdss_dsi_unblank(pdata);
 		pdata->panel_info.esd_rdy = true;
-		//SW4-HL-Display-ImplementCECTCABC-00+{_20160126
-		if(strstr(saved_command_line, "androidboot.fihmode=0")!=NULL)
-		{
-			if (!pdata->panel_info.cont_splash_enabled)
-			{
-				rc = fih_set_feature();
-			}
-		}
-		//SW4-HL-Display-ImplementCECTCABC-00+}_20160126
-		pr_debug("[HL]%s: MDSS_EVENT_PANEL_ON <-- end\n", __func__);
 		break;
 	case MDSS_EVENT_BLANK:
-		if (ctrl_pdata->panel_data.panel_info.panel_id == FIH_FT8719_1080P_VIDEO_PANEL) {
-			fts_tp_lcm_suspend_8719();
-		}
-		pr_debug("[HL]%s: MDSS_EVENT_BLANK <-- start\n", __func__);
 		power_state = (int) (unsigned long) arg;
 		if (ctrl_pdata->off_cmds.link_state == DSI_HS_MODE)
 			rc = mdss_dsi_blank(pdata, power_state);
-		pr_debug("[HL]%s: MDSS_EVENT_BLANK <-- end\n", __func__);
 		break;
 	case MDSS_EVENT_PANEL_OFF:
-		pr_debug("[HL]%s: MDSS_EVENT_PANEL_OFF <-- start\n", __func__);
 		power_state = (int) (unsigned long) arg;
 		ctrl_pdata->ctrl_state &= ~CTRL_STATE_MDP_ACTIVE;
 		if (ctrl_pdata->off_cmds.link_state == DSI_LP_MODE)
 			rc = mdss_dsi_blank(pdata, power_state);
-
-		//SW4-HL-Touch-ImplementDoubleTap-00+{_20170623
-		switch (ctrl_pdata->panel_data.panel_info.panel_id)
-		{
-			case FIH_ILI7807E_1080P_VIDEO_PANEL:
-				{
-					pr_debug("\n\n*** [HL] %s: FIH_ILI7807E_1080P_VIDEO_PANEL ***\n\n", __func__);
-
-					pr_debug("\n\n*** [HL] %s, fih_tp_lcm_suspend_lpwg_on() <-- START ***\n\n", __func__);
-					fih_tp_lcm_suspend_lpwg_on();
-					pr_debug("\n\n*** [HL] %s, fih_tp_lcm_suspend_lpwg_on() <-- END ***\n\n", __func__);
-
-				}
-				break;
-			//ZZDC-snow-Touch-_20170809
-			case FIH_FT8716U_FHD_CTC_B2N_VIDEO_PANEL:
-				{
-					pr_err("\n\n %s: FIH_FT8716U_FHD_CTC_B2N_VIDEO_PANEL ***\n\n", __func__);
-
-					pr_err("\n\n %s, fts_tp_lcm_suspend() <-- START ***\n\n", __func__);
-					fts_tp_lcm_suspend();
-					pr_err("\n\n %s, fts_tp_lcm_suspend() <-- END ***\n\n", __func__);
-				}
-				break;
-			case FIH_NT36672_FHD_CTC_B2N_VIDEO_PANEL:
-			case FIH_NT36672_H_GLASS_FHD_CTC_B2N_VIDEO_PANEL:
-				{
-					pr_err("\n\n %s: FIH_NT36672_FHD_CTC_B2N_VIDEO_PANEL ***\n\n", __func__);
-
-					//pr_err("\n\n %s, fts_tp_lcm_suspend() <-- START ***\n\n", __func__);
-				//	fts_tp_lcm_suspend();
-					//pr_err("\n\n %s, NOOOOOOOOOOOOOOOOOOOOOOOOOO fts_tp_lcm_suspend()  ***\n\n", __func__);
-					//pr_err("\n\n %s, fts_tp_lcm_suspend() <-- END ***\n\n", __func__);
-				}
-				break;
-			case FIH_FT8716U_1080P_CTC_VIDEO_PANEL:
-				{
-					pr_debug("\n\n*** [snow] %s: FIH_FT8716U_1080P_CTC_VIDEO_PANEL ***\n\n", __func__);
-
-					//pr_debug("\n\n*** [snow] %s, fts_tp_lcm_suspend() <-- START ***\n\n", __func__);
-					pr_debug("[snow] lcm is ctc suspend");
-					fts_tp_lcm_suspend();
-				}
-				break;
-			case FIH_FT8719_1080P_VIDEO_PANEL:
-				{
-					pr_debug("\n\n***%s: FIH_FT8719_1080P_VIDEO_PANEL ***\n\n", __func__);
-
-					pr_debug("lcm is 8719 suspend");
-					//fts_tp_lcm_suspend_8719();
-				}
-				break;
-				//ZZDC sunqiupeng add for bringup PL2 2nd panel@20171226 begin
-			case FIH_R69338_1080P_VIDEO_PANEL_PL2:
-				{
-					pr_debug("[snow] lcm is hlt suspend");
-					hlt_tp_lcm_suspend();
-					//pr_debug("\n\n*** [snow] %s, fts_tp_lcm_suspend() <-- END ***\n\n", __func__);
-
-				}
-				break;
-				//ZZDC sunqiupeng add for bringup PL2 2nd panel@20171226 end
-			case FIH_FT8716U_FFD_VIDEO_PANEL:
-				{
-					pr_debug("\n\n*** [snow] %s: FIH_FT8716U_1080P_CTC_VIDEO_PANEL ***\n\n", __func__);
-
-					pr_debug("\n\n*** [snow] %s, fts_tp_lcm_suspend() <-- START ***\n\n", __func__);
-					fts_tp_lcm_suspend();
-					pr_debug("\n\n*** [snow] %s, fts_tp_lcm_suspend() <-- END ***\n\n", __func__);
-
-				}
-				break;
-			default:
-				pr_debug("\n\n*** [HL] %s: default ***\n\n", __func__);
-				break;
-		}
-		//SW4-HL-Touch-ImplementDoubleTap-00+}_20170623
-
 		rc = mdss_dsi_off(pdata, power_state);
-		pr_debug("[HL]%s: MDSS_EVENT_PANEL_OFF <-- end\n", __func__);
-		break;
-	case MDSS_EVENT_CLOSE:
-		if (ctrl_pdata->panel_data.panel_info.panel_id == FIH_FT8719_1080P_VIDEO_PANEL)
-		{
-			ret = mdss_dsi_panel_reset(pdata, 0);
-			if (ret) {
-				pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
-				ret = 0;
-			}
-		
-			udelay(5 * 1000);
-			ret = msm_dss_enable_vreg(ctrl_pdata->panel_power_data.vreg_config, ctrl_pdata->panel_power_data.num_vreg, 0);
-			if (ret)
-				pr_err("%s: failed to disable vregs for %s\n", __func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-			
-			udelay(6 * 1000);
-			gpio_set_value(ctrl_pdata->iovdd_enable, 0);
-			gpio_free(ctrl_pdata->iovdd_enable);
-		}
-		break;
-	case MDSS_EVENT_SUSPEND:
-		if (ctrl_pdata->panel_data.panel_info.panel_id == FIH_FT8719_1080P_VIDEO_PANEL)
-		{
-			if (!gdouble_tap_enable)
-			{
-				ret = msm_dss_enable_vreg(ctrl_pdata->panel_power_data.vreg_config, ctrl_pdata->panel_power_data.num_vreg, 0);
-				if (ret)
-					pr_err("%s: failed to disable vregs for %s\n", __func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-			}
-			else
-				pr_debug("********************%s, do nothing about power **********************\n\n", __func__);
-		}
 		break;
 	case MDSS_EVENT_DISABLE_PANEL:
-		pr_debug("[HL]%s: MDSS_EVENT_DISABLE_PANEL <-- start\n", __func__);
 		/* disable esd thread */
 		disable_esd_thread();
 
@@ -4575,7 +2967,6 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		/* disable panel power */
 		ret = mdss_dsi_panel_power_ctrl(pdata,
 			MDSS_PANEL_POWER_LCD_DISABLED);
-		pr_debug("[HL]%s: MDSS_EVENT_DISABLE_PANEL <-- end\n", __func__);
 		break;
 	case MDSS_EVENT_CONT_SPLASH_FINISH:
 		if (ctrl_pdata->off_cmds.link_state == DSI_LP_MODE)
@@ -4622,36 +3013,28 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		rc = mdss_dsi_set_stream_size(pdata);
 		break;
 	case MDSS_EVENT_DSI_UPDATE_PANEL_DATA:
-		pr_debug("[HL]%s: MDSS_EVENT_DSI_UPDATE_PANEL_DATA<-- start\n", __func__);
 		rc = mdss_dsi_update_panel_config(ctrl_pdata,
 					(int)(unsigned long) arg);
-		pr_debug("[HL]%s: MDSS_EVENT_DSI_UPDATE_PANEL_DATA<-- end\n", __func__);
 		break;
 	case MDSS_EVENT_REGISTER_RECOVERY_HANDLER:
 		rc = mdss_dsi_register_recovery_handler(ctrl_pdata,
 			(struct mdss_intf_recovery *)arg);
 		break;
 	case MDSS_EVENT_REGISTER_MDP_CALLBACK:
-		pr_debug("[HL]%s: MDSS_EVENT_REGISTER_MDP_CALLBACK<-- start\n", __func__);
 		rc = mdss_dsi_register_mdp_callback(ctrl_pdata,
 			(struct mdss_intf_recovery *)arg);
-		pr_debug("[HL]%s: MDSS_EVENT_REGISTER_MDP_CALLBACK<-- end\n", __func__);
 		break;
 	case MDSS_EVENT_REGISTER_CLAMP_HANDLER:
 		rc = mdss_dsi_register_clamp_handler(ctrl_pdata,
 			(struct mdss_intf_ulp_clamp *)arg);
 		break;
 	case MDSS_EVENT_DSI_DYNAMIC_SWITCH:
-		pr_debug("[HL]%s: MDSS_EVENT_DSI_DYNAMIC_SWITCH<-- start\n", __func__);
 		mode = (u32)(unsigned long) arg;
 		mdss_dsi_switch_mode(pdata, mode);
-		pr_debug("[HL]%s: MDSS_EVENT_DSI_DYNAMIC_SWITCH<-- end\n", __func__);
 		break;
 	case MDSS_EVENT_DSI_RECONFIG_CMD:
-		pr_debug("[HL]%s: MDSS_EVENT_DSI_RECONFIG_CMD<-- start\n", __func__);
 		mode = (u32)(unsigned long) arg;
 		rc = mdss_dsi_reconfig(pdata, mode);
-		pr_debug("[HL]%s: MDSS_EVENT_DSI_RECONFIG_CMD<-- end\n", __func__);
 		break;
 	case MDSS_EVENT_DSI_PANEL_STATUS:
 		rc = mdss_dsi_check_panel_status(ctrl_pdata, arg);
@@ -4679,8 +3062,8 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 
 		if (IS_ENABLED(CONFIG_MSM_DBA) &&
 			pdata->panel_info.is_dba_panel) {
-				queue_delayed_work(ctrl_pdata->workq,
-					&ctrl_pdata->dba_work, HZ);
+			queue_delayed_work(ctrl_pdata->workq,
+				&ctrl_pdata->dba_work, HZ);
 		}
 		break;
 	case MDSS_EVENT_DSI_TIMING_DB_CTRL:
@@ -4900,10 +3283,6 @@ static struct device_node *mdss_dsi_config_panel(struct platform_device *pdev,
 		of_node_put(dsi_pan_node);
 		return NULL;
 	}
-#if defined(CONFIG_PXLW_IRIS3)
-	iris_set_cfg_name(dsi_pan_node->name);
-#endif
-
 
 	rc = mdss_dsi_panel_init(dsi_pan_node, ctrl_pdata, ndx);
 	if (rc) {
@@ -4938,10 +3317,10 @@ static int mdss_dsi_ctrl_clock_init(struct platform_device *ctrl_pdev,
 	info.core_clks.mmss_misc_ahb_clk =
 		ctrl_pdata->shared_data->mmss_misc_ahb_clk;
 
-	info.link_clks.esc_clk = ctrl_pdata->esc_clk;
-	info.link_clks.byte_clk = ctrl_pdata->byte_clk;
-	info.link_clks.pixel_clk = ctrl_pdata->pixel_clk;
-	info.link_clks.byte_intf_clk = ctrl_pdata->byte_intf_clk;
+	info.link_lp_clks.esc_clk = ctrl_pdata->esc_clk;
+	info.link_hs_clks.byte_clk = ctrl_pdata->byte_clk;
+	info.link_hs_clks.pixel_clk = ctrl_pdata->pixel_clk;
+	info.link_hs_clks.byte_intf_clk = ctrl_pdata->byte_intf_clk;
 
 	info.pre_clkoff_cb = mdss_dsi_pre_clkoff_cb;
 	info.post_clkon_cb = mdss_dsi_post_clkon_cb;
@@ -5063,7 +3442,7 @@ static int mdss_dsi_cont_splash_config(struct mdss_panel_info *pinfo,
 				  MDSS_DSI_ALL_CLKS, MDSS_DSI_CLK_ON);
 		mdss_dsi_read_hw_revision(ctrl_pdata);
 		mdss_dsi_read_phy_revision(ctrl_pdata);
-		ctrl_pdata->is_phyreg_enabled = 1;
+		ctrl_pdata->is_phyreg_enabled = true;
 		if (pinfo->type == MIPI_CMD_PANEL)
 			mdss_dsi_set_burst_mode(ctrl_pdata);
 		mdss_dsi_clamp_phy_reset_config(ctrl_pdata, true);
@@ -5147,8 +3526,6 @@ static int mdss_dsi_ctrl_probe(struct platform_device *pdev)
 	static int te_irq_registered;
 	struct mdss_panel_data *pdata;
 
-	pr_debug("\n\n******************** [HL] %s +++	**********************\n\n", __func__);
-
 	if (!pdev || !pdev->dev.of_node) {
 		pr_err("%s: pdev not found for DSI controller\n", __func__);
 		return -ENODEV;
@@ -5195,8 +3572,6 @@ static int mdss_dsi_ctrl_probe(struct platform_device *pdev)
 	if (rc)
 		pr_warn("%s: failed to get pin resources\n", __func__);
 
-	pr_debug("\n\n******************** [HL] %s, mdss_dsi_pinctrl_init  **********************\n\n", __func__);
-
 	if (index == 0) {
 		ctrl_pdata->panel_data.panel_info.pdest = DISPLAY_1;
 		ctrl_pdata->ndx = DSI_CTRL_0;
@@ -5210,15 +3585,11 @@ static int mdss_dsi_ctrl_probe(struct platform_device *pdev)
 		return -EPERM;
 	}
 
-	pr_debug("\n\n******************** [HL] %s, ctrl_pdata->panel_data.panel_info.pdest = %d  **********************\n\n", __func__, ctrl_pdata->panel_data.panel_info.pdest);
-
 	dsi_pan_node = mdss_dsi_config_panel(pdev, index);
 	if (!dsi_pan_node) {
 		pr_err("%s: panel configuration failed\n", __func__);
 		return -EINVAL;
 	}
-
-	pr_debug("\n\n******************** [HL] %s, mdss_dsi_config_panel(pdev)  **********************\n\n", __func__);
 
 	if (!mdss_dsi_is_hw_config_split(ctrl_pdata->shared_data) ||
 		(mdss_dsi_is_hw_config_split(ctrl_pdata->shared_data) &&
@@ -5242,8 +3613,6 @@ static int mdss_dsi_ctrl_probe(struct platform_device *pdev)
 		goto error_pan_node;
 	}
 
-	pr_debug("\n\n******************** [HL] %s, dsi_panel_device_register(pdev, dsi_pan_node, ctrl_pdata)  **********************\n\n", __func__);
-
 	pinfo = &(ctrl_pdata->panel_data.panel_info);
 	if (!(mdss_dsi_is_hw_config_split(ctrl_pdata->shared_data) &&
 		mdss_dsi_is_ctrl_clk_slave(ctrl_pdata)) &&
@@ -5257,23 +3626,17 @@ static int mdss_dsi_ctrl_probe(struct platform_device *pdev)
 		}
 	}
 
-	pr_debug("\n\n******************** [HL] %s, mdss_dsi_is_hw_config_split(ctrl_pdata)  **********************\n\n", __func__);
-
 	rc = mdss_dsi_set_clk_rates(ctrl_pdata);
 	if (rc) {
 		pr_err("%s: Failed to set dsi clk rates\n", __func__);
 		return rc;
 	}
 
-	pr_debug("\n\n******************** [HL] %s, mdss_dsi_set_clk_rates(ctrl_pdata)  **********************\n\n", __func__);
-
 	rc = mdss_dsi_cont_splash_config(pinfo, ctrl_pdata);
 	if (rc) {
 		pr_err("%s: Failed to set dsi splash config\n", __func__);
 		return rc;
 	}
-
-	pr_debug("\n\n******************** [HL] %s, mdss_dsi_cont_splash_config(pinfo, ctrl_pdata)  **********************\n\n", __func__);
 
 	if (mdss_dsi_is_te_based_esd(ctrl_pdata)) {
 		rc = devm_request_irq(&pdev->dev,
@@ -5305,15 +3668,11 @@ static int mdss_dsi_ctrl_probe(struct platform_device *pdev)
 		}
 	}
 
-	pr_debug("\n\n******************** [HL] %s, mdss_dsi_is_te_based_esd(ctrl_pdata)  **********************\n\n", __func__);
-
 	rc = mdss_dsi_get_bridge_chip_params(pinfo, ctrl_pdata, pdev);
 	if (rc) {
 		pr_err("%s: Failed to get bridge params\n", __func__);
 		goto error_shadow_clk_deinit;
 	}
-
-	pr_debug("\n\n******************** [HL] %s, mdss_dsi_get_bridge_chip_params(pinfo, ctrl_pdata, pdev)  **********************\n\n", __func__);
 
 	ctrl_pdata->workq = create_workqueue("mdss_dsi_dba");
 	if (!ctrl_pdata->workq) {
@@ -5321,8 +3680,6 @@ static int mdss_dsi_ctrl_probe(struct platform_device *pdev)
 		rc = -EPERM;
 		goto error_pan_node;
 	}
-
-	pr_debug("\n\n******************** [HL] %s, ctrl_pdata->workq = create_workqueue  **********************\n\n", __func__);
 
 	INIT_DELAYED_WORK(&ctrl_pdata->dba_work, mdss_dsi_dba_work);
 
@@ -5341,150 +3698,18 @@ static int mdss_dsi_ctrl_probe(struct platform_device *pdev)
 		ctrl_pdata->shared_data->dsi0_active = true;
 	else
 		ctrl_pdata->shared_data->dsi1_active = true;
-
+#ifdef CONFIG_DEBUG_FS
 	mdss_dsi_debug_bus_init(mdss_dsi_res);
-
-	//SW4-HL-Display-ImplementCECTCABC-00+{_20160126
-	//SW4-HL-Display-DynamicReadWriteRegister-00+{_20160729
-	gpdata = devm_kzalloc(&pdev->dev,
-				  sizeof(struct mdss_dsi_ctrl_pdata),
-				  GFP_KERNEL);
-	if (!gpdata) {
-		pr_err("%s: FAILED: cannot alloc dsi ctr - gpdata\n",
-			   __func__);
-		rc = -ENOMEM;
-		goto error_no_mem;
-	}
-	platform_set_drvdata(pdev, gpdata);
-
-	gpdata = ctrl_pdata;
-	//SW4-HL-Display-DynamicReadWriteRegister-00+}_20160729
-
-	pr_debug("\n\n*** [HL] %s, BBB CE_enable = %d ***\n\n", __func__, CE_enable);
-	pr_debug("\n\n*** [HL] %s, BBB CT_enable = %d ***\n\n", __func__, CT_enable);
-	pr_debug("\n\n*** [HL] %s, BBB CABC_enable = %d ***\n\n", __func__, CABC_enable);
-	pr_debug("\n\n*** [HL] %s, BBB AIE_enable = %d ***\n\n", __func__, AIE_enable);
-	pr_debug("\n\n*** [HL] %s, BBB SendCEBeforeInit = %d ***\n\n", __func__, SendCEBeforeInit);
-	pr_debug("\n\n*** [HL] %s, BBB SendCTBeforeInit = %d ***\n\n", __func__, SendCTBeforeInit);
-	pr_debug("\n\n*** [HL] %s, BBB SendCABCBeforeInit = %d ***\n\n", __func__, SendCABCBeforeInit);
-
-	if (CE_enable && CT_enable && CABC_enable)
-	{
-		pr_debug("\n\n******************** [HL] %s ---, if (CE_enable && CT_enable && CABC_enable), probe OK, return 0  **********************\n\n", __func__);
-		return 0;
-	}
-
-	if((ctrl_pdata->ce_on_cmds.cmd_cnt) &&
-		(ctrl_pdata->ce_off_cmds.cmd_cnt))
-	{
-		CE_enable = 1;
-	}
-
-	if((ctrl_pdata->ct_cold_cmds.cmd_cnt) &&
-		(ctrl_pdata->ct_normal_cmds.cmd_cnt) &&
-		(ctrl_pdata->ct_warm_cmds.cmd_cnt) &&
-		(ctrl_pdata->blf_10_cmds.cmd_cnt) &&
-		(ctrl_pdata->blf_30_cmds.cmd_cnt) &&
-		(ctrl_pdata->blf_50_cmds.cmd_cnt) &&
-		(ctrl_pdata->blf_75_cmds.cmd_cnt))
-	{
-		CT_enable = 1;
-	}
-
-	if((ctrl_pdata->cabc_off_cmds.cmd_cnt) &&
-		(ctrl_pdata->cabc_ui_cmds.cmd_cnt) &&
-		(ctrl_pdata->cabc_still_cmds.cmd_cnt) &&
-		(ctrl_pdata->cabc_moving_cmds.cmd_cnt))
-	{
-		CABC_enable = 1;
-	}
-
-	if((ctrl_pdata->aie_off_cmds.cmd_cnt) &&
-		(ctrl_pdata->aie_low_cmds.cmd_cnt) &&
-		(ctrl_pdata->aie_mid_cmds.cmd_cnt) &&
-		(ctrl_pdata->aie_high_cmds.cmd_cnt))
-	{
-		AIE_enable = 1;
-	}
-
-	if (SendCEBeforeInit && SendCTBeforeInit && SendCABCBeforeInit)
-	{
-		pr_debug("\n\n******************** [HL] %s ---, if (SendCEBeforeInit && SendCTBeforeInit && SendCABCBeforeInit), probe OK, return 0  **********************\n\n", __func__);
-
-		return 0;
-	}
-
-	if((ctrl_pdata->ce_on_cmds_beforeInit.cmd_cnt) &&
-		(ctrl_pdata->ce_off_cmds_beforeInit.cmd_cnt))
-	{
-		SendCEBeforeInit = 1;
-	}
-
-	if((ctrl_pdata->ct_cold_cmds_beforeInit.cmd_cnt) &&
-		(ctrl_pdata->ct_normal_cmds_beforeInit.cmd_cnt) &&
-	    	(ctrl_pdata->ct_warm_cmds_beforeInit.cmd_cnt) &&
-		(ctrl_pdata->blf_10_cmds_beforeInit.cmd_cnt) &&
-		(ctrl_pdata->blf_30_cmds_beforeInit.cmd_cnt) &&
-		(ctrl_pdata->blf_50_cmds_beforeInit.cmd_cnt) &&
-		(ctrl_pdata->blf_75_cmds_beforeInit.cmd_cnt))
-	{
-		SendCTBeforeInit = 1;
-	}
-
-	if((ctrl_pdata->cabc_off_cmds_beforeInit.cmd_cnt) &&
-		(ctrl_pdata->cabc_ui_cmds_beforeInit.cmd_cnt) &&
-		(ctrl_pdata->cabc_still_cmds_beforeInit.cmd_cnt) &&
-		(ctrl_pdata->cabc_moving_cmds_beforeInit.cmd_cnt))
-	{
-		SendCABCBeforeInit = 1;
-	}
-
-	if((ctrl_pdata->cabc_off_cmds_beforeInit.cmd_cnt) &&
-		(ctrl_pdata->cabc_ui_cmds_beforeInit.cmd_cnt) &&
-		(ctrl_pdata->cabc_still_cmds_beforeInit.cmd_cnt) &&
-		(ctrl_pdata->cabc_moving_cmds_beforeInit.cmd_cnt))
-	{
-		SendAIEBeforeInit = 1;
-	}
-
-	pr_debug("\n\n*** [HL] %s, AAA CE_enable = %d ***\n\n", __func__, CE_enable);
-	pr_debug("\n\n*** [HL] %s, AAA CT_enable = %d ***\n\n", __func__, CT_enable);
-	pr_debug("\n\n*** [HL] %s, AAA CABC_enable = %d ***\n\n", __func__, CABC_enable);
-	pr_debug("\n\n*** [HL] %s, AAA AIE_enable = %d ***\n\n", __func__, AIE_enable);
-	pr_debug("\n\n*** [HL] %s, AAA SendCEBeforeInit = %d ***\n\n", __func__, SendCEBeforeInit);
-	pr_debug("\n\n*** [HL] %s, AAA SendCTBeforeInit = %d ***\n\n", __func__, SendCTBeforeInit);
-	pr_debug("\n\n*** [HL] %s, AAA SendCABCBeforeInit = %d ***\n\n", __func__, SendCABCBeforeInit);
-	//SW4-HL-Display-ImplementCECTCABC-00+}_20160126
-	//SW4-HL-Display-SendCECTCABCBeforeInit-00*}_20161213
-
-	//SW4-HL-Display-GlanceMode-00+{_20170524
-	#ifdef CONFIG_AOD_FEATURE
-	if (pdata->panel_info.aod_enabled)
-	{
-		fih_mdss_dsi_aod_panel_init(pdev,ctrl_pdata,index);
-	}
-	#endif
-	//SW4-HL-Display-GlanceMode-00+}_20170524
-
+#endif
 	return 0;
 
 error_shadow_clk_deinit:
 	mdss_dsi_shadow_clk_deinit(&pdev->dev, ctrl_pdata);
 error_pan_node:
+#ifndef CONFIG_BACKLIGHT_QCOM_SPMI_WLED
 	mdss_dsi_unregister_bl_settings(ctrl_pdata);
+#endif
 	of_node_put(dsi_pan_node);
-
-	pr_debug("\n\n******************** [HL] %s ---, error_pan_node, rc = %d  **********************\n\n", __func__, rc);
-
-//SW4-HL-Display-DynamicReadWriteRegister-00+{_20160729
-error_no_mem:
-	devm_kfree(&pdev->dev, ctrl_pdata);
-
-	devm_kfree(&pdev->dev, gpdata);
-
-	pr_debug("\n\n******************** [HL] %s ---, error_no_mem, rc = %d  **********************\n\n", __func__, rc);
-//SW4-HL-Display-DynamicReadWriteRegister-00+}_20160729
-
 	return rc;
 }
 
@@ -5562,14 +3787,11 @@ static void mdss_dsi_res_deinit(struct platform_device *pdev)
 		if (dsi_res->ctrl_pdata[i]) {
 			if (dsi_res->ctrl_pdata[i]->ds_registered) {
 				struct mdss_panel_info *pinfo =
-					&dsi_res->ctrl_pdata[i]->
-						panel_data.panel_info;
+				&dsi_res->ctrl_pdata[i]->panel_data.panel_info;
 
 				if (pinfo)
 					mdss_dba_utils_deinit(pinfo->dba_data);
 			}
-
-			devm_kfree(&pdev->dev, dsi_res->ctrl_pdata[i]);
 		}
 	}
 
@@ -5590,13 +3812,7 @@ static void mdss_dsi_res_deinit(struct platform_device *pdev)
 	mdss_dsi_bus_scale_deinit(sdata);
 	mdss_dsi_core_clk_deinit(&pdev->dev, sdata);
 
-	if (sdata)
-		devm_kfree(&pdev->dev, sdata);
-
 res_release:
-	if (dsi_res)
-		devm_kfree(&pdev->dev, dsi_res);
-
 	return;
 }
 
@@ -5812,9 +4028,8 @@ static void mdss_dsi_parse_pll_src_cfg(struct platform_device *pdev,
 		pr_debug("%s: PLL src config not specified\n", __func__);
 	}
 
-	pr_debug("%s: pll_src_config = %d", __func__, sdata->pll_src_config);
+	pr_debug("%s: pll_src_config = %d\n", __func__, sdata->pll_src_config);
 
-	return;
 }
 
 static int mdss_dsi_validate_pll_src_config(struct dsi_shared_data *sdata)
@@ -6055,10 +4270,8 @@ static int mdss_dsi_irq_init(struct device *dev, int irq_no,
 
 	disable_irq(irq_no);
 	ctrl->dsi_hw->irq_info = kzalloc(sizeof(struct irq_info), GFP_KERNEL);
-	if (!ctrl->dsi_hw->irq_info) {
-		pr_err("no mem to save irq info: kzalloc fail\n");
+	if (!ctrl->dsi_hw->irq_info)
 		return -ENOMEM;
-	}
 	ctrl->dsi_hw->irq_info->irq = irq_no;
 	ctrl->dsi_hw->irq_info->irq_ena = false;
 
@@ -6181,7 +4394,6 @@ static int mdss_dsi_parse_ctrl_params(struct platform_device *ctrl_pdev,
 	if (!data) {
 		pr_err("%s:%d, Unable to read Phy Strength ctrl settings\n",
 			__func__, __LINE__);
-		return -EINVAL;
 	} else {
 		pinfo->mipi.dsi_phy_db.strength_len = len;
 		for (i = 0; i < len; i++)
@@ -6217,7 +4429,6 @@ static int mdss_dsi_parse_ctrl_params(struct platform_device *ctrl_pdev,
 	if (!data) {
 		pr_err("%s:%d, Unable to read Phy lane configure settings\n",
 			__func__, __LINE__);
-		return -EINVAL;
 	} else {
 		pinfo->mipi.dsi_phy_db.lanecfg_len = len;
 		for (i = 0; i < len; i++)
@@ -6266,7 +4477,6 @@ static int mdss_dsi_parse_gpio_params(struct platform_device *ctrl_pdev,
 	 *  while parsing the panel node, then do not override it
 	 */
 	struct mdss_panel_data *pdata = &ctrl_pdata->panel_data;
-	int rc = 0;	//SW4-HL-Display-HDR-SetFsCurr-00+_20180515
 
 	if (ctrl_pdata->disp_en_gpio <= 0) {
 		ctrl_pdata->disp_en_gpio = of_get_named_gpio(
@@ -6284,8 +4494,8 @@ static int mdss_dsi_parse_gpio_params(struct platform_device *ctrl_pdev,
 	if (!gpio_is_valid(ctrl_pdata->disp_te_gpio))
 		pr_err("%s:%d, TE gpio not specified\n",
 						__func__, __LINE__);
-
 	pdata->panel_te_gpio = ctrl_pdata->disp_te_gpio;
+
 	ctrl_pdata->bklt_en_gpio = of_get_named_gpio(ctrl_pdev->dev.of_node,
 		"qcom,platform-bklight-en-gpio", 0);
 	if (!gpio_is_valid(ctrl_pdata->bklt_en_gpio))
@@ -6309,55 +4519,6 @@ static int mdss_dsi_parse_gpio_params(struct platform_device *ctrl_pdev,
 	if (!gpio_is_valid(ctrl_pdata->rst_gpio))
 		pr_err("%s:%d, reset gpio not specified\n",
 						__func__, __LINE__);
-
-	//SW4-HL-Display-CTL-GT915L-CTC_n_AUO-BringUp-00+{_20180226
-	//HDR PX8148 reset pin
-	ctrl_pdata->hdr_rst_gpio = of_get_named_gpio(ctrl_pdev->dev.of_node,
-			 "px8418,reset-gpio", 0);
-	if (!gpio_is_valid(ctrl_pdata->hdr_rst_gpio))
-	{
-		pr_err("%s:%d, hdr reset gpio not specified\n", __func__, __LINE__);	
-	}
-	else
-	{
-		HDR_enable = 1;	//SW4-HL-Display-HDR-Ping-00+_20180323
-	}						
-	//HDR PX8148 wakeup pin
-	ctrl_pdata->hdr_wakeup_gpio = of_get_named_gpio(ctrl_pdev->dev.of_node,
-			 "px8418,wakeup-gpio", 0);
-	if (!gpio_is_valid(ctrl_pdata->hdr_wakeup_gpio))
-		pr_err("%s:%d, hdr wakeup gpio not specified\n",
-						__func__, __LINE__);		
-	//HDR PX8148 1p8 enable pin
-	ctrl_pdata->hdr_1p8_en_gpio = of_get_named_gpio(ctrl_pdev->dev.of_node,
-			 "px8418,1p8-en-gpio", 0);
-	if (!gpio_is_valid(ctrl_pdata->hdr_1p8_en_gpio))
-		pr_err("%s:%d, hdr 1p8 en gpio not specified\n",
-						__func__, __LINE__);		
-	//SW4-HL-Display-CTL-GT915L-CTC_n_AUO-BringUp-00+}_20180226
-
-	//SW4-HL-Display-BringUpILI7807E-00+{_20170327
-	ctrl_pdata->tp_rst_gpio = of_get_named_gpio(ctrl_pdev->dev.of_node,
-			 "fih,tp-reset-gpio", 0);
-	if (!gpio_is_valid(ctrl_pdata->tp_rst_gpio))
-		pr_err("%s:%d, tp reset gpio not specified\n",
-						__func__, __LINE__);
-	//SW4-HL-Display-BringUpILI7807E-00+}_20170327
-	//SW4-JasonSH-Display-BringUpFT8716U-00+{_20170619
-	ctrl_pdata->iovdd_enable = of_get_named_gpio(ctrl_pdev->dev.of_node,
-			 "fih,LCM-IOVDD-ENABLE-gpio", 0);
-	if (!gpio_is_valid(ctrl_pdata->iovdd_enable))
-		pr_err("%s:%d, iovdd gpio not specified\n",
-						__func__, __LINE__);
-	//SW4-JasonSH-Display-BringUpFT8716U-00+}_20170619	
-
-	//SW4-HL-Display-HDR-SetFsCurr-00+{_20180515
-	rc = of_property_read_u32(ctrl_pdev->dev.of_node,
-			"px8418,fs-curr-ua", &px8418_fs_curr_ua);
-	if (rc) {
-		pr_err("[HL]%s, %d: Unable to read full scale current\n", __func__, __LINE__);
-	}
-	//SW4-HL-Display-HDR-SetFsCurr-00+}_20180515
 
 	ctrl_pdata->lcd_mode_sel_gpio = of_get_named_gpio(
 			ctrl_pdev->dev.of_node, "qcom,panel-mode-gpio", 0);
@@ -6403,8 +4564,6 @@ int dsi_panel_device_register(struct platform_device *ctrl_pdev,
 	struct mdss_panel_info *pinfo = &(ctrl_pdata->panel_data.panel_info);
 	struct resource *res;
 	u64 clk_rate;
-
-	pr_debug("\n\n******************** [HL] %s +++  **********************\n\n", __func__);
 
 	mipi  = &(pinfo->mipi);
 
@@ -6541,12 +4700,6 @@ int dsi_panel_device_register(struct platform_device *ctrl_pdev,
 	pinfo->cont_splash_enabled =
 		ctrl_pdata->mdss_util->panel_intf_status(pinfo->pdest,
 		MDSS_PANEL_INTF_DSI) ? true : false;
-#if defined(CONFIG_PXLW_IRIS3)
-	if(strstr(saved_command_line, "androidboot.mode=charger") != NULL)
-		iris_set_cont_splash(false);
-	else
-		iris_set_cont_splash(pinfo->cont_splash_enabled);
-#endif
 
 	pr_info("%s: Continuous splash %s\n", __func__,
 		pinfo->cont_splash_enabled ? "enabled" : "disabled");
@@ -6575,9 +4728,6 @@ int dsi_panel_device_register(struct platform_device *ctrl_pdev,
 		ctrl_pdata->ctrl_base, ctrl_pdata->reg_size);
 
 	pr_debug("%s: Panel data initialized\n", __func__);
-
-	pr_debug("\n\n******************** [HL] %s ---  **********************\n\n", __func__);
-
 	return 0;
 }
 
@@ -6616,15 +4766,11 @@ static int __init mdss_dsi_driver_init(void)
 {
 	int ret;
 
-	pr_debug("\n\n******************** [HL] %s +++  **********************\n\n", __func__);
-
 	ret = mdss_dsi_register_driver();
 	if (ret) {
 		pr_err("mdss_dsi_register_driver() failed!\n");
 		return ret;
 	}
-
-	pr_debug("\n\n******************** [HL] %s ---  **********************\n\n", __func__);
 
 	return ret;
 }
@@ -6658,4 +4804,3 @@ module_exit(mdss_dsi_driver_cleanup);
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("DSI controller driver");
-MODULE_AUTHOR("Chandan Uddaraju <chandanu@codeaurora.org>");

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # Character device configuration
 #
@@ -17,7 +18,8 @@ config DEVMEM
 
 config DEVKMEM
 	bool "/dev/kmem virtual device support"
-	default y
+	# On arm64, VMALLOC_START < PAGE_OFFSET, which confuses kmem read/write
+	depends on !ARM64
 	help
 	  Say Y here if you want to support the /dev/kmem device. The
 	  /dev/kmem device is rarely used, but can be used for certain
@@ -47,6 +49,7 @@ config SGI_MBCS
          say Y or M here, otherwise say N.
 
 source "drivers/tty/serial/Kconfig"
+source "drivers/tty/serdev/Kconfig"
 
 source "drivers/char/diag/Kconfig"
 
@@ -65,34 +68,6 @@ config TTY_PRINTK
 
 	  If unsure, say N.
 
-config BFIN_OTP
-	tristate "Blackfin On-Chip OTP Memory Support"
-	depends on BLACKFIN && (BF51x || BF52x || BF54x)
-	default y
-	help
-	  If you say Y here, you will get support for a character device
-	  interface into the One Time Programmable memory pages that are
-	  stored on the Blackfin processor.  This will not get you access
-	  to the secure memory pages however.  You will need to write your
-	  own secure code and reader for that.
-
-	  To compile this driver as a module, choose M here: the module
-	  will be called bfin-otp.
-
-	  If unsure, it is safe to say Y.
-
-config BFIN_OTP_WRITE_ENABLE
-	bool "Enable writing support of OTP pages"
-	depends on BFIN_OTP
-	default n
-	help
-	  If you say Y here, you will enable support for writing of the
-	  OTP pages.  This is dangerous by nature as you can only program
-	  the pages once, so only enable this option when you actually
-	  need it so as to not inadvertently clobber data.
-
-	  If unsure, say N.
-
 config PRINTER
 	tristate "Parallel printer support"
 	depends on PARPORT
@@ -108,7 +83,7 @@ config PRINTER
 	  corresponding drivers into the kernel.
 
 	  To compile this driver as a module, choose M here and read
-	  <file:Documentation/parport.txt>.  The module will be called lp.
+	  <file:Documentation/admin-guide/parport.rst>.  The module will be called lp.
 
 	  If you have several parallel ports, you can specify which ports to
 	  use with the "lp" kernel command line option.  (Try "man bootparam"
@@ -161,7 +136,7 @@ config VIRTIO_CONSOLE
 	depends on VIRTIO && TTY
 	select HVC_DRIVER
 	help
-	  Virtio console for use with lguest and other hypervisors.
+	  Virtio console for use with hypervisors.
 
 	  Also serves as a general-purpose serial device for data
 	  transfer between the guest and host.  Character devices at
@@ -179,6 +154,20 @@ config IBM_BSR
 	  This devices exposes a hardware mechanism for fast synchronization
 	  of threads across a large system which avoids bouncing a cacheline
 	  between several cores on a system
+
+config POWERNV_OP_PANEL
+	tristate "IBM POWERNV Operator Panel Display support"
+	depends on PPC_POWERNV
+	default m
+	help
+	  If you say Y here, a special character device node, /dev/op_panel,
+	  will be created which exposes the operator panel display on IBM
+	  Power Systems machines with FSPs.
+
+	  If you don't require access to the operator panel display from user
+	  space, say N.
+
+	  If unsure, say M here to build it as a module called powernv-op-panel.
 
 source "drivers/char/ipmi/Kconfig"
 
@@ -249,7 +238,7 @@ source "drivers/char/hw_random/Kconfig"
 
 config NVRAM
 	tristate "/dev/nvram support"
-	depends on ATARI || X86 || (ARM && RTC_DRV_CMOS) || GENERIC_NVRAM
+	depends on ATARI || X86 || GENERIC_NVRAM
 	---help---
 	  If you say Y here and create a character special file /dev/nvram
 	  with major number 10 and minor number 144 using mknod ("man mknod"),
@@ -281,8 +270,7 @@ if RTC_LIB=n
 
 config RTC
 	tristate "Enhanced Real Time Clock Support (legacy PC RTC driver)"
-	depends on !PPC && !PARISC && !IA64 && !M68K && !SPARC && !FRV \
-			&& !ARM && !SUPERH && !S390 && !AVR32 && !BLACKFIN && !UML
+	depends on ALPHA || (MIPS && MACH_LOONGSON64)
 	---help---
 	  If you say Y here and create a character special file /dev/rtc with
 	  major number 10 and minor number 135 using mknod ("man mknod"), you
@@ -328,43 +316,9 @@ config JS_RTC
 	  To compile this driver as a module, choose M here: the
 	  module will be called js-rtc.
 
-config GEN_RTC
-	tristate "Generic /dev/rtc emulation"
-	depends on RTC!=y && !IA64 && !ARM && !M32R && !MIPS && !SPARC && !FRV && !S390 && !SUPERH && !AVR32 && !BLACKFIN && !UML
-	---help---
-	  If you say Y here and create a character special file /dev/rtc with
-	  major number 10 and minor number 135 using mknod ("man mknod"), you
-	  will get access to the real time clock (or hardware clock) built
-	  into your computer.
-
-	  It reports status information via the file /proc/driver/rtc and its
-	  behaviour is set by various ioctls on /dev/rtc. If you enable the
-	  "extended RTC operation" below it will also provide an emulation
-	  for RTC_UIE which is required by some programs and may improve
-	  precision in some cases.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called genrtc.
-
-config GEN_RTC_X
-	bool "Extended RTC operation"
-	depends on GEN_RTC
-	help
-	  Provides an emulation for RTC_UIE which is required by some programs
-	  and may improve precision of the generic RTC support in some cases.
-
 config EFI_RTC
 	bool "EFI Real Time Clock Services"
 	depends on IA64
-
-config DS1302
-	tristate "DS1302 RTC support"
-	depends on M32R && (PLAT_M32700UT || PLAT_OPSPUT)
-	help
-	  If you say Y here and create a character special file /dev/rtc with
-	  major number 121 and minor number 0 using mknod ("man mknod"), you
-	  will get access to the real time clock (or hardware clock) built
-	  into your computer.
 
 endif # RTC_LIB
 
@@ -553,14 +507,6 @@ config HANGCHECK_TIMER
 	  out to lunch past a certain margin.  It can reboot the system
 	  or merely print a warning.
 
-config MMTIMER
-	tristate "MMTIMER Memory mapped RTC for SGI Altix"
-	depends on IA64_GENERIC || IA64_SGI_SN2
-	default y
-	help
-	  The mmtimer device allows direct userspace access to the
-	  Altix system timer.
-
 config UV_MMTIMER
 	tristate "UV_MMTIMER Memory mapped RTC for SGI UV"
 	depends on X86_UV
@@ -597,18 +543,18 @@ source "drivers/s390/char/Kconfig"
 config MSM_SMD_PKT
 	bool "Enable device interface for some SMD packet ports"
 	default n
-	depends on MSM_SMD
+	depends on RPMSG_QCOM_SMD
 	help
-	  smd_pkt driver provides the interface for the userspace clients
-	  to communicate over smd via device nodes. This enable the
-	  usersapce clients to read and write to some smd packets channel
-	  for MSM chipset.
+	 smd_pkt driver provides the interface for the userspace clients
+	 to communicate over smd via device nodes. This enable the
+	 usersapce clients to read and write to some smd packets channel
+	 for MSM chipset.
 
 config TILE_SROM
-	bool "Character-device access via hypervisor to the Tilera SPI ROM"
+	tristate "Character-device access via hypervisor to the Tilera SPI ROM"
 	depends on TILE
 	default y
-	---help---
+	help
 	  This device provides character-level read-write access
 	  to the SROM, typically via the "0", "1", and "2" devices
 	  in /dev/srom/.  The Tilera hypervisor makes the flash
@@ -616,6 +562,153 @@ config TILE_SROM
 	  how to partition a single ROM for multiple purposes.
 
 source "drivers/char/xillybus/Kconfig"
+source "drivers/char/diag/Kconfig"
+
+config MSM_FASTCVPD
+	bool "QTI FASTCVP driver"
+	depends on QCOM_GLINK
+	help
+	  This driver exposes APIs (Application Program Interface) to video driver
+	  to share HFI command queue address to CDSP (Compute Digital Signal
+	  Processor) and handle errors to exit gracefully in case video and cdsp
+	  subsystems crash.
+
+config MSM_ADSPRPC
+	tristate "QTI FastRPC driver"
+	depends on QCOM_GLINK
+	help
+		Provides a communication mechanism that allows clients to
+		make remote method invocations across processor boundary to
+		applications/compute DSP processor.
+		Say M if you want to enable this module.
+
+config ADSPRPC_DEBUG
+	bool "Debug logs in FastRPC driver"
+	help
+		Enable debug logs in the fastrpc driver. Flag will be
+		disabled by default to maximize RPC performance as debug
+		logging will impact RPC overhead.
+		Say Y here if you want to enable the logs.
+
+config MSM_RDBG
+	tristate "QTI Remote debug driver"
+	help
+	Implements a shared memory based transport mechanism that allows
+	for a debugger running on a host PC to communicate with a remote
+	stub running on peripheral subsystems such as the ADSP, MODEM etc.
+		Say M if you want to enable this module.
+
+config ADI
+	tristate "SPARC Privileged ADI driver"
+	depends on SPARC64
+	default m
+	help
+	  SPARC M7 and newer processors utilize ADI (Application Data
+	  Integrity) to version and protect memory.  This driver provides
+	  read/write access to the ADI versions for privileged processes.
+	  This feature is also known as MCD (Memory Corruption Detection)
+	  and SSM (Silicon Secured Memory).  Intended consumers of this
+	  driver include crash and makedumpfile.
+
+config RB5_FAN_CONTROLLER
+	tristate "RB5 fan controller driver support"
+	help
+	  The driver supports the fan controller on QRB5165 device.
+	  The driver controls fan with PM8150L gpio10. It outputs
+	  high to the pin, which is defined in device-tree as
+	  qcom,pwr-enable-gpio.
+
+config RB5_GPIOS_ENABLE
+	tristate "Enable RB5 GPIO 140/145,116/117"
+	help
+	  The driver for enable QRB5165 GPIO 140/145,116/117.
+	  The pins are shared between Kona GPIOs and QCA concurrency
+	  signals, GPIO 60 is default set to low to connect GPIOs
+	  140/145,116/117 to mezzanine connectors.
+
+config OKL4_PIPE
+      bool "OKL4 Pipe Driver"
+      depends on OKL4_GUEST
+      default n
+      help
+        Virtual pipe driver for the OKL4 Microvisor. This driver allows
+        OKL4 Microvisor pipes to be exposed directly to user level as
+        character devices.
+
+config VSERVICES_SERIAL
+	tristate
+
+config VSERVICES_SERIAL_SERVER
+	tristate "Virtual Services serial server"
+	depends on VSERVICES_SUPPORT && VSERVICES_SERVER
+	select VSERVICES_SERIAL
+	select VSERVICES_PROTOCOL_SERIAL_SERVER
+	default y
+	help
+	  Select this option if you want support for server side Virtual
+	  Services serial. A virtual serial service behaves similarly to
+	  a UNIX pseudo terminal (pty), and does not require any physical
+	  serial hardware. Virtual serial devices are typically called
+	  /dev/ttyVS0, /dev/ttyVS1, etc.
+
+config VSERVICES_SERIAL_CLIENT
+	tristate "Virtual Services serial client"
+	depends on VSERVICES_SUPPORT && VSERVICES_CLIENT
+	select VSERVICES_SERIAL
+	select VSERVICES_PROTOCOL_SERIAL_CLIENT
+	default y
+	help
+	  Select this option if you want support for client side Virtual
+	  Services serial. A virtual serial service behaves similarly to
+	  a UNIX pseudo terminal (pty), and does not require any physical
+	  serial hardware. Virtual serial devices are typically called
+	  /dev/ttyVS0, /dev/ttyVS1, etc.
+
+config VSERVICES_VTTY_COUNT
+	int "Maximum number of Virtual Services serial devices"
+	depends on VSERVICES_SERIAL
+	range 0 256
+	default "8"
+	help
+	  The maximum number of Virtual Services serial devices to support.
+	  This limit applies to both the client and server.
+
+config RANDOM_TRUST_CPU
+	bool "Initialize RNG using CPU RNG instructions"
+	default y
+	depends on ARCH_RANDOM
+	help
+	  Initialize the RNG using random numbers supplied by the CPU's
+	  RNG instructions (e.g. RDRAND), if supported and available. These
+	  random numbers are never used directly, but are rather hashed into
+	  the main input pool, and this happens regardless of whether or not
+	  this option is enabled. Instead, this option controls whether the
+	  they are credited and hence can initialize the RNG. Additionally,
+	  other sources of randomness are always used, regardless of this
+	  setting.  Enabling this implies trusting that the CPU can supply high
+	  quality and non-backdoored random numbers.
+
+	  Say Y here unless you have reason to mistrust your CPU or believe
+	  its RNG facilities may be faulty. This may also be configured at
+	  boot time with "random.trust_cpu=on/off".
+
+config RANDOM_TRUST_BOOTLOADER
+	bool "Initialize RNG using bootloader-supplied seed"
+	default y
+	help
+	  Initialize the RNG using a seed supplied by the bootloader or boot
+	  environment (e.g. EFI or a bootloader-generated device tree). This
+	  seed is not used directly, but is rather hashed into the main input
+	  pool, and this happens regardless of whether or not this option is
+	  enabled. Instead, this option controls whether the seed is credited
+	  and hence can initialize the RNG. Additionally, other sources of
+	  randomness are always used, regardless of this setting. Enabling
+	  this implies trusting that the bootloader can supply high quality and
+	  non-backdoored seeds.
+
+	  Say Y here unless you have reason to mistrust your bootloader or
+	  believe its RNG facilities may be faulty. This may also be configured
+	  at boot time with "random.trust_bootloader=on/off".
 
 config MSM_ADSPRPC
 	tristate "QTI ADSP RPC driver"
@@ -641,4 +734,3 @@ config QTI_SDIO_CLIENT
 	  Interface used for SDIO and sahara user spce application
 
 endmenu
-

@@ -13,6 +13,7 @@
 #include <asm/thread_info.h>
 #include <asm/ppc_asm.h>
 #include <asm/asm-offsets.h>
+#include <asm/feature-fixups.h>
 
 /*
  * Structure for storing CPU registers on the save area.
@@ -142,7 +143,7 @@ END_FW_FTR_SECTION_IFCLR(FW_FEATURE_LPAR)
 _GLOBAL(swsusp_arch_resume)
 	/* Stop pending alitvec streams and memory accesses */
 BEGIN_FTR_SECTION
-	DSSALL
+	PPC_DSSALL
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 	sync
 
@@ -179,7 +180,7 @@ nothing_to_copy:
 	sld	r3, r3, r0
 	li	r0, 0
 1:
-	dcbf	r0,r3
+	dcbf	0,r3
 	addi	r3,r3,0x20
 	bdnz	1b
 

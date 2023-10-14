@@ -17,6 +17,9 @@
 
 #include <linux/errno.h>
 #include <linux/sched.h>
+#include <linux/sched/debug.h>
+#include <linux/sched/task.h>
+#include <linux/sched/task_stack.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
@@ -24,6 +27,7 @@
 #include <linux/unistd.h>
 #include <linux/ptrace.h>
 #include <linux/elf.h>
+#include <linux/hw_breakpoint.h>
 #include <linux/init.h>
 #include <linux/prctl.h>
 #include <linux/init_task.h>
@@ -34,7 +38,7 @@
 #include <linux/rcupdate.h>
 
 #include <asm/pgtable.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/io.h>
 #include <asm/processor.h>
 #include <asm/platform.h>
@@ -43,6 +47,7 @@
 #include <linux/atomic.h>
 #include <asm/asm-offsets.h>
 #include <asm/regs.h>
+#include <asm/hw_breakpoint.h>
 
 extern void ret_from_fork(void);
 extern void ret_from_kernel_thread(void);
@@ -52,6 +57,12 @@ struct task_struct *current_set[NR_CPUS] = {&init_task, };
 void (*pm_power_off)(void) = NULL;
 EXPORT_SYMBOL(pm_power_off);
 
+
+#ifdef CONFIG_STACKPROTECTOR
+#include <linux/stackprotector.h>
+unsigned long __stack_chk_guard __read_mostly;
+EXPORT_SYMBOL(__stack_chk_guard);
+#endif
 
 #if XTENSA_HAVE_COPROCESSORS
 
@@ -134,6 +145,7 @@ void flush_thread(void)
 	coprocessor_flush_all(ti);
 	coprocessor_release_all(ti);
 #endif
+	flush_ptrace_hw_breakpoint(current);
 }
 
 /*
@@ -201,8 +213,8 @@ int copy_thread(unsigned long clone_flags, unsigned long usp_thread_fn,
 #endif
 
 	/* Create a call4 dummy-frame: a0 = 0, a1 = childregs. */
-	*((int*)childregs - 3) = (unsigned long)childregs;
-	*((int*)childregs - 4) = 0;
+	SPILL_SLOT(childregs, 1) = (unsigned long)childregs;
+	SPILL_SLOT(childregs, 0) = 0;
 
 	p->thread.sp = (unsigned long)childregs;
 
@@ -263,8 +275,8 @@ int copy_thread(unsigned long clone_flags, unsigned long usp_thread_fn,
 		/* pass parameters to ret_from_kernel_thread:
 		 * a2 = thread_fn, a3 = thread_fn arg
 		 */
-		*((int *)childregs - 1) = thread_fn_arg;
-		*((int *)childregs - 2) = usp_thread_fn;
+		SPILL_SLOT(childregs, 3) = thread_fn_arg;
+		SPILL_SLOT(childregs, 2) = usp_thread_fn;
 
 		/* Childregs are only used when we're going to userspace
 		 * in which case start_thread will set them up.
@@ -275,6 +287,8 @@ int copy_thread(unsigned long clone_flags, unsigned long usp_thread_fn,
 	ti = task_thread_info(p);
 	ti->cpenable = 0;
 #endif
+
+	clear_ptrace_hw_breakpoint(p);
 
 	return 0;
 }
@@ -306,8 +320,8 @@ unsigned long get_wchan(struct task_struct *p)
 
 		/* Stack layout: sp-4: ra, sp-3: sp' */
 
-		pc = MAKE_PC_FROM_RA(*(unsigned long*)sp - 4, sp);
-		sp = *(unsigned long *)sp - 3;
+		pc = MAKE_PC_FROM_RA(SPILL_SLOT(sp, 0), sp);
+		sp = SPILL_SLOT(sp, 1);
 	} while (count++ < 16);
 	return 0;
 }

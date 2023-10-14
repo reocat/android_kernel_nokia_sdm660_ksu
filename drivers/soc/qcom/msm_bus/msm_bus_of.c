@@ -1,13 +1,6 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "AXI: %s(): " fmt, __func__
@@ -41,24 +34,24 @@ static int get_num(const char *const str[], const char *name)
 	return -EINVAL;
 }
 
-static struct msm_bus_scale_pdata *get_pdata(struct platform_device *pdev,
+static struct msm_bus_scale_pdata *get_pdata(struct device *dev,
 	struct device_node *of_node)
 {
 	struct msm_bus_scale_pdata *pdata = NULL;
 	struct msm_bus_paths *usecase = NULL;
+	struct msm_bus_lat_vectors *usecase_lat = NULL;
 	int i = 0, j, ret, num_usecases = 0, num_paths, len;
 	const uint32_t *vec_arr = NULL;
 	bool mem_err = false;
 
-	if (!pdev) {
-		pr_err("Error: Null Platform device\n");
+	if (!dev) {
+		pr_err("Error: Null device\n");
 		return NULL;
 	}
 
-	pdata = devm_kzalloc(&pdev->dev, sizeof(struct msm_bus_scale_pdata),
+	pdata = devm_kzalloc(dev, sizeof(struct msm_bus_scale_pdata),
 		GFP_KERNEL);
 	if (!pdata) {
-		pr_err("Error: Memory allocation for pdata failed\n");
 		mem_err = true;
 		goto err;
 	}
@@ -86,10 +79,45 @@ static struct msm_bus_scale_pdata *get_pdata(struct platform_device *pdev,
 		pr_debug("Using dual context by default\n");
 	}
 
-	usecase = devm_kzalloc(&pdev->dev, (sizeof(struct msm_bus_paths) *
+	pdata->alc = of_property_read_bool(of_node, "qcom,msm-bus,alc-voter");
+
+	if (pdata->alc) {
+		usecase_lat = devm_kzalloc(dev,
+				(sizeof(struct msm_bus_lat_vectors) *
+				pdata->num_usecases), GFP_KERNEL);
+		if (!usecase_lat) {
+			mem_err = true;
+			goto err;
+		}
+
+		vec_arr = of_get_property(of_node,
+					"qcom,msm-bus,vectors-alc", &len);
+		if (vec_arr == NULL) {
+			pr_err("Error: Lat vector array not found\n");
+			goto err;
+		}
+
+		if (len != num_usecases * sizeof(uint32_t) * 2) {
+			pr_err("Error: Length-error on getting vectors\n");
+			goto err;
+		}
+
+		for (i = 0; i < num_usecases; i++) {
+			int index = i * 2;
+
+			usecase_lat[i].fal_ns = (uint64_t)
+				be32_to_cpu(vec_arr[index]);
+			usecase_lat[i].idle_t_ns = (uint64_t)
+				be32_to_cpu(vec_arr[index + 1]);
+		}
+
+		pdata->usecase_lat = usecase_lat;
+		return pdata;
+	}
+
+	usecase = devm_kzalloc(dev, (sizeof(struct msm_bus_paths) *
 		pdata->num_usecases), GFP_KERNEL);
 	if (!usecase) {
-		pr_err("Error: Memory allocation for paths failed\n");
 		mem_err = true;
 		goto err;
 	}
@@ -114,7 +142,7 @@ static struct msm_bus_scale_pdata *get_pdata(struct platform_device *pdev,
 
 	for (i = 0; i < num_usecases; i++) {
 		usecase[i].num_paths = num_paths;
-		usecase[i].vectors = devm_kzalloc(&pdev->dev, num_paths *
+		usecase[i].vectors = devm_kzalloc(dev, num_paths *
 			sizeof(struct msm_bus_vectors), GFP_KERNEL);
 		if (!usecase[i].vectors) {
 			mem_err = true;
@@ -124,6 +152,7 @@ static struct msm_bus_scale_pdata *get_pdata(struct platform_device *pdev,
 
 		for (j = 0; j < num_paths; j++) {
 			int index = ((i * num_paths) + j) * 4;
+
 			usecase[i].vectors[j].src = be32_to_cpu(vec_arr[index]);
 			usecase[i].vectors[j].dst =
 				be32_to_cpu(vec_arr[index + 1]);
@@ -140,9 +169,6 @@ err:
 	if (mem_err) {
 		for (; i > 0; i--)
 			kfree(usecase[i-1].vectors);
-
-		kfree(usecase);
-		kfree(pdata);
 	}
 
 	return NULL;
@@ -170,7 +196,7 @@ struct msm_bus_scale_pdata *msm_bus_cl_get_pdata(struct platform_device *pdev)
 	}
 
 	of_node = pdev->dev.of_node;
-	pdata = get_pdata(pdev, of_node);
+	pdata = get_pdata(&pdev->dev, of_node);
 	if (!pdata) {
 		pr_err("client has to provide missing entry for successful registration\n");
 		return NULL;
@@ -179,6 +205,37 @@ struct msm_bus_scale_pdata *msm_bus_cl_get_pdata(struct platform_device *pdev)
 	return pdata;
 }
 EXPORT_SYMBOL(msm_bus_cl_get_pdata);
+
+/**
+ * msm_bus_cl_get_pdata_from_dev() - Generate bus client data from device tree
+ * provided by clients.
+ *
+ * of_node: Device tree node to extract information from
+ *
+ * The function returns a valid pointer to the allocated bus-scale-pdata
+ * if the vectors were correctly read from the client's device node.
+ * Any error in reading or parsing the device node will return NULL
+ * to the caller.
+ */
+struct msm_bus_scale_pdata *msm_bus_cl_get_pdata_from_dev(struct device *dev)
+{
+	struct device_node *of_node;
+	struct msm_bus_scale_pdata *pdata = NULL;
+
+	of_node = dev->of_node;
+
+	if (!of_node)
+		return NULL;
+
+	pdata = get_pdata(dev, of_node);
+	if (!pdata) {
+		pr_err("client has to provide missing entry for successful registration\n");
+		return NULL;
+	}
+
+	return pdata;
+}
+EXPORT_SYMBOL(msm_bus_cl_get_pdata_from_dev);
 
 /**
  * msm_bus_cl_pdata_from_node() - Generate bus client data from device tree
@@ -211,7 +268,7 @@ struct msm_bus_scale_pdata *msm_bus_pdata_from_node(
 		return NULL;
 	}
 
-	pdata = get_pdata(pdev, of_node);
+	pdata = get_pdata(&pdev->dev, of_node);
 	if (!pdata) {
 		pr_err("client has to provide missing entry for successful registration\n");
 		return NULL;
@@ -220,22 +277,6 @@ struct msm_bus_scale_pdata *msm_bus_pdata_from_node(
 	return pdata;
 }
 EXPORT_SYMBOL(msm_bus_pdata_from_node);
-
-/**
- * msm_bus_cl_clear_pdata() - Clear pdata allocated from device-tree
- * of_node: Device tree node to extract information from
- */
-void msm_bus_cl_clear_pdata(struct msm_bus_scale_pdata *pdata)
-{
-	int i;
-
-	for (i = 0; i < pdata->num_usecases; i++)
-		kfree(pdata->usecase[i].vectors);
-
-	kfree(pdata->usecase);
-	kfree(pdata);
-}
-EXPORT_SYMBOL(msm_bus_cl_clear_pdata);
 
 static int *get_arr(struct platform_device *pdev,
 		const struct device_node *node, const char *prop,
@@ -347,8 +388,7 @@ static struct msm_bus_node_info *get_nodes(struct device_node *of_node,
 	}
 
 	pdata->len = i;
-	info = (struct msm_bus_node_info *)
-		devm_kzalloc(&pdev->dev, sizeof(struct msm_bus_node_info) *
+	info = devm_kzalloc(&pdev->dev, sizeof(struct msm_bus_node_info) *
 			pdata->len, GFP_KERNEL);
 	if (ZERO_OR_NULL_PTR(info)) {
 		pr_err("Failed to alloc memory for nodes: %d\n", pdata->len);
@@ -427,9 +467,9 @@ static struct msm_bus_node_info *get_nodes(struct device_node *of_node,
 						"qcom,bimc,bw", &num_bw);
 
 		if (num_bw != info[i].num_thresh) {
-			pr_err("%s:num_bw %d must equal num_thresh %d",
+			pr_err("%s:num_bw %d must equal num_thresh %d\n",
 				__func__, num_bw, info[i].num_thresh);
-			pr_err("%s:Err setting up dual conf for %s",
+			pr_err("%s:Err setting up dual conf for %s\n",
 				__func__, info[i].name);
 			goto err;
 		}
@@ -476,14 +516,15 @@ static struct msm_bus_node_info *get_nodes(struct device_node *of_node,
 		ret = of_property_read_u32(child_node, "qcom,ff",
 							&info[i].ff);
 		if (ret) {
-			pr_debug("fudge factor not present %d", info[i].id);
+			pr_debug("fudge factor not present %d\n", info[i].id);
 			info[i].ff = 0;
 		}
 
 		ret = of_property_read_u32(child_node, "qcom,floor-bw",
 						&temp);
 		if (ret) {
-			pr_debug("fabdev floor bw not present %d", info[i].id);
+			pr_debug("fabdev floor bw not present %d\n",
+							info[i].id);
 			info[i].floor_bw = 0;
 		} else {
 			info[i].floor_bw = KBTOB(temp);
@@ -549,7 +590,6 @@ static struct msm_bus_node_info *get_nodes(struct device_node *of_node,
 			info[i].iface_clk_node = NULL;
 
 		pr_debug("Node name: %s\n", info[i].name);
-		of_node_put(child_node);
 		i++;
 	}
 
@@ -599,7 +639,6 @@ struct msm_bus_fabric_registration
 	pdata = devm_kzalloc(&pdev->dev,
 			sizeof(struct msm_bus_fabric_registration), GFP_KERNEL);
 	if (!pdata) {
-		pr_err("Error: Memory allocation for pdata failed\n");
 		mem_err = true;
 		goto err;
 	}
@@ -682,7 +721,7 @@ struct msm_bus_fabric_registration
 						&temp);
 
 	if (ret) {
-		pr_err("nr-lim threshold not specified");
+		pr_err("nr-lim threshold not specified\n");
 		pdata->nr_lim_thresh = 0;
 	} else {
 		pdata->nr_lim_thresh = KBTOB(temp);
@@ -691,7 +730,7 @@ struct msm_bus_fabric_registration
 	ret = of_property_read_u32(of_node, "qcom,eff-fact",
 						&pdata->eff_fact);
 	if (ret) {
-		pr_err("Fab eff-factor not present");
+		pr_err("Fab eff-factor not present\n");
 		pdata->eff_fact = 0;
 	}
 

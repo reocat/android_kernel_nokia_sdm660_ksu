@@ -1,18 +1,13 @@
-/* Copyright (c) 2015, 2016 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2015-2019, 2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/ipa_uc_offload.h>
 #include <linux/msm_ipa.h>
+#include <linux/if_vlan.h>
 #include "../ipa_common_i.h"
+#include "../ipa_v3/ipa_pm.h"
 
 #define IPA_NTN_DMA_POOL_ALIGNMENT 8
 #define OFFLOAD_DRV_NAME "ipa_uc_offload"
@@ -58,7 +53,6 @@ enum ipa_uc_offload_state {
 	IPA_UC_OFFLOAD_STATE_INVALID,
 	IPA_UC_OFFLOAD_STATE_INITIALIZED,
 	IPA_UC_OFFLOAD_STATE_UP,
-	IPA_UC_OFFLOAD_STATE_DOWN,
 };
 
 struct ipa_uc_offload_ctx {
@@ -70,13 +64,12 @@ struct ipa_uc_offload_ctx {
 	char netdev_name[IPA_RESOURCE_NAME_MAX];
 	ipa_notify_cb notify;
 	struct completion ntn_completion;
+	u32 pm_hdl;
+	struct ipa_ntn_conn_in_params conn;
 };
 
 static struct ipa_uc_offload_ctx *ipa_uc_offload_ctx[IPA_UC_MAX_PROT_SIZE];
 
-static int ipa_uc_ntn_cons_release(void);
-static int ipa_uc_ntn_cons_request(void);
-static void ipa_uc_offload_rm_notify(void *, enum ipa_rm_event, unsigned long);
 
 static int ipa_commit_partial_hdr(
 	struct ipa_ioc_add_hdr *hdr,
@@ -114,6 +107,48 @@ static int ipa_commit_partial_hdr(
 	return 0;
 }
 
+static void ipa_uc_offload_ntn_pm_cb(void *p, enum ipa_pm_cb_event event)
+{
+	/* suspend/resume is not supported */
+	IPA_UC_OFFLOAD_DBG("event = %d\n", event);
+}
+
+static int ipa_uc_offload_ntn_register_pm_client(
+	struct ipa_uc_offload_ctx *ntn_ctx)
+{
+	int res;
+	struct ipa_pm_register_params params;
+
+	memset(&params, 0, sizeof(params));
+	params.name = "ETH";
+	params.callback = ipa_uc_offload_ntn_pm_cb;
+	params.user_data = ntn_ctx;
+	params.group = IPA_PM_GROUP_DEFAULT;
+	res = ipa_pm_register(&params, &ntn_ctx->pm_hdl);
+	if (res) {
+		IPA_UC_OFFLOAD_ERR("fail to register with PM %d\n", res);
+		return res;
+	}
+
+	res = ipa_pm_associate_ipa_cons_to_client(ntn_ctx->pm_hdl,
+		IPA_CLIENT_ETHERNET_CONS);
+	if (res) {
+		IPA_UC_OFFLOAD_ERR("fail to associate cons with PM %d\n", res);
+		ipa_pm_deregister(ntn_ctx->pm_hdl);
+		ntn_ctx->pm_hdl = ~0;
+		return res;
+	}
+
+	return 0;
+}
+
+static void ipa_uc_offload_ntn_deregister_pm_client(
+	struct ipa_uc_offload_ctx *ntn_ctx)
+{
+	ipa_pm_deactivate_sync(ntn_ctx->pm_hdl);
+	ipa_pm_deregister(ntn_ctx->pm_hdl);
+}
+
 static int ipa_uc_offload_ntn_reg_intf(
 	struct ipa_uc_offload_intf_params *inp,
 	struct ipa_uc_offload_out_params *outp,
@@ -124,33 +159,17 @@ static int ipa_uc_offload_ntn_reg_intf(
 	struct ipa_rx_intf rx;
 	struct ipa_ioc_tx_intf_prop tx_prop[2];
 	struct ipa_ioc_rx_intf_prop rx_prop[2];
-	struct ipa_rm_create_params param;
-	u32 len;
 	int ret = 0;
+	u32 len;
+	bool is_vlan_mode;
 
 	IPA_UC_OFFLOAD_DBG("register interface for netdev %s\n",
 					 inp->netdev_name);
-	memset(&param, 0, sizeof(param));
-	param.name = IPA_RM_RESOURCE_ODU_ADAPT_PROD;
-	param.reg_params.user_data = ntn_ctx;
-	param.reg_params.notify_cb = ipa_uc_offload_rm_notify;
-	param.floor_voltage = IPA_VOLTAGE_SVS;
-	ret = ipa_rm_create_resource(&param);
+	ret = ipa_uc_offload_ntn_register_pm_client(ntn_ctx);
 	if (ret) {
-		IPA_UC_OFFLOAD_ERR("fail to create ODU_ADAPT_PROD resource\n");
+		IPA_UC_OFFLOAD_ERR("fail to register PM client\n");
 		return -EFAULT;
 	}
-
-	memset(&param, 0, sizeof(param));
-	param.name = IPA_RM_RESOURCE_ODU_ADAPT_CONS;
-	param.request_resource = ipa_uc_ntn_cons_request;
-	param.release_resource = ipa_uc_ntn_cons_release;
-	ret = ipa_rm_create_resource(&param);
-	if (ret) {
-		IPA_UC_OFFLOAD_ERR("fail to create ODU_ADAPT_CONS resource\n");
-		goto fail_create_rm_cons;
-	}
-
 	memcpy(ntn_ctx->netdev_name, inp->netdev_name, IPA_RESOURCE_NAME_MAX);
 	ntn_ctx->hdr_len = inp->hdr_info[0].hdr_len;
 	ntn_ctx->notify = inp->notify;
@@ -160,9 +179,43 @@ static int ipa_uc_offload_ntn_reg_intf(
 	len = sizeof(struct ipa_ioc_add_hdr) + 2 * sizeof(struct ipa_hdr_add);
 	hdr = kzalloc(len, GFP_KERNEL);
 	if (hdr == NULL) {
-		IPA_UC_OFFLOAD_ERR("fail to alloc %d bytes\n", len);
 		ret = -ENOMEM;
 		goto fail_alloc;
+	}
+
+	ret = ipa_is_vlan_mode(IPA_VLAN_IF_ETH, &is_vlan_mode);
+	if (ret) {
+		IPA_UC_OFFLOAD_ERR("get vlan mode failed\n");
+		goto fail;
+	}
+
+	if (is_vlan_mode) {
+		if ((inp->hdr_info[0].hdr_type != IPA_HDR_L2_802_1Q) ||
+			(inp->hdr_info[1].hdr_type != IPA_HDR_L2_802_1Q)) {
+			IPA_UC_OFFLOAD_ERR(
+				"hdr_type mismatch in vlan mode\n");
+			WARN_ON_RATELIMIT_IPA(1);
+			ret = -EFAULT;
+			goto fail;
+		}
+		IPA_UC_OFFLOAD_DBG("vlan HEADER type compatible\n");
+
+		if ((inp->hdr_info[0].hdr_len <
+			(ETH_HLEN + VLAN_HLEN)) ||
+			(inp->hdr_info[1].hdr_len <
+			(ETH_HLEN + VLAN_HLEN))) {
+			IPA_UC_OFFLOAD_ERR(
+				"hdr_len shorter than vlan len (%u) (%u)\n"
+				, inp->hdr_info[0].hdr_len
+				, inp->hdr_info[1].hdr_len);
+			WARN_ON_RATELIMIT_IPA(1);
+			ret = -EFAULT;
+			goto fail;
+		}
+
+		IPA_UC_OFFLOAD_DBG("vlan HEADER len compatible (%u) (%u)\n",
+			inp->hdr_info[0].hdr_len,
+			inp->hdr_info[1].hdr_len);
 	}
 
 	if (ipa_commit_partial_hdr(hdr, ntn_ctx->netdev_name, inp->hdr_info)) {
@@ -177,13 +230,13 @@ static int ipa_uc_offload_ntn_reg_intf(
 
 	memset(tx_prop, 0, sizeof(tx_prop));
 	tx_prop[0].ip = IPA_IP_v4;
-	tx_prop[0].dst_pipe = IPA_CLIENT_ODU_TETH_CONS;
+	tx_prop[0].dst_pipe = IPA_CLIENT_ETHERNET_CONS;
 	tx_prop[0].hdr_l2_type = inp->hdr_info[0].hdr_type;
 	memcpy(tx_prop[0].hdr_name, hdr->hdr[IPA_IP_v4].name,
 		sizeof(tx_prop[0].hdr_name));
 
 	tx_prop[1].ip = IPA_IP_v6;
-	tx_prop[1].dst_pipe = IPA_CLIENT_ODU_TETH_CONS;
+	tx_prop[1].dst_pipe = IPA_CLIENT_ETHERNET_CONS;
 	tx_prop[1].hdr_l2_type = inp->hdr_info[1].hdr_type;
 	memcpy(tx_prop[1].hdr_name, hdr->hdr[IPA_IP_v6].name,
 		sizeof(tx_prop[1].hdr_name));
@@ -194,7 +247,7 @@ static int ipa_uc_offload_ntn_reg_intf(
 
 	memset(rx_prop, 0, sizeof(rx_prop));
 	rx_prop[0].ip = IPA_IP_v4;
-	rx_prop[0].src_pipe = IPA_CLIENT_ODU_PROD;
+	rx_prop[0].src_pipe = IPA_CLIENT_ETHERNET_PROD;
 	rx_prop[0].hdr_l2_type = inp->hdr_info[0].hdr_type;
 	if (inp->is_meta_data_valid) {
 		rx_prop[0].attrib.attrib_mask |= IPA_FLT_META_DATA;
@@ -203,7 +256,7 @@ static int ipa_uc_offload_ntn_reg_intf(
 	}
 
 	rx_prop[1].ip = IPA_IP_v6;
-	rx_prop[1].src_pipe = IPA_CLIENT_ODU_PROD;
+	rx_prop[1].src_pipe = IPA_CLIENT_ETHERNET_PROD;
 	rx_prop[1].hdr_l2_type = inp->hdr_info[1].hdr_type;
 	if (inp->is_meta_data_valid) {
 		rx_prop[1].attrib.attrib_mask |= IPA_FLT_META_DATA;
@@ -229,9 +282,7 @@ static int ipa_uc_offload_ntn_reg_intf(
 fail:
 	kfree(hdr);
 fail_alloc:
-	ipa_rm_delete_resource(IPA_RM_RESOURCE_ODU_ADAPT_CONS);
-fail_create_rm_cons:
-	ipa_rm_delete_resource(IPA_RM_RESOURCE_ODU_ADAPT_PROD);
+	ipa_uc_offload_ntn_deregister_pm_client(ntn_ctx);
 	return ret;
 }
 
@@ -243,7 +294,8 @@ int ipa_uc_offload_reg_intf(
 	int ret = 0;
 
 	if (inp == NULL || outp == NULL) {
-		IPA_UC_OFFLOAD_ERR("invalid params in=%p out=%p\n", inp, outp);
+		IPA_UC_OFFLOAD_ERR("invalid params in=%pK out=%pK\n",
+			inp, outp);
 		return -EINVAL;
 	}
 
@@ -279,55 +331,53 @@ int ipa_uc_offload_reg_intf(
 }
 EXPORT_SYMBOL(ipa_uc_offload_reg_intf);
 
-static int ipa_uc_ntn_cons_release(void)
+
+static int ipa_uc_ntn_alloc_conn_smmu_info(struct ipa_ntn_setup_info *dest,
+	struct ipa_ntn_setup_info *source)
 {
+	int result;
+
+	IPA_UC_OFFLOAD_DBG("Allocating smmu info\n");
+
+	memcpy(dest, source, sizeof(struct ipa_ntn_setup_info));
+
+	dest->data_buff_list =
+		kcalloc(dest->num_buffers, sizeof(struct ntn_buff_smmu_map),
+			GFP_KERNEL);
+	if (dest->data_buff_list == NULL) {
+		IPA_UC_OFFLOAD_ERR("failed to alloc smmu info\n");
+		return -ENOMEM;
+	}
+
+	memcpy(dest->data_buff_list, source->data_buff_list,
+		sizeof(struct ntn_buff_smmu_map) * dest->num_buffers);
+
+	result = ipa_smmu_store_sgt(&dest->buff_pool_base_sgt,
+		source->buff_pool_base_sgt);
+	if (result) {
+		kfree(dest->data_buff_list);
+		dest->data_buff_list = NULL;
+		return result;
+	}
+
+	result = ipa_smmu_store_sgt(&dest->ring_base_sgt,
+		source->ring_base_sgt);
+	if (result) {
+		kfree(dest->data_buff_list);
+		dest->data_buff_list = NULL;
+		ipa_smmu_free_sgt(&dest->buff_pool_base_sgt);
+		return result;
+	}
+
 	return 0;
 }
 
-static int ipa_uc_ntn_cons_request(void)
+static void ipa_uc_ntn_free_conn_smmu_info(struct ipa_ntn_setup_info *params)
 {
-	int ret = 0;
-	struct ipa_uc_offload_ctx *ntn_ctx;
-
-	ntn_ctx = ipa_uc_offload_ctx[IPA_UC_NTN];
-	if (!ntn_ctx) {
-		IPA_UC_OFFLOAD_ERR("NTN is not initialized\n");
-		ret = -EFAULT;
-	} else if (ntn_ctx->state != IPA_UC_OFFLOAD_STATE_UP) {
-		IPA_UC_OFFLOAD_ERR("Invalid State: %d\n", ntn_ctx->state);
-		ret = -EFAULT;
-	}
-
-	return ret;
-}
-
-static void ipa_uc_offload_rm_notify(void *user_data, enum ipa_rm_event event,
-		unsigned long data)
-{
-	struct ipa_uc_offload_ctx *offload_ctx;
-
-	offload_ctx = (struct ipa_uc_offload_ctx *)user_data;
-	if (!(offload_ctx && offload_ctx->proto > IPA_UC_INVALID &&
-		  offload_ctx->proto < IPA_UC_MAX_PROT_SIZE)) {
-		IPA_UC_OFFLOAD_ERR("Invalid user data\n");
-		return;
-	}
-
-	if (offload_ctx->state != IPA_UC_OFFLOAD_STATE_INITIALIZED)
-		IPA_UC_OFFLOAD_ERR("Invalid State: %d\n", offload_ctx->state);
-
-	switch (event) {
-	case IPA_RM_RESOURCE_GRANTED:
-		complete_all(&offload_ctx->ntn_completion);
-		break;
-
-	case IPA_RM_RESOURCE_RELEASED:
-		break;
-
-	default:
-		IPA_UC_OFFLOAD_ERR("Invalid RM Evt: %d", event);
-		break;
-	}
+	kfree(params->data_buff_list);
+	params->data_buff_list = NULL;
+	ipa_smmu_free_sgt(&params->buff_pool_base_sgt);
+	ipa_smmu_free_sgt(&params->ring_base_sgt);
 }
 
 int ipa_uc_ntn_conn_pipes(struct ipa_ntn_conn_in_params *inp,
@@ -336,6 +386,11 @@ int ipa_uc_ntn_conn_pipes(struct ipa_ntn_conn_in_params *inp,
 {
 	int result = 0;
 	enum ipa_uc_offload_state prev_state;
+
+	if (ntn_ctx->conn.dl.smmu_enabled != ntn_ctx->conn.ul.smmu_enabled) {
+		IPA_UC_OFFLOAD_ERR("ul and dl smmu enablement do not match\n");
+		return -EINVAL;
+	}
 
 	prev_state = ntn_ctx->state;
 	if (inp->dl.ring_base_pa % IPA_NTN_DMA_POOL_ALIGNMENT ||
@@ -349,25 +404,10 @@ int ipa_uc_ntn_conn_pipes(struct ipa_ntn_conn_in_params *inp,
 		return -EINVAL;
 	}
 
-	result = ipa_rm_add_dependency(IPA_RM_RESOURCE_ODU_ADAPT_PROD,
-		IPA_RM_RESOURCE_APPS_CONS);
+	result = ipa_pm_activate_sync(ntn_ctx->pm_hdl);
 	if (result) {
-		IPA_UC_OFFLOAD_ERR("fail to add rm dependency: %d\n", result);
+		IPA_UC_OFFLOAD_ERR("fail to activate: %d\n", result);
 		return result;
-	}
-
-	result = ipa_rm_request_resource(IPA_RM_RESOURCE_ODU_ADAPT_PROD);
-	if (result == -EINPROGRESS) {
-		if (wait_for_completion_timeout(&ntn_ctx->ntn_completion,
-			10*HZ) == 0) {
-			IPA_UC_OFFLOAD_ERR("ODU PROD resource req time out\n");
-			result = -EFAULT;
-			goto fail;
-		}
-	} else if (result != 0) {
-		IPA_UC_OFFLOAD_ERR("fail to request resource\n");
-		result = -EFAULT;
-		goto fail;
 	}
 
 	ntn_ctx->state = IPA_UC_OFFLOAD_STATE_UP;
@@ -381,11 +421,23 @@ int ipa_uc_ntn_conn_pipes(struct ipa_ntn_conn_in_params *inp,
 		goto fail;
 	}
 
-	return 0;
+	if (ntn_ctx->conn.dl.smmu_enabled) {
+		result = ipa_uc_ntn_alloc_conn_smmu_info(&ntn_ctx->conn.dl,
+			&inp->dl);
+		if (result) {
+			IPA_UC_OFFLOAD_ERR("alloc failure on TX\n");
+			goto fail;
+		}
+		result = ipa_uc_ntn_alloc_conn_smmu_info(&ntn_ctx->conn.ul,
+			&inp->ul);
+		if (result) {
+			ipa_uc_ntn_free_conn_smmu_info(&ntn_ctx->conn.dl);
+			IPA_UC_OFFLOAD_ERR("alloc failure on RX\n");
+			goto fail;
+		}
+	}
 
 fail:
-	ipa_rm_delete_dependency(IPA_RM_RESOURCE_ODU_ADAPT_PROD,
-		IPA_RM_RESOURCE_APPS_CONS);
 	return result;
 }
 
@@ -396,7 +448,7 @@ int ipa_uc_offload_conn_pipes(struct ipa_uc_offload_conn_in_params *inp,
 	struct ipa_uc_offload_ctx *offload_ctx;
 
 	if (!(inp && outp)) {
-		IPA_UC_OFFLOAD_ERR("bad parm. in=%p out=%p\n", inp, outp);
+		IPA_UC_OFFLOAD_ERR("bad parm. in=%pK out=%pK\n", inp, outp);
 		return -EINVAL;
 	}
 
@@ -413,8 +465,7 @@ int ipa_uc_offload_conn_pipes(struct ipa_uc_offload_conn_in_params *inp,
 		return -EINVAL;
 	}
 
-	if (offload_ctx->state != IPA_UC_OFFLOAD_STATE_INITIALIZED &&
-		offload_ctx->state != IPA_UC_OFFLOAD_STATE_DOWN) {
+	if (offload_ctx->state != IPA_UC_OFFLOAD_STATE_INITIALIZED) {
 		IPA_UC_OFFLOAD_ERR("Invalid state %d\n", offload_ctx->state);
 		return -EPERM;
 	}
@@ -437,32 +488,23 @@ EXPORT_SYMBOL(ipa_uc_offload_conn_pipes);
 
 int ipa_set_perf_profile(struct ipa_perf_profile *profile)
 {
-	struct ipa_rm_perf_profile rm_profile;
-	enum ipa_rm_resource_name resource_name;
-
-	if (profile == NULL) {
+	if (!profile) {
 		IPA_UC_OFFLOAD_ERR("Invalid input\n");
 		return -EINVAL;
 	}
 
-	rm_profile.max_supported_bandwidth_mbps =
-		profile->max_supported_bw_mbps;
-
-	if (profile->client == IPA_CLIENT_ODU_PROD) {
-		resource_name = IPA_RM_RESOURCE_ODU_ADAPT_PROD;
-	} else if (profile->client == IPA_CLIENT_ODU_TETH_CONS) {
-		resource_name = IPA_RM_RESOURCE_ODU_ADAPT_CONS;
-	} else {
+	if (profile->client != IPA_CLIENT_ETHERNET_PROD &&
+		profile->client != IPA_CLIENT_ETHERNET_CONS) {
 		IPA_UC_OFFLOAD_ERR("not supported\n");
 		return -EINVAL;
 	}
 
-	if (ipa_rm_set_perf_profile(resource_name, &rm_profile)) {
-		IPA_UC_OFFLOAD_ERR("fail to setup rm perf profile\n");
-		return -EFAULT;
-	}
+	IPA_UC_OFFLOAD_DBG("setting throughput to %d\n",
+		profile->max_supported_bw_mbps);
 
-	return 0;
+	return ipa_pm_set_throughput(
+		ipa_uc_offload_ctx[IPA_UC_NTN]->pm_hdl,
+		profile->max_supported_bw_mbps);
 }
 EXPORT_SYMBOL(ipa_set_perf_profile);
 
@@ -471,29 +513,31 @@ static int ipa_uc_ntn_disconn_pipes(struct ipa_uc_offload_ctx *ntn_ctx)
 	int ipa_ep_idx_ul, ipa_ep_idx_dl;
 	int ret = 0;
 
-	ntn_ctx->state = IPA_UC_OFFLOAD_STATE_DOWN;
+	if (ntn_ctx->conn.dl.smmu_enabled != ntn_ctx->conn.ul.smmu_enabled) {
+		IPA_UC_OFFLOAD_ERR("ul and dl smmu enablement do not match\n");
+		return -EINVAL;
+	}
 
-	ret = ipa_rm_release_resource(IPA_RM_RESOURCE_ODU_ADAPT_PROD);
+	ntn_ctx->state = IPA_UC_OFFLOAD_STATE_INITIALIZED;
+	ret = ipa_pm_deactivate_sync(ntn_ctx->pm_hdl);
 	if (ret) {
-		IPA_UC_OFFLOAD_ERR("fail to release ODU_ADAPT_PROD res: %d\n",
-						  ret);
+		IPA_UC_OFFLOAD_ERR("fail to deactivate res: %d\n",
+			ret);
 		return -EFAULT;
 	}
 
-	ret = ipa_rm_delete_dependency(IPA_RM_RESOURCE_ODU_ADAPT_PROD,
-		IPA_RM_RESOURCE_APPS_CONS);
-	if (ret) {
-		IPA_UC_OFFLOAD_ERR("fail to del dep ODU->APPS, %d\n", ret);
-		return -EFAULT;
-	}
-
-	ipa_ep_idx_ul = ipa_get_ep_mapping(IPA_CLIENT_ODU_PROD);
-	ipa_ep_idx_dl = ipa_get_ep_mapping(IPA_CLIENT_ODU_TETH_CONS);
-	ret = ipa_tear_down_uc_offload_pipes(ipa_ep_idx_ul, ipa_ep_idx_dl);
+	ipa_ep_idx_ul = ipa_get_ep_mapping(IPA_CLIENT_ETHERNET_PROD);
+	ipa_ep_idx_dl = ipa_get_ep_mapping(IPA_CLIENT_ETHERNET_CONS);
+	ret = ipa_tear_down_uc_offload_pipes(ipa_ep_idx_ul, ipa_ep_idx_dl,
+		&ntn_ctx->conn);
 	if (ret) {
 		IPA_UC_OFFLOAD_ERR("fail to tear down ntn offload pipes, %d\n",
-						 ret);
+			ret);
 		return -EFAULT;
+	}
+	if (ntn_ctx->conn.dl.smmu_enabled) {
+		ipa_uc_ntn_free_conn_smmu_info(&ntn_ctx->conn.dl);
+		ipa_uc_ntn_free_conn_smmu_info(&ntn_ctx->conn.ul);
 	}
 
 	return ret;
@@ -541,22 +585,12 @@ static int ipa_uc_ntn_cleanup(struct ipa_uc_offload_ctx *ntn_ctx)
 	int len, result = 0;
 	struct ipa_ioc_del_hdr *hdr;
 
-	if (ipa_rm_delete_resource(IPA_RM_RESOURCE_ODU_ADAPT_PROD)) {
-		IPA_UC_OFFLOAD_ERR("fail to delete ODU_ADAPT_PROD resource\n");
-		return -EFAULT;
-	}
-
-	if (ipa_rm_delete_resource(IPA_RM_RESOURCE_ODU_ADAPT_CONS)) {
-		IPA_UC_OFFLOAD_ERR("fail to delete ODU_ADAPT_CONS resource\n");
-		return -EFAULT;
-	}
+	ipa_uc_offload_ntn_deregister_pm_client(ntn_ctx);
 
 	len = sizeof(struct ipa_ioc_del_hdr) + 2 * sizeof(struct ipa_hdr_del);
 	hdr = kzalloc(len, GFP_KERNEL);
-	if (hdr == NULL) {
-		IPA_UC_OFFLOAD_ERR("fail to alloc %d bytes\n", len);
+	if (hdr == NULL)
 		return -ENOMEM;
-	}
 
 	hdr->commit = 1;
 	hdr->num_hdls = 2;
@@ -597,7 +631,7 @@ int ipa_uc_offload_cleanup(u32 clnt_hdl)
 		return -EINVAL;
 	}
 
-	if (offload_ctx->state != IPA_UC_OFFLOAD_STATE_DOWN) {
+	if (offload_ctx->state != IPA_UC_OFFLOAD_STATE_INITIALIZED) {
 		IPA_UC_OFFLOAD_ERR("Invalid State %d\n", offload_ctx->state);
 		return -EINVAL;
 	}

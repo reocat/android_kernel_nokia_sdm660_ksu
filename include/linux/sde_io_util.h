@@ -1,13 +1,6 @@
-/* Copyright (c) 2012, 2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2012, 2017-2019, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __SDE_IO_UTIL_H__
@@ -58,8 +51,6 @@ struct dss_vreg {
 	int post_on_sleep;
 	int pre_off_sleep;
 	int post_off_sleep;
-	bool lp_disable_allowed;
-	bool disabled;
 };
 
 struct dss_gpio {
@@ -105,6 +96,7 @@ int msm_dss_enable_vreg(struct dss_vreg *in_vreg, int num_vreg,	int enable);
 int msm_dss_get_clk(struct device *dev, struct dss_clk *clk_arry, int num_clk);
 void msm_dss_put_clk(struct dss_clk *clk_arry, int num_clk);
 int msm_dss_clk_set_rate(struct dss_clk *clk_arry, int num_clk);
+int msm_dss_single_clk_set_rate(struct dss_clk *clk);
 int msm_dss_enable_clk(struct dss_clk *clk_arry, int num_clk, int enable);
 
 int sde_i2c_byte_read(struct i2c_client *client, uint8_t slave_addr,

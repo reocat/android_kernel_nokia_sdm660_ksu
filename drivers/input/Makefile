@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # Makefile for the input core drivers.
 #
@@ -5,7 +6,7 @@
 # Each configuration option enables a list of files.
 
 obj-$(CONFIG_INPUT)		+= input-core.o
-input-core-y := input.o input-compat.o input-mt.o ff-core.o
+input-core-y := input.o input-compat.o input-mt.o ff-core.o event_notify.o
 
 obj-$(CONFIG_INPUT_FF_MEMLESS)	+= ff-memless.o
 obj-$(CONFIG_INPUT_POLLDEV)	+= input-polldev.o
@@ -29,4 +30,5 @@ obj-$(CONFIG_INPUT_FINGERPRINT)	+= fingerprint/
 obj-$(CONFIG_INPUT_APMPOWER)	+= apm-power.o
 obj-$(CONFIG_INPUT_KEYRESET)	+= keyreset.o
 obj-$(CONFIG_INPUT_KEYCOMBO)	+= keycombo.o
-obj-y   += sensors/bmi160/
+
+obj-$(CONFIG_RMI4_CORE)		+= rmi4/

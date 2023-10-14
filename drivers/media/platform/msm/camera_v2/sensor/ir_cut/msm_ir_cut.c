@@ -1,4 +1,5 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2016, 2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,7 +12,7 @@
  *
  */
 
-#define pr_fmt(fmt) "%s:%d " fmt, __func__, __LINE__
+#define pr_fmt(fmt) "%s:%d\n" fmt, __func__, __LINE__
 
 #include <linux/module.h>
 #include <linux/of_gpio.h>
@@ -78,14 +79,14 @@ static int32_t msm_ir_cut_release(
 	int32_t rc = 0;
 
 	if (ir_cut_ctrl->ir_cut_state == MSM_CAMERA_IR_CUT_RELEASE) {
-		pr_err("%s:%d Invalid ir_cut state = %d",
+		pr_err("%s:%d Invalid ir_cut state = %d\n",
 			__func__, __LINE__, ir_cut_ctrl->ir_cut_state);
 		return 0;
 	}
 
 	rc = ir_cut_ctrl->func_tbl->camera_ir_cut_on(ir_cut_ctrl, NULL);
 	if (rc < 0) {
-		pr_err("%s:%d camera_ir_cut_on failed rc = %d",
+		pr_err("%s:%d camera_ir_cut_on failed rc = %d\n",
 			__func__, __LINE__, rc);
 		return rc;
 	}
@@ -122,29 +123,27 @@ static int32_t msm_ir_cut_off(struct msm_ir_cut_ctrl_t *ir_cut_ctrl,
 			ir_cut_ctrl->pinctrl_info.gpio_state_active);
 
 		if (rc < 0)
-			pr_err("ERR:%s:%d cannot set pin to active state: %d",
+			pr_err("ERR:%s:%d cannot set pin to active state: %d\n",
 				__func__, __LINE__, rc);
 	}
 
 	CDBG("ERR:%s:gpio_conf->gpio_num_info->gpio_num[0] = %d",
 		__func__,
-		ir_cut_ctrl->gconf->gpio_num_info->
-			gpio_num[IR_CUT_FILTER_GPIO_P]);
+		ir_cut_ctrl->gconf->gpio_num_info->gpio_num[
+			IR_CUT_FILTER_GPIO_P]);
 
 	CDBG("ERR:%s:gpio_conf->gpio_num_info->gpio_num[1] = %d",
 		__func__,
-		ir_cut_ctrl->gconf->gpio_num_info->
-			gpio_num[IR_CUT_FILTER_GPIO_M]);
+		ir_cut_ctrl->gconf->gpio_num_info->gpio_num[
+			IR_CUT_FILTER_GPIO_M]);
 
 	gpio_set_value_cansleep(
-		ir_cut_ctrl->gconf->gpio_num_info->
-			gpio_num[IR_CUT_FILTER_GPIO_P],
-		0);
+		ir_cut_ctrl->gconf->gpio_num_info->gpio_num[
+			IR_CUT_FILTER_GPIO_P], 0);
 
 	gpio_set_value_cansleep(
-		ir_cut_ctrl->gconf->gpio_num_info->
-			gpio_num[IR_CUT_FILTER_GPIO_M],
-		1);
+		ir_cut_ctrl->gconf->gpio_num_info->gpio_num[
+			IR_CUT_FILTER_GPIO_M], 1);
 
 	if (ir_cut_ctrl->gconf) {
 		rc = msm_camera_request_gpio_table(
@@ -196,29 +195,27 @@ static int32_t msm_ir_cut_on(
 			ir_cut_ctrl->pinctrl_info.gpio_state_active);
 
 		if (rc < 0)
-			pr_err("ERR:%s:%d cannot set pin to active state: %d",
+			pr_err("ERR:%s:%d cannot set pin to active state: %d\n",
 				__func__, __LINE__, rc);
 	}
 
 	CDBG("ERR:%s: gpio_conf->gpio_num_info->gpio_num[0] = %d",
 		__func__,
-		ir_cut_ctrl->gconf->gpio_num_info->
-			gpio_num[IR_CUT_FILTER_GPIO_P]);
+		ir_cut_ctrl->gconf->gpio_num_info->gpio_num[
+			IR_CUT_FILTER_GPIO_P]);
 
 	CDBG("ERR:%s: gpio_conf->gpio_num_info->gpio_num[1] = %d",
 		__func__,
-		ir_cut_ctrl->gconf->gpio_num_info->
-			gpio_num[IR_CUT_FILTER_GPIO_M]);
+		ir_cut_ctrl->gconf->gpio_num_info->gpio_num[
+			IR_CUT_FILTER_GPIO_M]);
 
 	gpio_set_value_cansleep(
-		ir_cut_ctrl->gconf->gpio_num_info->
-			gpio_num[IR_CUT_FILTER_GPIO_P],
-		1);
+		ir_cut_ctrl->gconf->gpio_num_info->gpio_num[
+			IR_CUT_FILTER_GPIO_P], 1);
 
 	gpio_set_value_cansleep(
-		ir_cut_ctrl->gconf->
-			gpio_num_info->gpio_num[IR_CUT_FILTER_GPIO_M],
-		1);
+		ir_cut_ctrl->gconf->gpio_num_info->gpio_num[
+			IR_CUT_FILTER_GPIO_M], 1);
 
 	if (ir_cut_ctrl->gconf) {
 		rc = msm_camera_request_gpio_table(
@@ -251,7 +248,7 @@ static int32_t msm_ir_cut_handle_init(
 	CDBG("Enter");
 
 	if (ir_cut_ctrl->ir_cut_state == MSM_CAMERA_IR_CUT_INIT) {
-		pr_err("%s:%d Invalid ir_cut state = %d",
+		pr_err("%s:%d Invalid ir_cut state = %d\n",
 			__func__, __LINE__, ir_cut_ctrl->ir_cut_state);
 		return 0;
 	}
@@ -273,7 +270,7 @@ static int32_t msm_ir_cut_handle_init(
 	rc = ir_cut_ctrl->func_tbl->camera_ir_cut_init(
 			ir_cut_ctrl, ir_cut_data);
 	if (rc < 0) {
-		pr_err("%s:%d camera_ir_cut_init failed rc = %d",
+		pr_err("%s:%d camera_ir_cut_init failed rc = %d\n",
 			__func__, __LINE__, rc);
 		return rc;
 	}
@@ -285,7 +282,7 @@ static int32_t msm_ir_cut_handle_init(
 }
 
 static int32_t msm_ir_cut_config(struct msm_ir_cut_ctrl_t *ir_cut_ctrl,
-	void __user *argp)
+	void *argp)
 {
 	int32_t rc = -EINVAL;
 	struct msm_ir_cut_cfg_data_t *ir_cut_data =
@@ -330,7 +327,7 @@ static long msm_ir_cut_subdev_ioctl(struct v4l2_subdev *sd,
 	unsigned int cmd, void *arg)
 {
 	struct msm_ir_cut_ctrl_t *fctrl = NULL;
-	void __user *argp = (void __user *)arg;
+	void *argp = (void *)arg;
 
 	CDBG("Enter\n");
 
@@ -372,8 +369,8 @@ static struct v4l2_subdev_ops msm_ir_cut_subdev_ops = {
 	.core = &msm_ir_cut_subdev_core_ops,
 };
 static int msm_ir_cut_close(struct v4l2_subdev *sd,
-	struct v4l2_subdev_fh *fh) {
-
+	struct v4l2_subdev_fh *fh)
+{
 	int rc = 0;
 	struct msm_ir_cut_ctrl_t *ir_cut_ctrl = v4l2_get_subdevdata(sd);
 
@@ -600,9 +597,8 @@ static int32_t msm_ir_cut_platform_probe(struct platform_device *pdev)
 	snprintf(ir_cut_ctrl->msm_sd.sd.name,
 		ARRAY_SIZE(ir_cut_ctrl->msm_sd.sd.name),
 		"msm_camera_ir_cut");
-	media_entity_init(&ir_cut_ctrl->msm_sd.sd.entity, 0, NULL, 0);
-	ir_cut_ctrl->msm_sd.sd.entity.type = MEDIA_ENT_T_V4L2_SUBDEV;
-	ir_cut_ctrl->msm_sd.sd.entity.group_id = MSM_CAMERA_SUBDEV_IR_CUT;
+	media_entity_pads_init(&ir_cut_ctrl->msm_sd.sd.entity, 0, NULL);
+	ir_cut_ctrl->msm_sd.sd.entity.function = MSM_CAMERA_SUBDEV_IR_CUT;
 	ir_cut_ctrl->msm_sd.close_seq = MSM_SD_CLOSE_2ND_CATEGORY | 0x1;
 	msm_sd_register(&ir_cut_ctrl->msm_sd);
 
@@ -625,7 +621,6 @@ static struct platform_driver msm_ir_cut_platform_driver = {
 	.probe = msm_ir_cut_platform_probe,
 	.driver = {
 		.name = "qcom,ir-cut",
-		.owner = THIS_MODULE,
 		.of_match_table = msm_ir_cut_dt_match,
 	},
 };
@@ -639,7 +634,7 @@ static int __init msm_ir_cut_init_module(void)
 	if (!rc)
 		return rc;
 
-	pr_err("platform probe for ir_cut failed");
+	pr_err("platform probe for ir_cut failed\n");
 
 	return rc;
 }

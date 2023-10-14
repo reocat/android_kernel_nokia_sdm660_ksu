@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 
 #undef TRACE_SYSTEM_VAR
 
@@ -15,7 +16,7 @@
 		((__entry->__data_loc_##field >> 16) & 0xffff)
 
 #undef __get_str
-#define __get_str(field) (char *)__get_dynamic_array(field)
+#define __get_str(field) ((char *)__get_dynamic_array(field))
 
 #undef __get_bitmask
 #define __get_bitmask(field) (char *)__get_dynamic_array(field)

@@ -1220,7 +1220,6 @@ static struct clk_rcg sdc1_src = {
 			.parent_names = gcc_pxo_pll8,
 			.num_parents = 2,
 			.ops = &clk_rcg_ops,
-			.flags = CLK_SET_RATE_GATE,
 		},
 	}
 };
@@ -1269,7 +1268,6 @@ static struct clk_rcg sdc3_src = {
 			.parent_names = gcc_pxo_pll8,
 			.num_parents = 2,
 			.ops = &clk_rcg_ops,
-			.flags = CLK_SET_RATE_GATE,
 		},
 	}
 };
@@ -1353,7 +1351,6 @@ static struct clk_rcg tsif_ref_src = {
 			.parent_names = gcc_pxo_pll8,
 			.num_parents = 2,
 			.ops = &clk_rcg_ops,
-			.flags = CLK_SET_RATE_GATE,
 		},
 	}
 };
@@ -2986,19 +2983,17 @@ MODULE_DEVICE_TABLE(of, gcc_ipq806x_match_table);
 
 static int gcc_ipq806x_probe(struct platform_device *pdev)
 {
-	struct clk *clk;
 	struct device *dev = &pdev->dev;
 	struct regmap *regmap;
 	int ret;
 
-	/* Temporary until RPM clocks supported */
-	clk = clk_register_fixed_rate(dev, "cxo", NULL, CLK_IS_ROOT, 25000000);
-	if (IS_ERR(clk))
-		return PTR_ERR(clk);
+	ret = qcom_cc_register_board_clk(dev, "cxo_board", "cxo", 25000000);
+	if (ret)
+		return ret;
 
-	clk = clk_register_fixed_rate(dev, "pxo", NULL, CLK_IS_ROOT, 25000000);
-	if (IS_ERR(clk))
-		return PTR_ERR(clk);
+	ret = qcom_cc_register_board_clk(dev, "pxo_board", "pxo", 25000000);
+	if (ret)
+		return ret;
 
 	ret = qcom_cc_probe(pdev, &gcc_ipq806x_desc);
 	if (ret)

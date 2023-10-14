@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/arm/mm/iomap.c
  *
@@ -34,8 +35,7 @@ EXPORT_SYMBOL(pcibios_min_mem);
 
 void pci_iounmap(struct pci_dev *dev, void __iomem *addr)
 {
-	if ((unsigned long)addr >= VMALLOC_START &&
-	    (unsigned long)addr < VMALLOC_END)
+	if (is_vmalloc_addr(addr))
 		iounmap(addr);
 }
 EXPORT_SYMBOL(pci_iounmap);

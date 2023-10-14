@@ -1,14 +1,6 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
@@ -463,7 +455,7 @@ static int sde_mdp_writeback_display(struct sde_mdp_ctl *ctl, void *arg)
 	if (ctl->irq_num >= 0)
 		enable_irq(ctl->irq_num);
 	ret = sde_smmu_ctrl(1);
-	if (IS_ERR_VALUE(ret)) {
+	if (ret < 0) {
 		SDEROT_ERR("IOMMU attach failed\n");
 		return ret;
 	}

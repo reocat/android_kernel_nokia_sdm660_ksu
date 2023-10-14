@@ -1,16 +1,7 @@
-/* Copyright (c) 2011-2013, 2015, 2017, 2019, The Linux Foundation.
- * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2011, 2013, 2015, 2017-2019, The Linux Foundation. All rights reserved.
  */
-
 /**
  * Pipe-Memory allocation/free management.
  */
@@ -50,8 +41,8 @@ void *spsi_get_mem_ptr(phys_addr_t phys_addr)
 		virt = (u8 *) iomem_virt + (phys_addr - iomem_phys);
 	} else {
 		virt = phys_to_virt(phys_addr);
-		SPS_ERR(sps, "sps:spsi_get_mem_ptr.invalid phys addr=0x%pa.",
-			&phys_addr);
+		SPS_ERR(sps, "sps:%s.invalid phys addr=0x%pa.",
+			__func__, &phys_addr);
 	}
 	return virt;
 }
@@ -75,8 +66,8 @@ phys_addr_t sps_mem_alloc_io(u32 bytes)
 		return SPS_ADDR_INVALID;
 	}
 
-	SPS_DBG3(sps, "sps:sps_mem_alloc_io.phys=%pa.virt=0x%pK.size=0x%x.",
-		&phys_addr, (void *)virt_addr, bytes);
+	SPS_DBG3(sps, "sps:%s.phys=%pa.virt=0x%pK.size=0x%x.",
+		__func__, &phys_addr, (void *)virt_addr, bytes);
 
 	return phys_addr;
 }
@@ -92,8 +83,8 @@ void sps_mem_free_io(phys_addr_t phys_addr, u32 bytes)
 	iomem_offset = phys_addr - iomem_phys;
 	virt_addr = (uintptr_t) iomem_virt + iomem_offset;
 
-	SPS_DBG3(sps, "sps:sps_mem_free_io.phys=%pa.virt=0x%pK.size=0x%x.",
-		&phys_addr, (void *)virt_addr, bytes);
+	SPS_DBG3(sps, "sps:%s.phys=%pa.virt=0x%pK.size=0x%x.",
+		__func__, &phys_addr, (void *)virt_addr, bytes);
 
 	gen_pool_free(pool, virt_addr, bytes);
 	total_free += bytes;
@@ -118,20 +109,19 @@ int sps_mem_init(phys_addr_t pipemem_phys_base, u32 pipemem_size)
 			SPS_ERR(sps, "sps:%s:Invalid Pipe-Mem address",
 				__func__);
 			return SPS_ERROR;
-		} else {
-			iomem_virt = ioremap(iomem_phys, iomem_size);
-			if (!iomem_virt) {
-				SPS_ERR(sps,
+		}
+		iomem_virt = ioremap(iomem_phys, iomem_size);
+		if (!iomem_virt) {
+			SPS_ERR(sps,
 				"sps:%s:Failed to IO map pipe memory.\n",
 					__func__);
-				return -ENOMEM;
-			}
+			return -ENOMEM;
 		}
 
 		iomem_offset = 0;
 		SPS_DBG(sps,
-			"sps:sps_mem_init.iomem_phys=%pa,iomem_virt=0x%pK.",
-			&iomem_phys, iomem_virt);
+			"sps:%s.iomem_phys=%pa,iomem_virt=0x%pK.",
+			__func__, &iomem_phys, iomem_virt);
 	}
 
 	pool = gen_pool_create(min_alloc_order, nid);
@@ -167,8 +157,7 @@ int sps_mem_de_init(void)
 
 	if (total_alloc == total_free)
 		return 0;
-	else {
-		SPS_ERR(sps, "sps:%s:some memory not free", __func__);
-		return SPS_ERROR;
-	}
+
+	SPS_ERR(sps, "sps:%s:some memory not free", __func__);
+	return SPS_ERROR;
 }

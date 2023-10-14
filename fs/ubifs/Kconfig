@@ -7,6 +7,8 @@ config UBIFS_FS
 	select CRYPTO if UBIFS_FS_ZLIB
 	select CRYPTO_LZO if UBIFS_FS_LZO
 	select CRYPTO_DEFLATE if UBIFS_FS_ZLIB
+	select UBIFS_FS_XATTR if FS_ENCRYPTION
+	select FS_ENCRYPTION_ALGS if FS_ENCRYPTION
 	depends on MTD_UBI
 	help
 	  UBIFS is a file system for flash devices which works on top of UBI.
@@ -50,3 +52,27 @@ config UBIFS_ATIME_SUPPORT
 	  strictatime is the "heavy", relatime is "lighter", etc.
 
 	  If unsure, say 'N'
+
+config UBIFS_FS_XATTR
+	bool "UBIFS XATTR support"
+	depends on UBIFS_FS
+	default y
+	help
+	  Saying Y here includes support for extended attributes (xattrs).
+	  Xattrs are name:value pairs associated with inodes by
+	  the kernel or by users (see the attr(5) manual page).
+
+	  If unsure, say Y.
+
+config UBIFS_FS_SECURITY
+	bool "UBIFS Security Labels"
+	depends on UBIFS_FS && UBIFS_FS_XATTR
+	default y
+	help
+	  Security labels provide an access control facility to support Linux
+	  Security Models (LSMs) accepted by AppArmor, SELinux, Smack and TOMOYO
+	  Linux. This option enables an extended attribute handler for file
+	  security labels in the ubifs filesystem, so that it requires enabling
+	  the extended attribute support in advance.
+
+	  If you are not using a security module, say N.

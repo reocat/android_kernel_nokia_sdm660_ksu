@@ -33,8 +33,6 @@
 #include "hid-lg4ff.h"
 #include "hid-ids.h"
 
-#define to_hid_device(pdev) container_of(pdev, struct hid_device, dev)
-
 #define LG4FF_MMODE_IS_MULTIMODE 0
 #define LG4FF_MMODE_SWITCHED 1
 #define LG4FF_MMODE_NOT_MULTIMODE 2
@@ -77,6 +75,7 @@ static void lg4ff_set_range_g25(struct hid_device *hid, u16 range);
 
 struct lg4ff_wheel_data {
 	const u32 product_id;
+	u16 combine;
 	u16 range;
 	const u16 min_range;
 	const u16 max_range;
@@ -138,6 +137,7 @@ struct lg4ff_alternate_mode {
 };
 
 static const struct lg4ff_wheel lg4ff_devices[] = {
+	{USB_DEVICE_ID_LOGITECH_WINGMAN_FFG, lg4ff_wheel_effects, 40, 180, NULL},
 	{USB_DEVICE_ID_LOGITECH_WHEEL,       lg4ff_wheel_effects, 40, 270, NULL},
 	{USB_DEVICE_ID_LOGITECH_MOMO_WHEEL,  lg4ff_wheel_effects, 40, 270, NULL},
 	{USB_DEVICE_ID_LOGITECH_DFP_WHEEL,   lg4ff_wheel_effects, 40, 900, lg4ff_set_range_dfp},
@@ -330,6 +330,56 @@ int lg4ff_adjust_input_event(struct hid_device *hid, struct hid_field *field,
 	}
 }
 
+int lg4ff_raw_event(struct hid_device *hdev, struct hid_report *report,
+		u8 *rd, int size, struct lg_drv_data *drv_data)
+{
+	int offset;
+	struct lg4ff_device_entry *entry = drv_data->device_props;
+
+	if (!entry)
+		return 0;
+
+	/* adjust HID report present combined pedals data */
+	if (entry->wdata.combine) {
+		switch (entry->wdata.product_id) {
+		case USB_DEVICE_ID_LOGITECH_WHEEL:
+			rd[5] = rd[3];
+			rd[6] = 0x7F;
+			return 1;
+		case USB_DEVICE_ID_LOGITECH_WINGMAN_FFG:
+		case USB_DEVICE_ID_LOGITECH_MOMO_WHEEL:
+		case USB_DEVICE_ID_LOGITECH_MOMO_WHEEL2:
+			rd[4] = rd[3];
+			rd[5] = 0x7F;
+			return 1;
+		case USB_DEVICE_ID_LOGITECH_DFP_WHEEL:
+			rd[5] = rd[4];
+			rd[6] = 0x7F;
+			return 1;
+		case USB_DEVICE_ID_LOGITECH_G25_WHEEL:
+		case USB_DEVICE_ID_LOGITECH_G27_WHEEL:
+			offset = 5;
+			break;
+		case USB_DEVICE_ID_LOGITECH_DFGT_WHEEL:
+		case USB_DEVICE_ID_LOGITECH_G29_WHEEL:
+			offset = 6;
+			break;
+		case USB_DEVICE_ID_LOGITECH_WII_WHEEL:
+			offset = 3;
+			break;
+		default:
+			return 0;
+		}
+
+		/* Compute a combined axis when wheel does not supply it */
+		rd[offset] = (0xFF + rd[offset] - rd[offset+1]) >> 1;
+		rd[offset+1] = 0x7F;
+		return 1;
+	}
+
+	return 0;
+}
+
 static void lg4ff_init_wheel_data(struct lg4ff_wheel_data * const wdata, const struct lg4ff_wheel *wheel,
 				  const struct lg4ff_multimode_wheel *mmode_wheel,
 				  const u16 real_product_id)
@@ -347,6 +397,7 @@ static void lg4ff_init_wheel_data(struct lg4ff_wheel_data * const wdata, const s
 	{
 		struct lg4ff_wheel_data t_wdata =  { .product_id = wheel->product_id,
 						     .real_product_id = real_product_id,
+						     .combine = 0,
 						     .min_range = wheel->min_range,
 						     .max_range = wheel->max_range,
 						     .set_range = wheel->set_range,
@@ -423,9 +474,7 @@ static int lg4ff_play(struct input_dev *dev, void *data, struct ff_effect *effec
 static void lg4ff_set_autocenter_default(struct input_dev *dev, u16 magnitude)
 {
 	struct hid_device *hid = input_get_drvdata(dev);
-	struct list_head *report_list = &hid->report_enum[HID_OUTPUT_REPORT].report_list;
-	struct hid_report *report = list_entry(report_list->next, struct hid_report, list);
-	s32 *value = report->field[0]->value;
+	s32 *value;
 	u32 expand_a, expand_b;
 	struct lg4ff_device_entry *entry;
 	struct lg_drv_data *drv_data;
@@ -829,6 +878,12 @@ static ssize_t lg4ff_alternate_modes_store(struct device *dev, struct device_att
 		return -ENOMEM;
 
 	i = strlen(lbuf);
+
+	if (i == 0) {
+		kfree(lbuf);
+		return -EINVAL;
+	}
+
 	if (lbuf[i-1] == '\n') {
 		if (i == 1) {
 			kfree(lbuf);
@@ -886,6 +941,58 @@ static ssize_t lg4ff_alternate_modes_store(struct device *dev, struct device_att
 	return (ret == 0 ? count : ret);
 }
 static DEVICE_ATTR(alternate_modes, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_alternate_modes_show, lg4ff_alternate_modes_store);
+
+static ssize_t lg4ff_combine_show(struct device *dev, struct device_attribute *attr,
+				char *buf)
+{
+	struct hid_device *hid = to_hid_device(dev);
+	struct lg4ff_device_entry *entry;
+	struct lg_drv_data *drv_data;
+	size_t count;
+
+	drv_data = hid_get_drvdata(hid);
+	if (!drv_data) {
+		hid_err(hid, "Private driver data not found!\n");
+		return 0;
+	}
+
+	entry = drv_data->device_props;
+	if (!entry) {
+		hid_err(hid, "Device properties not found!\n");
+		return 0;
+	}
+
+	count = scnprintf(buf, PAGE_SIZE, "%u\n", entry->wdata.combine);
+	return count;
+}
+
+static ssize_t lg4ff_combine_store(struct device *dev, struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct hid_device *hid = to_hid_device(dev);
+	struct lg4ff_device_entry *entry;
+	struct lg_drv_data *drv_data;
+	u16 combine = simple_strtoul(buf, NULL, 10);
+
+	drv_data = hid_get_drvdata(hid);
+	if (!drv_data) {
+		hid_err(hid, "Private driver data not found!\n");
+		return -EINVAL;
+	}
+
+	entry = drv_data->device_props;
+	if (!entry) {
+		hid_err(hid, "Device properties not found!\n");
+		return -EINVAL;
+	}
+
+	if (combine > 1)
+		combine = 1;
+
+	entry->wdata.combine = combine;
+	return count;
+}
+static DEVICE_ATTR(combine_pedals, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_combine_show, lg4ff_combine_store);
 
 /* Export the currently set range of the wheel */
 static ssize_t lg4ff_range_show(struct device *dev, struct device_attribute *attr,
@@ -1020,7 +1127,7 @@ static void lg4ff_led_set_brightness(struct led_classdev *led_cdev,
 			enum led_brightness value)
 {
 	struct device *dev = led_cdev->dev->parent;
-	struct hid_device *hid = container_of(dev, struct hid_device, dev);
+	struct hid_device *hid = to_hid_device(dev);
 	struct lg_drv_data *drv_data = hid_get_drvdata(hid);
 	struct lg4ff_device_entry *entry;
 	int i, state = 0;
@@ -1055,7 +1162,7 @@ static void lg4ff_led_set_brightness(struct led_classdev *led_cdev,
 static enum led_brightness lg4ff_led_get_brightness(struct led_classdev *led_cdev)
 {
 	struct device *dev = led_cdev->dev->parent;
-	struct hid_device *hid = container_of(dev, struct hid_device, dev);
+	struct hid_device *hid = to_hid_device(dev);
 	struct lg_drv_data *drv_data = hid_get_drvdata(hid);
 	struct lg4ff_device_entry *entry;
 	int i, value = 0;
@@ -1268,6 +1375,9 @@ int lg4ff_init(struct hid_device *hid)
 	}
 
 	/* Create sysfs interface */
+	error = device_create_file(&hid->dev, &dev_attr_combine_pedals);
+	if (error)
+		hid_warn(hid, "Unable to create sysfs interface for \"combine\", errno %d\n", error);
 	error = device_create_file(&hid->dev, &dev_attr_range);
 	if (error)
 		hid_warn(hid, "Unable to create sysfs interface for \"range\", errno %d\n", error);
@@ -1367,6 +1477,7 @@ int lg4ff_deinit(struct hid_device *hid)
 		device_remove_file(&hid->dev, &dev_attr_alternate_modes);
 	}
 
+	device_remove_file(&hid->dev, &dev_attr_combine_pedals);
 	device_remove_file(&hid->dev, &dev_attr_range);
 #ifdef CONFIG_LEDS_CLASS
 	{

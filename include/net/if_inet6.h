@@ -17,6 +17,7 @@
 
 #include <net/snmp.h>
 #include <linux/ipv6.h>
+#include <linux/refcount.h>
 
 /* inet6_dev.if_flags */
 
@@ -41,11 +42,12 @@ enum {
 struct inet6_ifaddr {
 	struct in6_addr		addr;
 	__u32			prefix_len;
+	__u32			rt_priority;
 
 	/* In seconds, relative to tstamp. Expiry is at tstamp + HZ * lft. */
 	__u32			valid_lft;
 	__u32			prefered_lft;
-	atomic_t		refcnt;
+	refcount_t		refcnt;
 	spinlock_t		lock;
 
 	int			state;
@@ -55,6 +57,7 @@ struct inet6_ifaddr {
 	__u8			stable_privacy_retry;
 
 	__u16			scope;
+	__u64			dad_nonce;
 
 	unsigned long		cstamp;	/* created timestamp */
 	unsigned long		tstamp; /* updated timestamp */
@@ -62,10 +65,18 @@ struct inet6_ifaddr {
 	struct delayed_work	dad_work;
 
 	struct inet6_dev	*idev;
-	struct rt6_info		*rt;
+	struct fib6_info	*rt;
 
 	struct hlist_node	addr_lst;
 	struct list_head	if_list;
+	/*
+	 * Used to safely traverse idev->addr_list in process context
+	 * if the idev->lock needed to protect idev->addr_list cannot be held.
+	 * In that case, add the items to this list temporarily and iterate
+	 * without holding idev->lock.
+	 * See addrconf_ifdown and dev_forward_change.
+	 */
+	struct list_head	if_list_aux;
 
 	struct list_head	tmp_list;
 	struct inet6_ifaddr	*ifpub;
@@ -125,7 +136,7 @@ struct ifmcaddr6 {
 	struct timer_list	mca_timer;
 	unsigned int		mca_flags;
 	int			mca_users;
-	atomic_t		mca_refcnt;
+	refcount_t		mca_refcnt;
 	spinlock_t		mca_lock;
 	unsigned long		mca_cstamp;
 	unsigned long		mca_tstamp;
@@ -141,11 +152,10 @@ struct ipv6_ac_socklist {
 
 struct ifacaddr6 {
 	struct in6_addr		aca_addr;
-	struct inet6_dev	*aca_idev;
-	struct rt6_info		*aca_rt;
+	struct fib6_info	*aca_rt;
 	struct ifacaddr6	*aca_next;
 	int			aca_users;
-	atomic_t		aca_refcnt;
+	refcount_t		aca_refcnt;
 	unsigned long		aca_cstamp;
 	unsigned long		aca_tstamp;
 };
@@ -186,12 +196,12 @@ struct inet6_dev {
 
 	struct ifacaddr6	*ac_list;
 	rwlock_t		lock;
-	atomic_t		refcnt;
+	refcount_t		refcnt;
 	__u32			if_flags;
 	int			dead;
 
+	u32			desync_factor;
 	u8			rndid[8];
-	struct timer_list	regen_timer;
 	struct list_head	tempaddr_list;
 
 	struct in6_addr		token;
@@ -204,7 +214,6 @@ struct inet6_dev {
 	__s32			rs_interval;	/* in jiffies */
 	__u8			rs_probes;
 
-	__u8			addr_gen_mode;
 	unsigned long		tstamp; /* ipv6InterfaceTable update timestamp */
 	struct rcu_head		rcu;
 };

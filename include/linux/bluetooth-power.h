@@ -1,15 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __LINUX_BLUETOOTH_POWER_H
@@ -59,6 +50,12 @@ struct bt_power_clk_data {
 struct bluetooth_power_platform_data {
 	/* Bluetooth reset gpio */
 	int bt_gpio_sys_rst;
+	/* Bluetooth sw_ctrl gpio */
+	int bt_gpio_sw_ctrl;
+	/* Wlan reset gpio */
+	int wl_gpio_sys_rst;
+	/* Bluetooth debug gpio */
+	int bt_gpio_debug;
 	struct device *slim_dev;
 	/* VDDIO voltage regulator */
 	struct bt_power_vreg_data *bt_vdd_io;
@@ -70,6 +67,16 @@ struct bluetooth_power_platform_data {
 	struct bt_power_vreg_data *bt_vdd_xtal;
 	/* VDD_CORE voltage regulator */
 	struct bt_power_vreg_data *bt_vdd_core;
+	/* VDD_AON digital voltage regulator */
+	struct bt_power_vreg_data *bt_vdd_aon;
+	/* VDD_DIG digital voltage regulator */
+	struct bt_power_vreg_data *bt_vdd_dig;
+	/* VDD RFA1 digital voltage regulator */
+	struct bt_power_vreg_data *bt_vdd_rfa1;
+	/* VDD RFA2 digital voltage regulator */
+	struct bt_power_vreg_data *bt_vdd_rfa2;
+	/* VDD ASD digital voltage regulator */
+	struct bt_power_vreg_data *bt_vdd_asd;
 	/* Optional: chip power down gpio-regulator
 	 * chip power down data is required when bluetooth module
 	 * and other modules like wifi co-exist in a single chip and
@@ -79,11 +86,21 @@ struct bluetooth_power_platform_data {
 	/* bluetooth reference clock */
 	struct bt_power_clk_data *bt_chip_clk;
 	/* Optional: Bluetooth power setup function */
-	int (*bt_power_setup)(int);
+	int (*bt_power_setup)(int id);
 };
 
 int bt_register_slimdev(struct device *dev);
+int get_chipset_version(void);
 
-#define BT_CMD_SLIM_TEST		0xbfac
-#define BT_CMD_PWR_CTRL			0xbfad
+#define BT_CMD_SLIM_TEST            0xbfac
+#define BT_CMD_PWR_CTRL             0xbfad
+#define BT_CMD_CHIPSET_VERS         0xbfae
+/* 0xbfaf --> reserved for kernel 5.4 */
+#define BT_CMD_CHECK_SW_CTRL        0xbfb0
+#define BT_CMD_GETVAL_POWER_SRCS    0xbfb1
+
+
+/* total number of power src */
+#define BT_POWER_SRC_SIZE           28
+
 #endif /* __LINUX_BLUETOOTH_POWER_H */

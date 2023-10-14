@@ -33,6 +33,7 @@
 
 #include <asm/setup.h>
 #include <crypto/hash.h>
+#include <crypto/hash_info.h>
 #include <crypto/public_key.h>
 #include <crypto/sha.h>
 #include <keys/asymmetric-type.h>
@@ -48,7 +49,7 @@ static char buildvariant[BUILD_VARIANT];
 
 static bool target_added;
 static bool verity_enabled = true;
-static struct dentry *debug_dir;
+struct dentry *debug_dir;
 static int android_verity_ctr(struct dm_target *ti, unsigned argc, char **argv);
 
 static struct target_type android_verity_target = {
@@ -103,7 +104,9 @@ static inline bool default_verity_key_id(void)
 
 static inline bool is_eng(void)
 {
-	return 1;
+	static const char typeeng[]  = "eng";
+
+	return !strncmp(buildvariant, typeeng, sizeof(typeeng));
 }
 
 static inline bool is_userdebug(void)
@@ -120,75 +123,6 @@ static inline bool is_unlocked(void)
 	return !strncmp(verifiedbootstate, unlocked, sizeof(unlocked));
 }
 
-static int table_extract_mpi_array(struct public_key_signature *pks,
-				const void *data, size_t len)
-{
-	MPI mpi = mpi_read_raw_data(data, len);
-
-	if (!mpi) {
-		DMERR("Error while allocating mpi array");
-		return -ENOMEM;
-	}
-
-	pks->mpi[0] = mpi;
-	pks->nr_mpi = 1;
-	return 0;
-}
-
-static struct public_key_signature *table_make_digest(
-						enum hash_algo hash,
-						const void *table,
-						unsigned long table_len)
-{
-	struct public_key_signature *pks = NULL;
-	struct crypto_shash *tfm;
-	struct shash_desc *desc;
-	size_t digest_size, desc_size;
-	int ret;
-
-	/* Allocate the hashing algorithm we're going to need and find out how
-	 * big the hash operational data will be.
-	 */
-	tfm = crypto_alloc_shash(hash_algo_name[hash], 0, 0);
-	if (IS_ERR(tfm))
-		return ERR_CAST(tfm);
-
-	desc_size = crypto_shash_descsize(tfm) + sizeof(*desc);
-	digest_size = crypto_shash_digestsize(tfm);
-
-	/* We allocate the hash operational data storage on the end of out
-	 * context data and the digest output buffer on the end of that.
-	 */
-	ret = -ENOMEM;
-	pks = kzalloc(digest_size + sizeof(*pks) + desc_size, GFP_KERNEL);
-	if (!pks)
-		goto error;
-
-	pks->pkey_hash_algo = hash;
-	pks->digest = (u8 *)pks + sizeof(*pks) + desc_size;
-	pks->digest_size = digest_size;
-
-	desc = (struct shash_desc *)(pks + 1);
-	desc->tfm = tfm;
-	desc->flags = CRYPTO_TFM_REQ_MAY_SLEEP;
-
-	ret = crypto_shash_init(desc);
-	if (ret < 0)
-		goto error;
-
-	ret = crypto_shash_finup(desc, table, table_len, pks->digest);
-	if (ret < 0)
-		goto error;
-
-	crypto_free_shash(tfm);
-	return pks;
-
-error:
-	kfree(pks);
-	crypto_free_shash(tfm);
-	return ERR_PTR(ret);
-}
-
 static int read_block_dev(struct bio_read *payload, struct block_device *bdev,
 		sector_t offset, int length)
 {
@@ -203,8 +137,9 @@ static int read_block_dev(struct bio_read *payload, struct block_device *bdev,
 		return -ENOMEM;
 	}
 
-	bio->bi_bdev = bdev;
+	bio_set_dev(bio, bdev);
 	bio->bi_iter.bi_sector = offset;
+	bio_set_op_attrs(bio, REQ_OP_READ, 0);
 
 	payload->page_io = kzalloc(sizeof(struct page *) *
 		payload->number_of_pages, GFP_KERNEL);
@@ -228,7 +163,7 @@ static int read_block_dev(struct bio_read *payload, struct block_device *bdev,
 		}
 	}
 
-	if (!submit_bio_wait(READ, bio))
+	if (!submit_bio_wait(bio))
 		/* success */
 		goto free_bio;
 	DMERR("bio read failed");
@@ -536,7 +471,7 @@ blkdev_release:
 }
 
 /* helper functions to extract properties from dts */
-static const char *find_dt_value(const char *name)
+const char *find_dt_value(const char *name)
 {
 	struct device_node *firmware;
 	const char *value;
@@ -565,51 +500,6 @@ static int verity_mode(void)
 	return DM_VERITY_MODE_EIO;
 }
 
-static int verify_verity_signature(char *key_id,
-		struct android_metadata *metadata)
-{
-	key_ref_t key_ref;
-	struct key *key;
-	struct public_key_signature *pks = NULL;
-	int retval = -EINVAL;
-
-	key_ref = keyring_search(make_key_ref(system_trusted_keyring, 1),
-		&key_type_asymmetric, key_id);
-
-	if (IS_ERR(key_ref)) {
-		DMERR("keyring: key not found");
-		return -ENOKEY;
-	}
-
-	key = key_ref_to_ptr(key_ref);
-
-	pks = table_make_digest(HASH_ALGO_SHA256,
-			(const void *)metadata->verity_table,
-			le32_to_cpu(metadata->header->table_length));
-
-	if (IS_ERR(pks)) {
-		DMERR("hashing failed");
-		retval = PTR_ERR(pks);
-		pks = NULL;
-		goto error;
-	}
-
-	retval = table_extract_mpi_array(pks, &metadata->header->signature[0],
-				RSANUMBYTES);
-	if (retval < 0) {
-		DMERR("Error extracting mpi %d", retval);
-		goto error;
-	}
-
-	retval = verify_signature(key, pks);
-	mpi_free(pks->rsa.s);
-error:
-	kfree(pks);
-	key_put(key);
-
-	return retval;
-}
-
 static void handle_error(void)
 {
 	int mode = verity_mode();
@@ -619,6 +509,95 @@ static void handle_error(void)
 	} else {
 		DMERR("Mounting verity root failed");
 	}
+}
+
+static struct public_key_signature *table_make_digest(
+						enum hash_algo hash,
+						const void *table,
+						unsigned long table_len)
+{
+	struct public_key_signature *pks = NULL;
+	struct crypto_shash *tfm;
+	struct shash_desc *desc;
+	size_t digest_size, desc_size;
+	int ret;
+
+	/* Allocate the hashing algorithm we're going to need and find out how
+	 * big the hash operational data will be.
+	 */
+	tfm = crypto_alloc_shash(hash_algo_name[hash], 0, 0);
+	if (IS_ERR(tfm))
+		return ERR_CAST(tfm);
+
+	desc_size = crypto_shash_descsize(tfm) + sizeof(*desc);
+	digest_size = crypto_shash_digestsize(tfm);
+
+	/* We allocate the hash operational data storage on the end of out
+	 * context data and the digest output buffer on the end of that.
+	 */
+	ret = -ENOMEM;
+	pks = kzalloc(digest_size + sizeof(*pks) + desc_size, GFP_KERNEL);
+	if (!pks)
+		goto error;
+
+	pks->pkey_algo = "rsa";
+	pks->hash_algo = hash_algo_name[hash];
+	pks->digest = (u8 *)pks + sizeof(*pks) + desc_size;
+	pks->digest_size = digest_size;
+
+	desc = (struct shash_desc *)(pks + 1);
+	desc->tfm = tfm;
+	desc->flags = CRYPTO_TFM_REQ_MAY_SLEEP;
+
+	ret = crypto_shash_init(desc);
+	if (ret < 0)
+		goto error;
+
+	ret = crypto_shash_finup(desc, table, table_len, pks->digest);
+	if (ret < 0)
+		goto error;
+
+	crypto_free_shash(tfm);
+	return pks;
+
+error:
+	kfree(pks);
+	crypto_free_shash(tfm);
+	return ERR_PTR(ret);
+}
+
+
+static int verify_verity_signature(char *key_id,
+		struct android_metadata *metadata)
+{
+	struct public_key_signature *pks = NULL;
+	int retval = -EINVAL;
+
+	if (!key_id)
+		goto error;
+
+	pks = table_make_digest(HASH_ALGO_SHA256,
+			(const void *)metadata->verity_table,
+			le32_to_cpu(metadata->header->table_length));
+	if (IS_ERR(pks)) {
+		DMERR("hashing failed");
+		retval = PTR_ERR(pks);
+		pks = NULL;
+		goto error;
+	}
+
+	pks->s = kmemdup(&metadata->header->signature[0], RSANUMBYTES, GFP_KERNEL);
+	if (!pks->s) {
+		DMERR("Error allocating memory for signature");
+		goto error;
+	}
+	pks->s_size = RSANUMBYTES;
+
+	retval = verify_signature_one(pks, NULL, key_id);
+	kfree(pks->s);
+error:
+	kfree(pks);
+	return retval;
 }
 
 static inline bool test_mult_overflow(sector_t a, u32 b)
@@ -639,8 +618,11 @@ static int add_as_linear_device(struct dm_target *ti, char *dev)
 	android_verity_target.dtr = dm_linear_dtr,
 	android_verity_target.map = dm_linear_map,
 	android_verity_target.status = dm_linear_status,
+	android_verity_target.end_io = dm_linear_end_io,
 	android_verity_target.prepare_ioctl = dm_linear_prepare_ioctl,
 	android_verity_target.iterate_devices = dm_linear_iterate_devices,
+        android_verity_target.direct_access = dm_linear_dax_direct_access,
+        android_verity_target.dax_copy_from_iter = dm_linear_dax_copy_from_iter,
 	android_verity_target.io_hints = NULL;
 
 	set_disk_ro(dm_disk(dm_table_get_md(ti->table)), 0);
@@ -691,8 +673,8 @@ static int android_verity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	dev_t uninitialized_var(dev);
 	struct android_metadata *metadata = NULL;
 	int err = 0, i, mode;
-	char *key_id = NULL, *table_ptr, dummy, *target_device,
-	*verity_table_args[VERITY_TABLE_ARGS + 2 + VERITY_TABLE_OPT_FEC_ARGS];
+	char *key_id = NULL, *table_ptr, dummy, *target_device;
+	char *verity_table_args[VERITY_TABLE_ARGS + 2 + VERITY_TABLE_OPT_FEC_ARGS];
 	/* One for specifying number of opt args and one for mode */
 	sector_t data_sectors;
 	u32 data_block_size;
@@ -711,15 +693,15 @@ static int android_verity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 			handle_error();
 			return -EINVAL;
 		}
-	} else if (argc == 2)
-		key_id = argv[1];
-	else {
+		target_device = argv[0];
+	} else if (argc == 2) {
+		key_id = argv[0];
+		target_device = argv[1];
+	} else {
 		DMERR("Incorrect number of arguments");
 		handle_error();
 		return -EINVAL;
 	}
-
-	target_device = argv[0];
 
 	dev = name_to_dev_t(target_device);
 	if (!dev) {
@@ -874,12 +856,11 @@ static int android_verity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	}
 
 	err = verity_ctr(ti, no_of_args, verity_table_args);
-
-	if (err)
-		DMERR("android-verity failed to mount as verity target");
-	else {
+	if (err) {
+		DMERR("android-verity failed to create a verity target");
+	} else {
 		target_added = true;
-		DMINFO("android-verity mounted as verity target");
+		DMINFO("android-verity created as verity target");
 	}
 
 free_metadata:

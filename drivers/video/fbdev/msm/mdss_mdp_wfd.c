@@ -1,15 +1,5 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2015-2018, 2020, The Linux Foundation. All rights reserved. */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
@@ -32,10 +22,8 @@ struct mdss_mdp_wfd *mdss_mdp_wfd_init(struct device *device,
 	struct mdss_mdp_wfd *wfd;
 
 	wfd = kzalloc(sizeof(struct mdss_mdp_wfd), GFP_KERNEL);
-	if (!wfd) {
-		pr_err("fail to allocate wfd session\n");
+	if (!wfd)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	mutex_init(&wfd->lock);
 	INIT_LIST_HEAD(&wfd->data_queue);
@@ -51,7 +39,7 @@ void mdss_mdp_wfd_deinit(struct mdss_mdp_wfd *wfd)
 	struct mdss_mdp_wb_data *node, *temp;
 
 	list_for_each_entry_safe(node, temp, &wfd->data_queue, next)
-		 mdss_mdp_wfd_remove_data(wfd, node);
+		mdss_mdp_wfd_remove_data(wfd, node);
 
 	kfree(wfd);
 }
@@ -65,7 +53,7 @@ int mdss_mdp_acquire_wb(struct mdss_mdp_ctl *ctl)
 		rc = wait_event_timeout(mdp5_data->wb_waitq,
 			atomic_read(&mdp5_data->wb_busy) == 0, KOFF_TIMEOUT);
 		if (!rc) {
-			pr_err("%s: Wait for WB timed out. wb_busy=%d",
+			pr_err("%s: Wait for WB timed out. wb_busy=%d\n",
 				__func__, atomic_read(&mdp5_data->wb_busy));
 			ret = -ETIMEDOUT;
 		} else if (!atomic_read(&mdp5_data->wb_busy))
@@ -323,7 +311,7 @@ int mdss_mdp_wb_import_data(struct device *device,
 		flags = MDP_SECURE_OVERLAY_SESSION;
 
 	if (buffer->plane_count > MAX_PLANES) {
-		pr_err("buffer plane_count exceeds MAX_PLANES limit:%d",
+		pr_err("buffer plane_count exceeds MAX_PLANES limit:%d\n",
 				buffer->plane_count);
 		return -EINVAL;
 	}
@@ -355,10 +343,8 @@ struct mdss_mdp_wb_data *mdss_mdp_wfd_add_data(
 	}
 
 	wfd_data = kzalloc(sizeof(struct mdss_mdp_wb_data), GFP_KERNEL);
-	if (!wfd_data) {
-		pr_err("fail to allocate wfd data\n");
+	if (!wfd_data)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	wfd_data->layer = *layer;
 	ret = mdss_mdp_wb_import_data(wfd->device, wfd_data);
@@ -429,7 +415,7 @@ int mdss_mdp_cwb_check_resource(struct mdss_mdp_ctl *ctl, u32 wb_idx)
 	}
 
 	wb = mdata->wb + wb_idx;
-	if (atomic_read(&wb->kref.refcount)) {
+	if (refcount_read(&wb->kref.refcount)) {
 		pr_err("WB block busy\n");
 		return -EBUSY;
 	}

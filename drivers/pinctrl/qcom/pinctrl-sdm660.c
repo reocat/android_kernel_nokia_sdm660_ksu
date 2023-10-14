@@ -1,5 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, 2018-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -33,7 +34,7 @@
 	{					        \
 		.name = "gpio" #id,			\
 		.pins = gpio##id##_pins,		\
-		.npins = (unsigned)ARRAY_SIZE(gpio##id##_pins),	\
+		.npins = (unsigned int)ARRAY_SIZE(gpio##id##_pins),	\
 		.funcs = (int[]){			\
 			msm_mux_gpio, /* gpio mode */	\
 			msm_mux_##f1,			\
@@ -72,7 +73,7 @@
 	{					        \
 		.name = #pg_name,			\
 		.pins = pg_name##_pins,			\
-		.npins = (unsigned)ARRAY_SIZE(pg_name##_pins),	\
+		.npins = (unsigned int)ARRAY_SIZE(pg_name##_pins),	\
 		.ctl_reg = ctl,				\
 		.io_reg = 0,				\
 		.intr_cfg_reg = 0,			\
@@ -1726,7 +1727,6 @@ static const struct of_device_id sdm660_pinctrl_of_match[] = {
 static struct platform_driver sdm660_pinctrl_driver = {
 	.driver = {
 		.name = "sdm660-pinctrl",
-		.owner = THIS_MODULE,
 		.of_match_table = sdm660_pinctrl_of_match,
 	},
 	.probe = sdm660_pinctrl_probe,

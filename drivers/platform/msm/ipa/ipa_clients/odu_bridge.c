@@ -1,13 +1,6 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/debugfs.h>
@@ -27,6 +20,7 @@
 #include <linux/cdev.h>
 #include <linux/ipa_odu_bridge.h>
 #include "../ipa_common_i.h"
+#include "../ipa_v3/ipa_pm.h"
 
 #define ODU_BRIDGE_DRV_NAME "odu_ipa_bridge"
 
@@ -114,6 +108,7 @@ struct stats {
  * @send_dl_skb: client callback for sending skb in downlink direction
  * @stats: statistics, how many packets were transmitted using the SW bridge
  * @is_conencted: is bridge connected ?
+ * @is_suspended: is bridge suspended ?
  * @mode: ODU mode (router/bridge)
  * @lock: for the initialization, connect and disconnect synchronization
  * @llv6_addr: link local IPv6 address of ODU network interface
@@ -122,6 +117,7 @@ struct stats {
  * @odu_prod_hdl: handle for IPA_CLIENT_ODU_PROD pipe
  * @odu_emb_cons_hdl: handle for IPA_CLIENT_ODU_EMB_CONS pipe
  * @odu_teth_cons_hdl: handle for IPA_CLIENT_ODU_TETH_CONS pipe
+ * @wakeup_request: client callback to wakeup
  */
 struct odu_bridge_ctx {
 	struct class *class;
@@ -135,6 +131,7 @@ struct odu_bridge_ctx {
 	int (*send_dl_skb)(void *priv, struct sk_buff *skb);
 	struct stats stats;
 	bool is_connected;
+	bool is_suspended;
 	enum odu_bridge_mode mode;
 	struct mutex lock;
 	struct in6_addr llv6_addr;
@@ -146,6 +143,8 @@ struct odu_bridge_ctx {
 	u32 ipa_sys_desc_size;
 	void *logbuf;
 	void *logbuf_low;
+	void (*wakeup_request)(void *cl_priv);
+	u32 pm_hdl;
 };
 static struct odu_bridge_ctx *odu_bridge_ctx;
 
@@ -267,22 +266,6 @@ static int odu_bridge_connect_bridge(void)
 	memset(&odu_prod_params, 0, sizeof(odu_prod_params));
 	memset(&odu_emb_cons_params, 0, sizeof(odu_emb_cons_params));
 
-	/* Build IPA Resource manager dependency graph */
-	ODU_BRIDGE_DBG_LOW("build dependency graph\n");
-	res = ipa_rm_add_dependency(IPA_RM_RESOURCE_ODU_ADAPT_PROD,
-					IPA_RM_RESOURCE_Q6_CONS);
-	if (res && res != -EINPROGRESS) {
-		ODU_BRIDGE_ERR("ipa_rm_add_dependency() failed\n");
-		goto fail_add_dependency_1;
-	}
-
-	res = ipa_rm_add_dependency(IPA_RM_RESOURCE_Q6_PROD,
-					IPA_RM_RESOURCE_ODU_ADAPT_CONS);
-	if (res && res != -EINPROGRESS) {
-		ODU_BRIDGE_ERR("ipa_rm_add_dependency() failed\n");
-		goto fail_add_dependency_2;
-	}
-
 	/* configure RX (ODU->IPA) EP */
 	odu_prod_params.client = IPA_CLIENT_ODU_PROD;
 	odu_prod_params.desc_fifo_sz = IPA_ODU_SYS_DESC_FIFO_SZ;
@@ -340,12 +323,6 @@ fail_odu_teth_cons:
 	ipa_teardown_sys_pipe(odu_bridge_ctx->odu_prod_hdl);
 	odu_bridge_ctx->odu_prod_hdl = 0;
 fail_odu_prod:
-	ipa_rm_delete_dependency(IPA_RM_RESOURCE_Q6_PROD,
-				IPA_RM_RESOURCE_ODU_ADAPT_CONS);
-fail_add_dependency_2:
-	ipa_rm_delete_dependency(IPA_RM_RESOURCE_ODU_ADAPT_PROD,
-				IPA_RM_RESOURCE_Q6_CONS);
-fail_add_dependency_1:
 	return res;
 }
 
@@ -391,25 +368,13 @@ static int odu_bridge_disconnect_bridge(void)
 		ODU_BRIDGE_ERR("teardown ODU EMB CONS failed\n");
 	odu_bridge_ctx->odu_emb_cons_hdl = 0;
 
-	/* Delete IPA Resource manager dependency graph */
-	ODU_BRIDGE_DBG("deleting dependency graph\n");
-	res = ipa_rm_delete_dependency(IPA_RM_RESOURCE_ODU_ADAPT_PROD,
-		IPA_RM_RESOURCE_Q6_CONS);
-	if (res && res != -EINPROGRESS)
-		ODU_BRIDGE_ERR("ipa_rm_delete_dependency() failed\n");
-
-	res = ipa_rm_delete_dependency(IPA_RM_RESOURCE_Q6_PROD,
-		IPA_RM_RESOURCE_ODU_ADAPT_CONS);
-	if (res && res != -EINPROGRESS)
-		ODU_BRIDGE_ERR("ipa_rm_delete_dependency() failed\n");
-
 	return 0;
 }
 
 /**
  * odu_bridge_disconnect() - Disconnect odu bridge
  *
- * Disconnect all pipes and deletes IPA RM dependencies on bridge mode
+ * Disconnect all pipes
  *
  * Return codes: 0- success, error otherwise
  */
@@ -457,8 +422,6 @@ EXPORT_SYMBOL(odu_bridge_disconnect);
  * odu_bridge_connect() - Connect odu bridge.
  *
  * Call to the mode-specific connect function for connection IPA pipes
- * and adding IPA RM dependencies
-
  * Return codes: 0: success
  *		-EINVAL: invalid parameters
  *		-EPERM: Operation not permitted as the bridge is already
@@ -696,7 +659,7 @@ static ssize_t odu_debugfs_hw_bridge_mode_write(struct file *file,
 	unsigned long missing;
 	enum odu_bridge_mode mode;
 
-	if (sizeof(dbg_buff) < count + 1)
+	if (count >= sizeof(dbg_buff))
 		return -EFAULT;
 
 	missing = copy_from_user(dbg_buff, ubuf, count);
@@ -760,9 +723,8 @@ const struct file_operations odu_hw_bridge_mode_ops = {
 
 static void odu_debugfs_init(void)
 {
-	const mode_t read_only_mode = S_IRUSR | S_IRGRP | S_IROTH;
-	const mode_t read_write_mode = S_IRUSR | S_IRGRP | S_IROTH |
-		S_IWUSR | S_IWGRP | S_IWOTH;
+	const mode_t read_only_mode = 0444;
+	const mode_t read_write_mode = 0666;
 
 	dent = debugfs_create_dir("odu_ipa_bridge", 0);
 	if (IS_ERR(dent)) {
@@ -838,7 +800,7 @@ int odu_bridge_tx_dp(struct sk_buff *skb, struct ipa_tx_meta *metadata)
 	case ODU_BRIDGE_MODE_ROUTER:
 		/* Router mode - pass skb to IPA */
 		res = ipa_tx_dp(IPA_CLIENT_ODU_PROD, skb, metadata);
-		if (res) {
+		if (unlikely(res)) {
 			ODU_BRIDGE_DBG("tx dp failed %d\n", res);
 			goto out;
 		}
@@ -851,7 +813,7 @@ int odu_bridge_tx_dp(struct sk_buff *skb, struct ipa_tx_meta *metadata)
 		    ODU_BRIDGE_IS_QMI_ADDR(ipv6hdr->daddr)) {
 			ODU_BRIDGE_DBG_LOW("QMI packet\n");
 			skb_copied = skb_clone(skb, GFP_KERNEL);
-			if (!skb_copied) {
+			if (unlikely(!skb_copied)) {
 				ODU_BRIDGE_ERR("No memory\n");
 				return -ENOMEM;
 			}
@@ -872,13 +834,13 @@ int odu_bridge_tx_dp(struct sk_buff *skb, struct ipa_tx_meta *metadata)
 			ODU_BRIDGE_DBG_LOW(
 				"Multicast pkt, send to APPS and IPA\n");
 			skb_copied = skb_clone(skb, GFP_KERNEL);
-			if (!skb_copied) {
+			if (unlikely(!skb_copied)) {
 				ODU_BRIDGE_ERR("No memory\n");
 				return -ENOMEM;
 			}
 
 			res = ipa_tx_dp(IPA_CLIENT_ODU_PROD, skb, metadata);
-			if (res) {
+			if (unlikely(res)) {
 				ODU_BRIDGE_DBG("tx dp failed %d\n", res);
 				dev_kfree_skb(skb_copied);
 				goto out;
@@ -893,7 +855,7 @@ int odu_bridge_tx_dp(struct sk_buff *skb, struct ipa_tx_meta *metadata)
 		}
 
 		res = ipa_tx_dp(IPA_CLIENT_ODU_PROD, skb, metadata);
-		if (res) {
+		if (unlikely(res)) {
 			ODU_BRIDGE_DBG("tx dp failed %d\n", res);
 			goto out;
 		}
@@ -1245,7 +1207,6 @@ int odu_bridge_cleanup(void)
 	return 0;
 }
 EXPORT_SYMBOL(odu_bridge_cleanup);
-
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("ODU bridge driver");

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * linux/can/skb.h
  *
@@ -53,7 +54,7 @@ static inline void can_skb_set_owner(struct sk_buff *skb, struct sock *sk)
 	 * after the last TX skb has been freed). So only increase
 	 * socket refcount if the refcount is > 0.
 	 */
-	if (sk && atomic_inc_not_zero(&sk->sk_refcnt)) {
+	if (sk && refcount_inc_not_zero(&sk->sk_refcnt)) {
 		skb->destructor = sock_efree;
 		skb->sk = sk;
 	}

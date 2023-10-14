@@ -1,17 +1,15 @@
-/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2016-2019, 2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __KGSL_DRAWOBJ_H
 #define __KGSL_DRAWOBJ_H
+
+#include <linux/dma-fence.h>
+#include <linux/irq_work.h>
+#include <linux/kref.h>
 
 #define DRAWOBJ(obj) (&obj->base)
 #define SYNCOBJ(obj) \
@@ -20,11 +18,14 @@
 	container_of(obj, struct kgsl_drawobj_cmd, base)
 #define SPARSEOBJ(obj) \
 	container_of(obj, struct kgsl_drawobj_sparse, base)
+#define TIMELINEOBJ(obj) \
+	container_of(obj, struct kgsl_drawobj_timeline, base)
 
 #define CMDOBJ_TYPE     BIT(0)
 #define MARKEROBJ_TYPE  BIT(1)
 #define SYNCOBJ_TYPE    BIT(2)
 #define SPARSEOBJ_TYPE  BIT(3)
+#define TIMELINEOBJ_TYPE    BIT(4)
 
 /**
  * struct kgsl_drawobj - KGSL drawobj descriptor
@@ -42,6 +43,10 @@ struct kgsl_drawobj {
 	uint32_t timestamp;
 	unsigned long flags;
 	struct kref refcount;
+	/** @destroy: Callback function to take down the object */
+	void (*destroy)(struct kgsl_drawobj *drawobj);
+	/** @destroy_object: Callback function to free the object memory */
+	void (*destroy_object)(struct kgsl_drawobj *drawobj);
 };
 
 /**
@@ -106,15 +111,46 @@ struct kgsl_drawobj_sync {
 };
 
 /**
+ * struct kgsl_drawobj_timeline - KGSL timeline signal operation
+ */
+struct kgsl_drawobj_timeline {
+	/** @base: &struct kgsl_drawobj container */
+	struct kgsl_drawobj base;
+	struct {
+		/** @timeline: Pointer to a &struct kgsl_timeline */
+		struct kgsl_timeline *timeline;
+		/** @seqno: Sequence number to signal */
+		u64 seqno;
+	} *timelines;
+	/** @count: Number of items in timelines */
+	int count;
+};
+
+#define KGSL_FENCE_NAME_LEN 74
+
+struct fence_info {
+	char name[KGSL_FENCE_NAME_LEN];
+};
+
+struct event_fence_info {
+	struct fence_info *fences;
+	int num_fences;
+};
+
+struct event_timeline_info {
+	u64 seqno;
+	u32 timeline;
+};
+
+/**
  * struct kgsl_drawobj_sync_event
- * @id: identifer (positiion within the pending bitmap)
+ * @id: Identifer (position within the pending bitmap)
  * @type: Syncpoint type
  * @syncobj: Pointer to the syncobj that owns the sync event
  * @context: KGSL context for whose timestamp we want to
  *           register this event
  * @timestamp: Pending timestamp for the event
  * @handle: Pointer to a sync fence handle
- * @handle_lock: Spin lock to protect handle
  * @device: Pointer to the KGSL device
  */
 struct kgsl_drawobj_sync_event {
@@ -123,9 +159,19 @@ struct kgsl_drawobj_sync_event {
 	struct kgsl_drawobj_sync *syncobj;
 	struct kgsl_context *context;
 	unsigned int timestamp;
-	struct kgsl_sync_fence_waiter *handle;
-	spinlock_t handle_lock;
+	struct kgsl_sync_fence_cb *handle;
 	struct kgsl_device *device;
+	/** @priv: Type specific private information */
+	void *priv;
+	/**
+	 * @fence: Pointer to a dma fence for KGSL_CMD_SYNCPOINT_TYPE_TIMELINE
+	 * events
+	 */
+	struct dma_fence *fence;
+	/** @cb: Callback struct for KGSL_CMD_SYNCPOINT_TYPE_TIMELINE */
+	struct dma_fence_cb cb;
+	/** @work : work_struct for KGSL_CMD_SYNCPOINT_TYPE_TIMELINE */
+	struct work_struct work;
 };
 
 /**
@@ -168,6 +214,9 @@ enum kgsl_drawobj_cmd_priv {
 	CMDOBJ_PROFILE,
 };
 
+struct kgsl_ibdesc;
+struct kgsl_cmd_syncpoint;
+
 struct kgsl_drawobj_cmd *kgsl_drawobj_cmd_create(struct kgsl_device *device,
 		struct kgsl_context *context, unsigned int flags,
 		unsigned int type);
@@ -208,6 +257,8 @@ void kgsl_dump_syncpoints(struct kgsl_device *device,
 
 void kgsl_drawobj_destroy(struct kgsl_drawobj *drawobj);
 
+void kgsl_drawobj_destroy_object(struct kref *kref);
+
 static inline bool kgsl_drawobj_events_pending(
 		struct kgsl_drawobj_sync *syncobj)
 {
@@ -222,4 +273,51 @@ static inline bool kgsl_drawobj_event_pending(
 
 	return test_bit(bit, &syncobj->pending);
 }
+
+static inline void kgsl_drawobj_put(struct kgsl_drawobj *drawobj)
+{
+	if (drawobj)
+		kref_put(&drawobj->refcount, kgsl_drawobj_destroy_object);
+}
+
+/**
+ * kgsl_drawobj_create_timestamp_syncobj - Create a syncobj for a timestamp
+ * @device: A GPU device handle
+ * @context: Draw context for the syncobj
+ * @timestamp: Timestamp to sync on
+ *
+ * Create a sync object for @timestamp on @context.
+ * Return: A pointer to the sync object
+ */
+struct kgsl_drawobj_sync *
+kgsl_drawobj_create_timestamp_syncobj(struct kgsl_device *device,
+		struct kgsl_context *context, unsigned int timestamp);
+
+
+/**
+ * kgsl_drawobj_timeline_create - Create a timeline draw object
+ * @device: A GPU device handle
+ * @context: Draw context for the drawobj
+ *
+ * Create a timeline draw object on @context.
+ * Return: A pointer to the draw object
+ */
+struct kgsl_drawobj_timeline *
+kgsl_drawobj_timeline_create(struct kgsl_device *device,
+		struct kgsl_context *context);
+
+/**
+ * kgsl_drawobj_add_timeline - Add a timeline to a timeline drawobj
+ * @dev_priv: Pointer to the process private data
+ * @timelineobj: Pointer to a timeline drawobject
+ * @src: Ponter to the &struct kgsl_timeline_val from userspace
+ * @cmdsize: size of the object in @src
+ *
+ * Add a timeline to an draw object.
+ * Return: 0 on success or negative on failure
+ */
+int kgsl_drawobj_add_timeline(struct kgsl_device_private *dev_priv,
+		struct kgsl_drawobj_timeline *timelineobj,
+		void __user *src, u64 cmdsize);
+
 #endif /* __KGSL_DRAWOBJ_H */

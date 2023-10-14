@@ -35,7 +35,7 @@ ENTRY(sys_clone_wrapper)
 	btst r10, TIF_SYSCALL_TRACE
 	bnz  tracesys_exit
 
-	b ret_from_system_call
+	b .Lret_from_system_call
 END(sys_clone_wrapper)
 
 ENTRY(ret_from_fork)
@@ -60,18 +60,6 @@ ENTRY(ret_from_fork)
 	;    out whenever kernel_execve (now inline do_fork()) is involved
 	b    ret_from_exception
 END(ret_from_fork)
-
-#ifdef CONFIG_ARC_DW2_UNWIND
-; Workaround for bug 94179 (STAR ):
-; Despite -fasynchronous-unwind-tables, linker is not making dwarf2 unwinder
-; section (.debug_frame) as loadable. So we force it here.
-; This also fixes STAR 9000487933 where the prev-workaround (objcopy --setflag)
-; would not work after a clean build due to kernel build system dependencies.
-.section .debug_frame, "wa",@progbits
-
-; Reset to .text as this file is included in entry-<isa>.S
-.section .text, "ax",@progbits
-#endif
 
 ;################### Non TLB Exception Handling #############################
 
@@ -203,6 +191,7 @@ tracesys_exit:
 	st  r0, [sp, PT_r0]     ; sys call return value in pt_regs
 
 	;POST Sys Call Ptrace Hook
+	mov r0, sp		; pt_regs needed
 	bl  @syscall_trace_exit
 	b   ret_from_exception ; NOT ret_from_system_call at is saves r0 which
 	; we'd done before calling post hook above
@@ -266,20 +255,18 @@ ENTRY(EV_Trap)
 	; syscall num shd not exceed the total system calls avail
 	cmp     r8,  NR_syscalls - 1
 	mov.hi  r0, -ENOSYS
-	bhi     ret_from_system_call
+	bhi     .Lret_from_system_call
 
 	; Offset into the syscall_table and call handler
 	ld.as   r9,[sys_call_table, r8]
 	jl      [r9]        ; Entry into Sys Call Handler
 
-	; fall through to ret_from_system_call
-END(EV_Trap)
-
-ENTRY(ret_from_system_call)
+.Lret_from_system_call:
 
 	st  r0, [sp, PT_r0]     ; sys call return value in pt_regs
 
-	; fall through yet again to ret_from_exception
+	; fall through to ret_from_exception
+END(EV_Trap)
 
 ;############# Return from Intr/Excp/Trap (Linux Specifics) ##############
 ;

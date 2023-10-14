@@ -1,21 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * EHCI HCD (Host Controller Driver) PCI Bus Glue.
  *
  * Copyright (c) 2000-2004 by David Brownell
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation; either version 2 of the License, or (at your
- * option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
- * for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/kernel.h>
@@ -33,6 +20,9 @@ static const char hcd_name[] = "ehci-pci";
 
 /* defined here to avoid adding to pci_ids.h for single instance use */
 #define PCI_DEVICE_ID_INTEL_CE4100_USB	0x2e70
+
+#define PCI_VENDOR_ID_ASPEED		0x1a03
+#define PCI_DEVICE_ID_ASPEED_EHCI	0x2603
 
 /*-------------------------------------------------------------------------*/
 #define PCI_DEVICE_ID_INTEL_QUARK_X1000_SOC		0x0939
@@ -236,6 +226,12 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
 			ehci->has_synopsys_hc_bug = 1;
 		}
 		break;
+	case PCI_VENDOR_ID_ASPEED:
+		if (pdev->device == PCI_DEVICE_ID_ASPEED_EHCI) {
+			ehci_info(ehci, "applying Aspeed HC workaround\n");
+			ehci->is_aspeed = 1;
+		}
+		break;
 	}
 
 	/* optional debug port, normally in the first BAR */
@@ -265,9 +261,8 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
 	/* These workarounds need to be applied after ehci_setup() */
 	switch (pdev->vendor) {
 	case PCI_VENDOR_ID_NEC:
-		ehci->need_io_watchdog = 0;
-		break;
 	case PCI_VENDOR_ID_INTEL:
+	case PCI_VENDOR_ID_AMD:
 		ehci->need_io_watchdog = 0;
 		break;
 	case PCI_VENDOR_ID_NVIDIA:
@@ -387,6 +382,12 @@ static int ehci_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	return usb_hcd_pci_probe(pdev, id);
 }
 
+static void ehci_pci_remove(struct pci_dev *pdev)
+{
+	pci_clear_mwi(pdev);
+	usb_hcd_pci_remove(pdev);	
+}
+
 /* PCI driver selection metadata; PCI hotplugging uses this */
 static const struct pci_device_id pci_ids [] = { {
 	/* handle any USB 2.0 EHCI controller */
@@ -406,7 +407,7 @@ static struct pci_driver ehci_pci_driver = {
 	.id_table =	pci_ids,
 
 	.probe =	ehci_pci_probe,
-	.remove =	usb_hcd_pci_remove,
+	.remove =	ehci_pci_remove,
 	.shutdown = 	usb_hcd_pci_shutdown,
 
 #ifdef CONFIG_PM

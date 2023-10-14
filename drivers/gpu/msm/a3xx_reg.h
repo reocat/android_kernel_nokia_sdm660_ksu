@@ -1,14 +1,6 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _A300_REG_H
@@ -269,7 +261,7 @@
 #define A3XX_RB_PERFCOUNTER1_SELECT   0xCC7
 #define A3XX_RB_FRAME_BUFFER_DIMENSION 0xCE0
 #define A3XX_SQ_GPR_MANAGEMENT 0x0D00
-#define A3XX_SQ_INST_STORE_MANAGMENT 0x0D02
+#define A3XX_SQ_INST_STORE_MANAGEMENT 0x0D02
 #define A3XX_HLSQ_PERFCOUNTER0_SELECT 0xE00
 #define A3XX_HLSQ_PERFCOUNTER1_SELECT 0xE01
 #define A3XX_HLSQ_PERFCOUNTER2_SELECT 0xE02

@@ -91,18 +91,17 @@ static void __init clk_sp810_of_setup(struct device_node *node)
 	const char *parent_names[2];
 	int num = ARRAY_SIZE(parent_names);
 	char name[12];
-	struct clk_init_data init;
+	struct clk_init_data init = {};
 	static int instance;
 	int i;
 	bool deprecated;
 
-	if (!sp810) {
-		pr_err("Failed to allocate memory for SP810!\n");
+	if (!sp810)
 		return;
-	}
 
 	if (of_clk_parent_fill(node, parent_names, num) != num) {
 		pr_warn("Failed to obtain parent clocks for SP810!\n");
+		kfree(sp810);
 		return;
 	}
 

@@ -1,17 +1,11 @@
-/* Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2013-2019, 2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/fs.h>
 #include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include "ipa_i.h"
 #include <linux/msm_ipa.h>
 
@@ -122,7 +116,7 @@ int ipa2_register_intf_ext(const char *name, const struct ipa_tx_intf *tx,
 	if (tx) {
 		intf->num_tx_props = tx->num_props;
 		len = tx->num_props * sizeof(struct ipa_ioc_tx_intf_prop);
-		intf->tx = kzalloc(len, GFP_KERNEL);
+		intf->tx = kmemdup(tx->prop, len, GFP_KERNEL);
 		if (intf->tx == NULL) {
 			IPAERR("fail to alloc 0x%x bytes\n", len);
 			kfree(intf);
@@ -134,7 +128,7 @@ int ipa2_register_intf_ext(const char *name, const struct ipa_tx_intf *tx,
 	if (rx) {
 		intf->num_rx_props = rx->num_props;
 		len = rx->num_props * sizeof(struct ipa_ioc_rx_intf_prop);
-		intf->rx = kzalloc(len, GFP_KERNEL);
+		intf->rx = kmemdup(rx->prop, len, GFP_KERNEL);
 		if (intf->rx == NULL) {
 			IPAERR("fail to alloc 0x%x bytes\n", len);
 			kfree(intf->tx);
@@ -147,7 +141,7 @@ int ipa2_register_intf_ext(const char *name, const struct ipa_tx_intf *tx,
 	if (ext) {
 		intf->num_ext_props = ext->num_props;
 		len = ext->num_props * sizeof(struct ipa_ioc_ext_intf_prop);
-		intf->ext = kzalloc(len, GFP_KERNEL);
+		intf->ext = kmemdup(ext->prop, len, GFP_KERNEL);
 		if (intf->ext == NULL) {
 			IPAERR("fail to alloc 0x%x bytes\n", len);
 			kfree(intf->rx);
@@ -198,7 +192,7 @@ int ipa2_deregister_intf(const char *name)
 
 	mutex_lock(&ipa_ctx->lock);
 	list_for_each_entry_safe(entry, next, &ipa_ctx->intf_list, link) {
-		if (!strncmp(entry->name, name, IPA_RESOURCE_NAME_MAX)) {
+		if (!strcmp(entry->name, name)) {
 			list_del(&entry->link);
 			kfree(entry->ext);
 			kfree(entry->rx);
@@ -235,9 +229,9 @@ int ipa_query_intf(struct ipa_ioc_query_intf *lookup)
 	}
 
 	mutex_lock(&ipa_ctx->lock);
+	lookup->name[IPA_RESOURCE_NAME_MAX-1] = '\0';
 	list_for_each_entry(entry, &ipa_ctx->intf_list, link) {
-		if (!strncmp(entry->name, lookup->name,
-					IPA_RESOURCE_NAME_MAX)) {
+		if (!strcmp(entry->name, lookup->name)) {
 			lookup->num_tx_props = entry->num_tx_props;
 			lookup->num_rx_props = entry->num_rx_props;
 			lookup->num_ext_props = entry->num_ext_props;
@@ -271,11 +265,12 @@ int ipa_query_intf_tx_props(struct ipa_ioc_query_intf_tx_props *tx)
 	}
 
 	mutex_lock(&ipa_ctx->lock);
+	tx->name[IPA_RESOURCE_NAME_MAX-1] = '\0';
 	list_for_each_entry(entry, &ipa_ctx->intf_list, link) {
-		if (!strncmp(entry->name, tx->name, IPA_RESOURCE_NAME_MAX)) {
+		if (!strcmp(entry->name, tx->name)) {
 			/* add the entry check */
 			if (entry->num_tx_props != tx->num_tx_props) {
-				IPAERR_RL("invalid entry number(%u %u)\n",
+				IPAERR("invalid entry number(%u %u)\n",
 					entry->num_tx_props,
 						tx->num_tx_props);
 				mutex_unlock(&ipa_ctx->lock);
@@ -312,11 +307,12 @@ int ipa_query_intf_rx_props(struct ipa_ioc_query_intf_rx_props *rx)
 	}
 
 	mutex_lock(&ipa_ctx->lock);
+	rx->name[IPA_RESOURCE_NAME_MAX-1] = '\0';
 	list_for_each_entry(entry, &ipa_ctx->intf_list, link) {
-		if (!strncmp(entry->name, rx->name, IPA_RESOURCE_NAME_MAX)) {
+		if (!strcmp(entry->name, rx->name)) {
 			/* add the entry check */
 			if (entry->num_rx_props != rx->num_rx_props) {
-				IPAERR_RL("invalid entry number(%u %u)\n",
+				IPAERR("invalid entry number(%u %u)\n",
 					entry->num_rx_props,
 						rx->num_rx_props);
 				mutex_unlock(&ipa_ctx->lock);
@@ -357,7 +353,7 @@ int ipa_query_intf_ext_props(struct ipa_ioc_query_intf_ext_props *ext)
 		if (!strcmp(entry->name, ext->name)) {
 			/* add the entry check */
 			if (entry->num_ext_props != ext->num_ext_props) {
-				IPAERR_RL("invalid entry number(%u %u)\n",
+				IPAERR("invalid entry number(%u %u)\n",
 					entry->num_ext_props,
 						ext->num_ext_props);
 				mutex_unlock(&ipa_ctx->lock);
@@ -412,14 +408,16 @@ static int wlan_msg_process(struct ipa_msg_meta *meta, void *buff)
 		msg_dup = kzalloc(sizeof(struct ipa_push_msg), GFP_KERNEL);
 		if (msg_dup == NULL) {
 			IPAERR("fail to alloc ipa_msg container\n");
+			mutex_unlock(&ipa_ctx->msg_wlan_client_lock);
 			return -ENOMEM;
 		}
 		msg_dup->meta = *meta;
 		if (meta->msg_len > 0 && buff) {
-			data_dup = kmalloc(meta->msg_len, GFP_KERNEL);
+			data_dup = kmemdup(buff, meta->msg_len, GFP_KERNEL);
 			if (data_dup == NULL) {
 				IPAERR("fail to alloc data_dup container\n");
 				kfree(msg_dup);
+				mutex_unlock(&ipa_ctx->msg_wlan_client_lock);
 				return -ENOMEM;
 			}
 			memcpy(data_dup, buff, meta->msg_len);
@@ -507,7 +505,7 @@ int ipa2_send_msg(struct ipa_msg_meta *meta, void *buff,
 	}
 
 	if (meta == NULL || (buff == NULL && callback != NULL) ||
-	    (buff != NULL && callback == NULL) || buff == NULL) {
+	    (buff != NULL && callback == NULL)) {
 		IPAERR_RL("invalid param meta=%p buff=%p, callback=%p\n",
 		       meta, buff, callback);
 		return -EINVAL;
@@ -526,13 +524,12 @@ int ipa2_send_msg(struct ipa_msg_meta *meta, void *buff,
 
 	msg->meta = *meta;
 	if (meta->msg_len > 0 && buff) {
-		data = kmalloc(meta->msg_len, GFP_KERNEL);
+		data = kmemdup(buff, meta->msg_len, GFP_KERNEL);
 		if (data == NULL) {
 			IPAERR("fail to alloc data container\n");
 			kfree(msg);
 			return -ENOMEM;
 		}
-		memcpy(data, buff, meta->msg_len);
 		msg->buff = data;
 		msg->callback = ipa2_send_msg_free;
 	}
@@ -600,14 +597,13 @@ int ipa2_resend_wlan_msg(void)
 			return -ENOMEM;
 		}
 		msg->meta = entry->meta;
-		data = kmalloc(entry->meta.msg_len, GFP_KERNEL);
+		data = kmemdup(entry->buff, entry->meta.msg_len, GFP_KERNEL);
 		if (data == NULL) {
 			IPAERR("fail to alloc data container\n");
 			kfree(msg);
 			mutex_unlock(&ipa_ctx->msg_wlan_client_lock);
 			return -ENOMEM;
 		}
-		memcpy(data, entry->buff, entry->meta.msg_len);
 		msg->buff = data;
 		msg->callback = ipa2_send_msg_free;
 		mutex_lock(&ipa_ctx->msg_lock);

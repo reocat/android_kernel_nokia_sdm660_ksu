@@ -1,13 +1,5 @@
-/* Copyright (c) 2016-2017 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __SMB2_CHARGER_REG_H
@@ -291,8 +283,6 @@ enum {
 #define IADC_SYNC_CNV_SEL_BIT		BIT(1)
 #define VADC_SYNC_CNV_SEL_BIT		BIT(0)
 
-#define SCHG_CHGR_SAFETY_TIMER_ENABLE_CFG_REG	(CHGR_BASE + 0xA0)
-
 #define CHGR_STEP_CHG_MODE_CFG_REG		(CHGR_BASE + 0xB0)
 #define STEP_CHARGING_SOC_FAIL_OPTION_BIT	BIT(3)
 #define STEP_CHARGING_MODE_SELECT_BIT		BIT(2)
@@ -572,12 +562,19 @@ enum {
 
 #define TYPE_C_CFG_2_REG			(USBIN_BASE + 0x59)
 #define TYPE_C_DFP_CURRSRC_MODE_BIT		BIT(7)
-#define VCONN_ILIM500MA_CFG_BIT			BIT(6)
+#define DFP_CC_1P4V_OR_1P6V_BIT			BIT(6)
 #define VCONN_SOFTSTART_CFG_MASK		GENMASK(5, 4)
 #define EN_TRY_SOURCE_MODE_BIT			BIT(3)
 #define USB_FACTORY_MODE_ENABLE_BIT		BIT(2)
 #define TYPE_C_UFP_MODE_BIT			BIT(1)
 #define EN_80UA_180UA_CUR_SOURCE_BIT		BIT(0)
+enum {
+	TYPEC_SRC_RP_STD,
+	TYPEC_SRC_RP_1P5A,
+	TYPEC_SRC_RP_3A,
+	TYPEC_SRC_RP_3A_DUPLICATE,
+	TYPEC_SRC_RP_MAX_ELEMENTS
+};
 
 #define TYPE_C_CFG_3_REG			(USBIN_BASE + 0x5A)
 #define TVBUS_DEBOUNCE_BIT			BIT(7)
@@ -588,6 +585,15 @@ enum {
 #define EN_TRYSINK_MODE_BIT			BIT(2)
 #define EN_LEGACY_CABLE_DETECTION_BIT		BIT(1)
 #define ALLOW_PD_DRING_UFP_TCCDB_BIT		BIT(0)
+
+#define HVDCP_PULSE_COUNT_MAX_REG		(USBIN_BASE + 0x5B)
+#define HVDCP_PULSE_COUNT_MAX_QC2_MASK		GENMASK(7, 6)
+enum {
+	HVDCP_PULSE_COUNT_MAX_QC2_5V,
+	HVDCP_PULSE_COUNT_MAX_QC2_9V,
+	HVDCP_PULSE_COUNT_MAX_QC2_12V,
+	HVDCP_PULSE_COUNT_MAX_QC2_INVALID
+};
 
 #define USBIN_ADAPTER_ALLOW_CFG_REG		(USBIN_BASE + 0x60)
 #define USBIN_ADAPTER_ALLOW_MASK		GENMASK(3, 0)
@@ -1024,6 +1030,9 @@ enum {
 #define CFG_BUCKBOOST_FREQ_SELECT_BOOST_REG	(MISC_BASE + 0xA1)
 
 #define TM_IO_DTEST4_SEL			(MISC_BASE + 0xE9)
+
+#define ENG_SDCDC_CFG7_REG			(MISC_BASE + 0xC6)
+#define ENG_SDCDC_BST_SET_POINT_MASK		GENMASK(7, 6)
 
 /* CHGR FREQ Peripheral registers */
 #define FREQ_CLK_DIV_REG			(CHGR_FREQ_BASE + 0x50)

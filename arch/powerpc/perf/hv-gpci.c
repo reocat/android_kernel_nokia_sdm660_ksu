@@ -74,7 +74,7 @@ static struct attribute_group format_group = {
 
 static struct attribute_group event_group = {
 	.name  = "events",
-	.attrs = hv_gpci_event_attrs,
+	/* .attrs is set in init */
 };
 
 #define HV_CAPS_ATTR(_name, _format)				\
@@ -127,8 +127,16 @@ static const struct attribute_group *attr_groups[] = {
 	NULL,
 };
 
-#define GPCI_MAX_DATA_BYTES \
-	(1024 - sizeof(struct hv_get_perf_counter_info_params))
+#define HGPCI_REQ_BUFFER_SIZE	4096
+#define HGPCI_MAX_DATA_BYTES \
+	(HGPCI_REQ_BUFFER_SIZE - sizeof(struct hv_get_perf_counter_info_params))
+
+static DEFINE_PER_CPU(char, hv_gpci_reqb[HGPCI_REQ_BUFFER_SIZE]) __aligned(sizeof(uint64_t));
+
+struct hv_gpci_request_buffer {
+	struct hv_get_perf_counter_info_params params;
+	uint8_t bytes[HGPCI_MAX_DATA_BYTES];
+} __packed;
 
 static unsigned long single_gpci_request(u32 req, u32 starting_index,
 		u16 secondary_index, u8 version_in, u32 offset, u8 length,
@@ -137,24 +145,21 @@ static unsigned long single_gpci_request(u32 req, u32 starting_index,
 	unsigned long ret;
 	size_t i;
 	u64 count;
+	struct hv_gpci_request_buffer *arg;
 
-	struct {
-		struct hv_get_perf_counter_info_params params;
-		uint8_t bytes[GPCI_MAX_DATA_BYTES];
-	} __packed __aligned(sizeof(uint64_t)) arg = {
-		.params = {
-			.counter_request = cpu_to_be32(req),
-			.starting_index = cpu_to_be32(starting_index),
-			.secondary_index = cpu_to_be16(secondary_index),
-			.counter_info_version_in = version_in,
-		}
-	};
+	arg = (void *)get_cpu_var(hv_gpci_reqb);
+	memset(arg, 0, HGPCI_REQ_BUFFER_SIZE);
+
+	arg->params.counter_request = cpu_to_be32(req);
+	arg->params.starting_index = cpu_to_be32(starting_index);
+	arg->params.secondary_index = cpu_to_be16(secondary_index);
+	arg->params.counter_info_version_in = version_in;
 
 	ret = plpar_hcall_norets(H_GET_PERF_COUNTER_INFO,
-			virt_to_phys(&arg), sizeof(arg));
+			virt_to_phys(arg), HGPCI_REQ_BUFFER_SIZE);
 	if (ret) {
 		pr_devel("hcall failed: 0x%lx\n", ret);
-		return ret;
+		goto out;
 	}
 
 	/*
@@ -163,9 +168,11 @@ static unsigned long single_gpci_request(u32 req, u32 starting_index,
 	 */
 	count = 0;
 	for (i = offset; i < offset + length; i++)
-		count |= arg.bytes[i] << (i - offset);
+		count |= (u64)(arg->bytes[i]) << ((length - 1 - (i - offset)) * 8);
 
 	*value = count;
+out:
+	put_cpu_var(hv_gpci_reqb);
 	return ret;
 }
 
@@ -245,10 +252,10 @@ static int h_gpci_event_init(struct perf_event *event)
 	}
 
 	/* last byte within the buffer? */
-	if ((event_get_offset(event) + length) > GPCI_MAX_DATA_BYTES) {
+	if ((event_get_offset(event) + length) > HGPCI_MAX_DATA_BYTES) {
 		pr_devel("request outside of buffer: %zu > %zu\n",
 				(size_t)event_get_offset(event) + length,
-				GPCI_MAX_DATA_BYTES);
+				HGPCI_MAX_DATA_BYTES);
 		return -EINVAL;
 	}
 
@@ -285,6 +292,7 @@ static int hv_gpci_init(void)
 	int r;
 	unsigned long hret;
 	struct hv_perf_caps caps;
+	struct hv_gpci_request_buffer *arg;
 
 	hv_gpci_assert_offsets_correct();
 
@@ -302,6 +310,36 @@ static int hv_gpci_init(void)
 
 	/* sampling not supported */
 	h_gpci_pmu.capabilities |= PERF_PMU_CAP_NO_INTERRUPT;
+
+	arg = (void *)get_cpu_var(hv_gpci_reqb);
+	memset(arg, 0, HGPCI_REQ_BUFFER_SIZE);
+
+	/*
+	 * hcall H_GET_PERF_COUNTER_INFO populates the output
+	 * counter_info_version value based on the system hypervisor.
+	 * Pass the counter request 0x10 corresponds to request type
+	 * 'Dispatch_timebase_by_processor', to get the supported
+	 * counter_info_version.
+	 */
+	arg->params.counter_request = cpu_to_be32(0x10);
+
+	r = plpar_hcall_norets(H_GET_PERF_COUNTER_INFO,
+			virt_to_phys(arg), HGPCI_REQ_BUFFER_SIZE);
+	if (r) {
+		pr_devel("hcall failed, can't get supported counter_info_version: 0x%x\n", r);
+		arg->params.counter_info_version_out = 0x8;
+	}
+
+	/*
+	 * Use counter_info_version_out value to assign
+	 * required hv-gpci event list.
+	 */
+	if (arg->params.counter_info_version_out >= 0x8)
+		event_group.attrs = hv_gpci_event_attrs;
+	else
+		event_group.attrs = hv_gpci_event_attrs_v6;
+
+	put_cpu_var(hv_gpci_reqb);
 
 	r = perf_pmu_register(&h_gpci_pmu, h_gpci_pmu.name, -1);
 	if (r)

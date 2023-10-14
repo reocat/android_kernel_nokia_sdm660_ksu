@@ -35,27 +35,17 @@ EXPORT_SYMBOL(memset);
 EXPORT_SYMBOL(__xchg8);
 EXPORT_SYMBOL(__xchg32);
 EXPORT_SYMBOL(__cmpxchg_u32);
+EXPORT_SYMBOL(__cmpxchg_u64);
 #ifdef CONFIG_SMP
 EXPORT_SYMBOL(__atomic_hash);
 #endif
 #ifdef CONFIG_64BIT
 EXPORT_SYMBOL(__xchg64);
-EXPORT_SYMBOL(__cmpxchg_u64);
 #endif
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 EXPORT_SYMBOL(lclear_user);
 EXPORT_SYMBOL(lstrnlen_user);
-
-/* Global fixups - defined as int to avoid creation of function pointers */
-extern int fixup_get_user_skip_1;
-extern int fixup_get_user_skip_2;
-extern int fixup_put_user_skip_1;
-extern int fixup_put_user_skip_2;
-EXPORT_SYMBOL(fixup_get_user_skip_1);
-EXPORT_SYMBOL(fixup_get_user_skip_2);
-EXPORT_SYMBOL(fixup_put_user_skip_1);
-EXPORT_SYMBOL(fixup_put_user_skip_2);
 
 #ifndef CONFIG_64BIT
 /* Needed so insmod can set dp value */
@@ -146,12 +136,6 @@ EXPORT_SYMBOL(__moddi3);
 #ifndef CONFIG_64BIT
 extern void $$dyncall(void);
 EXPORT_SYMBOL($$dyncall);
-#endif
-
-#ifdef CONFIG_DISCONTIGMEM
-#include <asm/mmzone.h>
-EXPORT_SYMBOL(node_data);
-EXPORT_SYMBOL(pfnnid_map);
 #endif
 
 #ifdef CONFIG_FUNCTION_TRACER

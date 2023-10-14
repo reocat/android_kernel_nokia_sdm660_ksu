@@ -1,21 +1,11 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2015-2018, 2020, The Linux Foundation. All rights reserved. */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
 #include <video/msm_dba.h>
-#include <linux/switch.h>
-
+#include <linux/extcon.h>
+#include <../../../extcon/extcon.h>
 #include "mdss_dba_utils.h"
 #include "mdss_hdmi_edid.h"
 #include "mdss_cec_core.h"
@@ -32,8 +22,8 @@ struct mdss_dba_utils_data {
 	bool hpd_state;
 	bool audio_switch_registered;
 	bool display_switch_registered;
-	struct switch_dev sdev_display;
-	struct switch_dev sdev_audio;
+	struct extcon_dev sdev_display;
+	struct extcon_dev sdev_audio;
 	struct kobject *kobj;
 	struct mdss_panel_info *pinfo;
 	void *dba_data;
@@ -102,7 +92,7 @@ static void mdss_dba_utils_notify_display(
 
 	state = udata->sdev_display.state;
 
-	switch_set_state(&udata->sdev_display, val);
+	extcon_set_state_sync(&udata->sdev_display, 0, val);
 
 	pr_debug("cable state %s %d\n",
 		udata->sdev_display.state == state ?
@@ -127,7 +117,7 @@ static void mdss_dba_utils_notify_audio(
 
 	state = udata->sdev_audio.state;
 
-	switch_set_state(&udata->sdev_audio, val);
+	extcon_set_state_sync(&udata->sdev_audio, 0, val);
 
 	pr_debug("audio state %s %d\n",
 		udata->sdev_audio.state == state ?
@@ -135,7 +125,7 @@ static void mdss_dba_utils_notify_audio(
 		udata->sdev_audio.state);
 }
 
-static ssize_t mdss_dba_utils_sysfs_rda_connected(struct device *dev,
+static ssize_t connected_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	ssize_t ret;
@@ -153,13 +143,13 @@ static ssize_t mdss_dba_utils_sysfs_rda_connected(struct device *dev,
 		return -EINVAL;
 	}
 
-	ret = snprintf(buf, PAGE_SIZE, "%d\n", udata->hpd_state);
+	ret = scnprintf(buf, PAGE_SIZE, "%d\n", udata->hpd_state);
 	pr_debug("'%d'\n", udata->hpd_state);
 
 	return ret;
 }
 
-static ssize_t mdss_dba_utils_sysfs_rda_video_mode(struct device *dev,
+static ssize_t video_mode_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	ssize_t ret;
@@ -177,13 +167,13 @@ static ssize_t mdss_dba_utils_sysfs_rda_video_mode(struct device *dev,
 		return -EINVAL;
 	}
 
-	ret = snprintf(buf, PAGE_SIZE, "%d\n", udata->current_vic);
+	ret = scnprintf(buf, PAGE_SIZE, "%d\n", udata->current_vic);
 	pr_debug("'%d'\n", udata->current_vic);
 
 	return ret;
 }
 
-static ssize_t mdss_dba_utils_sysfs_wta_hpd(struct device *dev,
+static ssize_t hpd_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct mdss_dba_utils_data *udata = NULL;
@@ -220,7 +210,7 @@ static ssize_t mdss_dba_utils_sysfs_wta_hpd(struct device *dev,
 	return count;
 }
 
-static ssize_t mdss_dba_utils_sysfs_rda_hpd(struct device *dev,
+static ssize_t hpd_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	ssize_t ret;
@@ -238,20 +228,17 @@ static ssize_t mdss_dba_utils_sysfs_rda_hpd(struct device *dev,
 		return -EINVAL;
 	}
 
-	ret = snprintf(buf, PAGE_SIZE, "%d\n", udata->hpd_state);
+	ret = scnprintf(buf, PAGE_SIZE, "%d\n", udata->hpd_state);
 	pr_debug("'%d'\n", udata->hpd_state);
 
 	return ret;
 }
 
-static DEVICE_ATTR(connected, S_IRUGO,
-		mdss_dba_utils_sysfs_rda_connected, NULL);
+static DEVICE_ATTR_RO(connected);
 
-static DEVICE_ATTR(video_mode, S_IRUGO,
-		mdss_dba_utils_sysfs_rda_video_mode, NULL);
+static DEVICE_ATTR_RO(video_mode);
 
-static DEVICE_ATTR(hpd, S_IRUGO | S_IWUSR, mdss_dba_utils_sysfs_rda_hpd,
-		mdss_dba_utils_sysfs_wta_hpd);
+static DEVICE_ATTR_RW(hpd);
 
 static struct attribute *mdss_dba_utils_fs_attrs[] = {
 	&dev_attr_connected.attr,
@@ -484,7 +471,7 @@ static int mdss_dba_utils_init_switch_dev(struct mdss_dba_utils_data *udata,
 
 	/* create switch device to update display modules */
 	udata->sdev_display.name = "hdmi";
-	rc = switch_dev_register(&udata->sdev_display);
+	rc = extcon_dev_register(&udata->sdev_display);
 	if (rc) {
 		pr_err("display switch registration failed\n");
 		goto end;
@@ -494,7 +481,7 @@ static int mdss_dba_utils_init_switch_dev(struct mdss_dba_utils_data *udata,
 
 	/* create switch device to update audio modules */
 	udata->sdev_audio.name = "hdmi_audio";
-	ret = switch_dev_register(&udata->sdev_audio);
+	ret = extcon_dev_register(&udata->sdev_audio);
 	if (ret) {
 		pr_err("audio switch registration failed\n");
 		goto end;
@@ -822,10 +809,10 @@ void mdss_dba_utils_deinit(void *data)
 	}
 
 	if (udata->audio_switch_registered)
-		switch_dev_unregister(&udata->sdev_audio);
+		extcon_dev_unregister(&udata->sdev_audio);
 
 	if (udata->display_switch_registered)
-		switch_dev_unregister(&udata->sdev_display);
+		extcon_dev_unregister(&udata->sdev_display);
 
 	if (udata->kobj)
 		mdss_dba_utils_sysfs_remove(udata->kobj);

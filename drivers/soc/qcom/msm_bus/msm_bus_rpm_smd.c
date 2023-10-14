@@ -1,14 +1,6 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2012-2016, 2018, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "AXI: %s(): " fmt, __func__
@@ -19,7 +11,7 @@
 #include <soc/qcom/rpm-smd.h>
 
 /* Stubs for backward compatibility */
-void msm_bus_rpm_set_mt_mask()
+void msm_bus_rpm_set_mt_mask(void)
 {
 }
 
@@ -145,52 +137,52 @@ static int msm_bus_rpm_commit_arb(struct msm_bus_fabric_registration
 	rsc_type = RPM_BUS_MASTER_REQ;
 	key = RPM_MASTER_FIELD_BW;
 	for (i = 0; i < fab_pdata->nmasters; i++) {
-		if (cd->mas_arb[i].dirty) {
-			MSM_BUS_DBG("MAS HWID: %d, BW: %llu DIRTY: %d\n",
+		if (!cd->mas_arb[i].dirty)
+			continue;
+
+		MSM_BUS_DBG("MAS HWID: %d, BW: %llu DIRTY: %d\n",
+			cd->mas_arb[i].hw_id,
+			cd->mas_arb[i].bw,
+			cd->mas_arb[i].dirty);
+		status = msm_bus_rpm_req(ctx, rsc_type, key,
+			&cd->mas_arb[i], valid);
+		if (status) {
+			MSM_BUS_ERR("RPM: Req fail: mas:%d, bw:%llu\n",
 				cd->mas_arb[i].hw_id,
-				cd->mas_arb[i].bw,
-				cd->mas_arb[i].dirty);
-			status = msm_bus_rpm_req(ctx, rsc_type, key,
-				&cd->mas_arb[i], valid);
-			if (status) {
-				MSM_BUS_ERR("RPM: Req fail: mas:%d, bw:%llu\n",
-					cd->mas_arb[i].hw_id,
-					cd->mas_arb[i].bw);
-				break;
-			} else {
-				cd->mas_arb[i].dirty = false;
-			}
+				cd->mas_arb[i].bw);
+			break;
 		}
+		cd->mas_arb[i].dirty = false;
 	}
 
 	rsc_type = RPM_BUS_SLAVE_REQ;
 	key = RPM_SLAVE_FIELD_BW;
 	for (i = 0; i < fab_pdata->nslaves; i++) {
-		if (cd->slv_arb[i].dirty) {
-			MSM_BUS_DBG("SLV HWID: %d, BW: %llu DIRTY: %d\n",
+		if (!cd->slv_arb[i].dirty)
+			continue;
+
+		MSM_BUS_DBG("SLV HWID: %d, BW: %llu DIRTY: %d\n",
+			cd->slv_arb[i].hw_id,
+			cd->slv_arb[i].bw,
+			cd->slv_arb[i].dirty);
+		status = msm_bus_rpm_req(ctx, rsc_type, key,
+			&cd->slv_arb[i], valid);
+		if (status) {
+			MSM_BUS_ERR("RPM: Req fail: slv:%d, bw:%llu\n",
 				cd->slv_arb[i].hw_id,
-				cd->slv_arb[i].bw,
-				cd->slv_arb[i].dirty);
-			status = msm_bus_rpm_req(ctx, rsc_type, key,
-				&cd->slv_arb[i], valid);
-			if (status) {
-				MSM_BUS_ERR("RPM: Req fail: slv:%d, bw:%llu\n",
-					cd->slv_arb[i].hw_id,
-					cd->slv_arb[i].bw);
-				break;
-			} else {
-				cd->slv_arb[i].dirty = false;
-			}
+				cd->slv_arb[i].bw);
+			break;
 		}
+		cd->slv_arb[i].dirty = false;
 	}
 
 	return status;
 }
 
-/**
-* msm_bus_remote_hw_commit() - Commit the arbitration data to RPM
-* @fabric: Fabric for which the data should be committed
-**/
+/*
+ * msm_bus_remote_hw_commit() - Commit the arbitration data to RPM
+ * @fabric: Fabric for which the data should be committed
+ */
 int msm_bus_remote_hw_commit(struct msm_bus_fabric_registration
 	*fab_pdata, void *hw_data, void **cdata)
 {

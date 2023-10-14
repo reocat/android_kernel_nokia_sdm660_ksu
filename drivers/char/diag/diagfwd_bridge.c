@@ -1,13 +1,5 @@
-/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -18,36 +10,23 @@
 #include <linux/workqueue.h>
 #include <linux/ratelimit.h>
 #include <linux/platform_device.h>
+#ifdef USB_QCOM_DIAG_BRIDGE
+#include <linux/smux.h>
+#endif
 #include "diag_mux.h"
 #include "diagfwd_bridge.h"
-#ifdef CONFIG_USB_QCOM_DIAG_BRIDGE
+#ifdef USB_QCOM_DIAG_BRIDGE
 #include "diagfwd_hsic.h"
-#include "diagfwd_sdio.h"
+#include "diagfwd_smux.h"
 #endif
-#ifdef CONFIG_MSM_MHI
 #include "diagfwd_mhi.h"
-#endif
 #include "diag_dci.h"
+#include "diag_ipc_logging.h"
 
-#ifndef CONFIG_USB_QCOM_DIAG_BRIDGE
-static int diag_hsic_init(void)
-{
-	return -EINVAL;
-}
-#endif
-
-#ifndef CONFIG_MSM_MHI
-static int diag_mhi_init(void)
-{
-	return -EINVAL;
-}
-#endif
-
-#ifndef CONFIG_QTI_SDIO_CLIENT
-static int diag_sdio_init(void)
-{
-	return -EINVAL;
-}
+#ifdef CONFIG_MHI_BUS
+#define diag_mdm_init		diag_mhi_init
+#else
+#define diag_mdm_init		diag_hsic_init
 #endif
 
 #define BRIDGE_TO_MUX(x)	(x + DIAG_MUX_BRIDGE_BASE)
@@ -66,9 +45,9 @@ struct diagfwd_bridge_info bridge_info[NUM_REMOTE_DEV] = {
 		.dci_wq = NULL,
 	},
 	{
-		.id = DIAGFWD_SMUX,
+		.id = DIAGFWD_MDM2,
 		.type = DIAG_DATA_TYPE,
-		.name = "SMUX",
+		.name = "MDM_2",
 		.inited = 0,
 		.ctxt = 0,
 		.dci_read_ptr = NULL,
@@ -89,14 +68,24 @@ struct diagfwd_bridge_info bridge_info[NUM_REMOTE_DEV] = {
 		.dci_read_len = 0,
 		.dci_wq = NULL,
 	},
+	{
+		.id = DIAGFWD_MDM_DCI_2,
+		.type = DIAG_DCI_TYPE,
+		.name = "MDM_DCI_2",
+		.inited = 0,
+		.ctxt = 0,
+		.dci_read_ptr = NULL,
+		.dev_ops = NULL,
+		.dci_read_buf = NULL,
+		.dci_read_len = 0,
+		.dci_wq = NULL,
+	},
 };
 
 static int diagfwd_bridge_mux_connect(int id, int mode)
 {
 	if (id < 0 || id >= NUM_REMOTE_DEV)
 		return -EINVAL;
-	if (bridge_info[id].dev_ops && bridge_info[id].dev_ops->open)
-		bridge_info[id].dev_ops->open(bridge_info[id].ctxt);
 	return 0;
 }
 
@@ -105,19 +94,6 @@ static int diagfwd_bridge_mux_disconnect(int id, int mode)
 	if (id < 0 || id >= NUM_REMOTE_DEV)
 		return -EINVAL;
 
-	if ((mode == DIAG_USB_MODE &&
-		driver->logging_mode == DIAG_MEMORY_DEVICE_MODE) ||
-		(mode == DIAG_MEMORY_DEVICE_MODE &&
-		driver->logging_mode == DIAG_USB_MODE)) {
-		/*
-		 * Don't close the MHI channels when usb is disconnected
-		 * and a process is running in memory device mode.
-		 */
-		return 0;
-	}
-
-	if (bridge_info[id].dev_ops && bridge_info[id].dev_ops->close)
-		bridge_info[id].dev_ops->close(bridge_info[id].ctxt);
 	return 0;
 }
 
@@ -134,8 +110,12 @@ static int diagfwd_bridge_mux_write_done(unsigned char *buf, int len,
 	if (id < 0 || id >= NUM_REMOTE_DEV)
 		return -EINVAL;
 	ch = &bridge_info[buf_ctx];
-	if (ch->dev_ops && ch->dev_ops->fwd_complete)
-		ch->dev_ops->fwd_complete(ch->ctxt, buf, len, 0);
+	if (ch->dev_ops && ch->dev_ops->fwd_complete) {
+		DIAG_LOG(DIAG_DEBUG_BRIDGE,
+		"Write done completion received for buf %pK len:%d\n",
+			buf, len);
+		ch->dev_ops->fwd_complete(ch->id, ch->ctxt, buf, len, 0);
+	}
 	return 0;
 }
 
@@ -156,7 +136,7 @@ static void bridge_dci_read_work_fn(struct work_struct *work)
 	diag_process_remote_dci_read_data(ch->id, ch->dci_read_buf,
 					  ch->dci_read_len);
 	if (ch->dev_ops && ch->dev_ops->fwd_complete) {
-		ch->dev_ops->fwd_complete(ch->ctxt, ch->dci_read_ptr,
+		ch->dev_ops->fwd_complete(ch->id, ch->ctxt, ch->dci_read_ptr,
 					  ch->dci_read_len, 0);
 	}
 }
@@ -168,7 +148,8 @@ int diagfwd_bridge_register(int id, int ctxt, struct diag_remote_dev_ops *ops)
 	char wq_name[DIAG_BRIDGE_NAME_SZ + 10];
 
 	if (!ops) {
-		pr_err("diag: Invalid pointers ops: %pK ctxt: %d\n", ops, ctxt);
+		pr_err("diag: Invalid pointers ops: %pK ctxt: %d id: %d\n",
+			ops, ctxt, id);
 		return -EINVAL;
 	}
 
@@ -190,8 +171,8 @@ int diagfwd_bridge_register(int id, int ctxt, struct diag_remote_dev_ops *ops)
 		if (!ch->dci_read_buf)
 			return -ENOMEM;
 		ch->dci_read_len = 0;
-		strlcpy(wq_name, "diag_dci_", 10);
-		strlcat(wq_name, ch->name, sizeof(ch->name));
+		strlcpy(wq_name, "diag_dci_", sizeof(wq_name));
+		strlcat(wq_name, ch->name, sizeof(wq_name));
 		INIT_WORK(&(ch->dci_read_work), bridge_dci_read_work_fn);
 		ch->dci_wq = create_singlethread_workqueue(wq_name);
 		if (!ch->dci_wq) {
@@ -212,17 +193,27 @@ int diag_remote_dev_open(int id)
 	if (id < 0 || id >= NUM_REMOTE_DEV)
 		return -EINVAL;
 	bridge_info[id].inited = 1;
-	if (bridge_info[id].type == DIAG_DATA_TYPE)
+	if (bridge_info[id].type == DIAG_DATA_TYPE) {
+		diag_notify_md_client(BRIDGE_TO_MUX(id), 0, DIAG_STATUS_OPEN);
 		return diag_mux_queue_read(BRIDGE_TO_MUX(id));
-	else if (bridge_info[id].type == DIAG_DCI_TYPE)
+	} else if (bridge_info[id].type == DIAG_DCI_TYPE) {
 		return diag_dci_send_handshake_pkt(bridge_info[id].id);
+	}
 
 	return 0;
 }
 
 void diag_remote_dev_close(int id)
 {
-	return;
+
+	if (id < 0 || id >= NUM_REMOTE_DEV)
+		return;
+
+	diag_mux_close_device(BRIDGE_TO_MUX(id));
+
+	if (bridge_info[id].type == DIAG_DATA_TYPE)
+		diag_notify_md_client(BRIDGE_TO_MUX(id), 0, DIAG_STATUS_CLOSED);
+
 }
 
 int diag_remote_dev_read_done(int id, unsigned char *buf, int len)
@@ -236,7 +227,7 @@ int diag_remote_dev_read_done(int id, unsigned char *buf, int len)
 	if (ch->type == DIAG_DATA_TYPE) {
 		err = diag_mux_write(BRIDGE_TO_MUX(id), buf, len, id);
 		if (ch->dev_ops && ch->dev_ops->queue_read)
-			ch->dev_ops->queue_read(ch->ctxt);
+			ch->dev_ops->queue_read(id, ch->ctxt);
 		return err;
 	}
 	/*
@@ -259,6 +250,7 @@ int diag_remote_dev_read_done(int id, unsigned char *buf, int len)
 int diag_remote_dev_write_done(int id, unsigned char *buf, int len, int ctxt)
 {
 	int err = 0;
+
 	if (id < 0 || id >= NUM_REMOTE_DEV)
 		return -EINVAL;
 
@@ -279,30 +271,30 @@ int diag_remote_dev_write_done(int id, unsigned char *buf, int len, int ctxt)
 	return err;
 }
 
-int diagfwd_bridge_init(int xprt)
+int diagfwd_bridge_init(void)
 {
 	int err = 0;
 
-	if (xprt == 1)
-		err = diag_mhi_init();
-	else if (xprt == 2)
-		err = diag_sdio_init();
-	else
-		err = diag_hsic_init();
-
+	err = diag_mdm_init();
 	if (err)
 		goto fail;
+	#ifdef USB_QCOM_DIAG_BRIDGE
+	err = diag_smux_init();
+	if (err)
+		goto fail;
+	#endif
 	return 0;
 
 fail:
-	pr_err("diag: Unable to initialze diagfwd bridge, err: %d\n", err);
+	pr_err("diag: Unable to initialize diagfwd bridge, err: %d\n", err);
 	return err;
 }
 
-void diagfwd_bridge_exit()
+void diagfwd_bridge_exit(void)
 {
 	#ifdef USB_QCOM_DIAG_BRIDGE
 	diag_hsic_exit();
+	diag_smux_exit();
 	#endif
 }
 
@@ -311,7 +303,8 @@ int diagfwd_bridge_close(int id)
 	if (id < 0 || id >= NUM_REMOTE_DEV)
 		return -EINVAL;
 	if (bridge_info[id].dev_ops && bridge_info[id].dev_ops->close)
-		return bridge_info[id].dev_ops->close(bridge_info[id].ctxt);
+		return bridge_info[id].dev_ops->close(bridge_info[id].id,
+						bridge_info[id].ctxt);
 	return 0;
 }
 
@@ -320,20 +313,23 @@ int diagfwd_bridge_write(int id, unsigned char *buf, int len)
 	if (id < 0 || id >= NUM_REMOTE_DEV)
 		return -EINVAL;
 	if (bridge_info[id].dev_ops && bridge_info[id].dev_ops->write) {
-		return bridge_info[id].dev_ops->write(bridge_info[id].ctxt,
-						      buf, len, 0);
+		return bridge_info[id].dev_ops->write(bridge_info[id].id,
+							bridge_info[id].ctxt,
+							buf, len, 0);
 	}
 	return 0;
 }
 
-uint16_t diag_get_remote_device_mask()
+uint16_t diag_get_remote_device_mask(void)
 {
 	int i;
 	uint16_t remote_dev = 0;
 
 	for (i = 0; i < NUM_REMOTE_DEV; i++) {
 		if (bridge_info[i].inited &&
-		    bridge_info[i].type == DIAG_DATA_TYPE) {
+		    bridge_info[i].type == DIAG_DATA_TYPE &&
+		    (bridge_info[i].dev_ops->remote_proc_check &&
+		    bridge_info[i].dev_ops->remote_proc_check(i))) {
 			remote_dev |= 1 << i;
 		}
 	}

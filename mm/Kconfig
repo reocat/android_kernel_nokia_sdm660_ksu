@@ -1,3 +1,6 @@
+
+menu "Memory Management options"
+
 config SELECT_MEMORY_MODEL
 	def_bool y
 	depends on ARCH_SELECT_MEMORY_MODEL
@@ -115,10 +118,6 @@ config SPARSEMEM_EXTREME
 config SPARSEMEM_VMEMMAP_ENABLE
 	bool
 
-config SPARSEMEM_ALLOC_MEM_MAP_TOGETHER
-	def_bool y
-	depends on SPARSEMEM && X86_64
-
 config SPARSEMEM_VMEMMAP
 	bool "Sparse Memory virtual memmap"
 	depends on SPARSEMEM && SPARSEMEM_VMEMMAP_ENABLE
@@ -137,7 +136,7 @@ config HAVE_MEMBLOCK_NODE_MAP
 config HAVE_MEMBLOCK_PHYS_MAP
 	bool
 
-config HAVE_GENERIC_RCU_GUP
+config HAVE_GENERIC_GUP
 	bool
 
 config ARCH_DISCARD_MEMBLOCK
@@ -148,32 +147,6 @@ config NO_BOOTMEM
 
 config MEMORY_ISOLATION
 	bool
-
-config MOVABLE_NODE
-	bool "Enable to assign a node which has only movable memory"
-	depends on HAVE_MEMBLOCK
-	depends on NO_BOOTMEM
-	depends on X86_64
-	depends on NUMA
-	default n
-	help
-	  Allow a node to have only movable memory.  Pages used by the kernel,
-	  such as direct mapping pages cannot be migrated.  So the corresponding
-	  memory device cannot be hotplugged.  This option allows the following
-	  two things:
-	  - When the system is booting, node full of hotpluggable memory can
-	  be arranged to have only movable memory so that the whole node can
-	  be hot-removed. (need movable_node boot option specified).
-	  - After the system is up, the option allows users to online all the
-	  memory of a node as movable memory so that the whole node can be
-	  hot-removed.
-
-	  Users who don't use the memory hotplug feature are fine with this
-	  option on since they don't specify movable_node boot option or they
-	  don't online memory as movable.
-
-	  Say Y here if you want to hotplug a whole node.
-	  Say N here if you want kernel to use memory on all nodes evenly.
 
 #
 # Only be set on architectures that have completely implemented memory hotplug
@@ -187,11 +160,46 @@ config MEMORY_HOTPLUG
 	bool "Allow for memory hot-add"
 	depends on SPARSEMEM || X86_64_ACPI_NUMA
 	depends on ARCH_ENABLE_MEMORY_HOTPLUG
-	depends on (IA64 || X86 || PPC_BOOK3S_64 || SUPERH || S390 || ARM64)
+	depends on ARM64
 
 config MEMORY_HOTPLUG_SPARSE
 	def_bool y
 	depends on SPARSEMEM && MEMORY_HOTPLUG
+
+config MEMORY_HOTPLUG_DEFAULT_ONLINE
+        bool "Online the newly added memory blocks by default"
+        default n
+        depends on MEMORY_HOTPLUG
+        help
+	  This option sets the default policy setting for memory hotplug
+	  onlining policy (/sys/devices/system/memory/auto_online_blocks) which
+	  determines what happens to newly added memory regions. Policy setting
+	  can always be changed at runtime.
+	  See Documentation/memory-hotplug.txt for more information.
+
+	  Say Y here if you want all hot-plugged memory blocks to appear in
+	  'online' state by default.
+	  Say N here if you want the default policy to keep all hot-plugged
+	  memory blocks in 'offline' state.
+
+config MEMORY_HOTPLUG_MOVABLE_NODE
+        bool "Add hot-added memory blocks to ZONE_MOVABLE type"
+        default n
+        depends on MEMORY_HOTPLUG
+        depends on QCOM_MEM_OFFLINE
+        help
+	  When onlining memory blocks, this option helps to add the target
+	  memory block to ZONE_MOVABLE zone type. For successful offlining,
+	  these memory blocks should belong to 'ZONE_MOVABLE' since it carries
+	  only movable pages. When this option is not set, the default zone
+	  policy is to add the blocks to 'ZONE_NORMAL' which may pin pages.
+
+	  See Documentation/memory-hotplug.txt for more information.
+
+	  Say Y here if you want all hot-added memory blocks to be added to
+	  'ZONE_MOVABLE' type.state by default.
+	  Say N here if you want the default policy to add all hot-added
+	  memory blocks in 'ZONE_NORMAL' type.
 
 config MEMORY_HOTREMOVE
 	bool "Allow for memory hot remove"
@@ -246,7 +254,14 @@ config COMPACTION
 	select MIGRATION
 	depends on MMU
 	help
-	  Allows the compaction of memory for the allocation of huge pages.
+          Compaction is the only memory management component to form
+          high order (larger physically contiguous) memory blocks
+          reliably. The page allocator relies on compaction heavily and
+          the lack of the feature can lead to unexpected OOM killer
+          invocations for high order memory requests. You shouldn't
+          disable this option unless there really is a strong reason for
+          it and then we would be really interested to hear about that at
+          linux-mm@kvack.org.
 
 #
 # support for page migration
@@ -266,13 +281,11 @@ config MIGRATION
 config ARCH_ENABLE_HUGEPAGE_MIGRATION
 	bool
 
-config PHYS_ADDR_T_64BIT
-	def_bool 64BIT || ARCH_PHYS_ADDR_T_64BIT
+config ARCH_ENABLE_THP_MIGRATION
+	bool
 
-config ZONE_DMA_FLAG
-	int
-	default "0" if !ZONE_DMA
-	default "1"
+config PHYS_ADDR_T_64BIT
+	def_bool 64BIT
 
 config BOUNCE
 	bool "Enable bounce buffers"
@@ -284,17 +297,9 @@ config BOUNCE
 	  by default when ZONE_DMA or HIGHMEM is selected, but you
 	  may say n to override this.
 
-# On the 'tile' arch, USB OHCI needs the bounce pool since tilegx will often
-# have more than 4GB of memory, but we don't currently use the IOTLB to present
-# a 32-bit address to OHCI.  So we need to use a bounce pool instead.
-config NEED_BOUNCE_POOL
-	bool
-	default y if TILE && USB_OHCI_HCD
-
 config NR_QUICK
 	int
 	depends on QUICKLIST
-	default "2" if AVR32
 	default "1"
 
 config VIRT_TO_BUS
@@ -319,7 +324,7 @@ config KSM
 	  the many instances by a single page with that content, so
 	  saving memory until one or another app needs to modify the content.
 	  Recommended for use with KVM, or with other duplicative applications.
-	  See Documentation/vm/ksm.txt for more information: KSM is inactive
+	  See Documentation/vm/ksm.rst for more information: KSM is inactive
 	  until a program has madvised that an area is MADV_MERGEABLE, and
 	  root has set /sys/kernel/mm/ksm/run to 1 (if CONFIG_SYSFS is set).
 
@@ -394,6 +399,7 @@ config TRANSPARENT_HUGEPAGE
 	bool "Transparent Hugepage Support"
 	depends on HAVE_ARCH_TRANSPARENT_HUGEPAGE
 	select COMPACTION
+	select RADIX_TREE_MULTIORDER
 	help
 	  Transparent Hugepages allows the kernel to use huge pages and
 	  huge tlb transparently to the applications whenever possible.
@@ -427,6 +433,23 @@ choice
 	  memory footprint of applications without a guaranteed
 	  benefit.
 endchoice
+
+config ARCH_WANTS_THP_SWAP
+       def_bool n
+
+config THP_SWAP
+	def_bool y
+	depends on TRANSPARENT_HUGEPAGE && ARCH_WANTS_THP_SWAP && SWAP
+	help
+	  Swap transparent huge pages in one piece, without splitting.
+	  XXX: For now, swap cluster backing transparent huge page
+	  will be split after swapout.
+
+	  For selection by architectures with reasonable THP sizes.
+
+config	TRANSPARENT_HUGE_PAGECACHE
+	def_bool y
+	depends on TRANSPARENT_HUGEPAGE
 
 #
 # UP and nommu archs use km based percpu allocator
@@ -506,6 +529,15 @@ config CMA_DEBUGFS
 	help
 	  Turns on the DebugFS interface for CMA.
 
+config  CMA_ALLOW_WRITE_DEBUGFS
+	depends on CMA_DEBUGFS
+	bool "Allow CMA debugfs write"
+	help
+	  Say 'y' here to allow the CMA debugfs write.
+	  CMA debugfs write could be risky as it allows
+	  cma allocation, so it is not recommended to
+	  enable this option on any production device.
+
 config CMA_AREAS
 	int "Maximum count of the CMA areas"
 	depends on CMA
@@ -527,7 +559,7 @@ config MEM_SOFT_DIRTY
 	  into a page just as regular dirty bit, but unlike the latter
 	  it can be cleared by hands.
 
-	  See Documentation/vm/soft-dirty.txt for more details.
+	  See Documentation/admin-guide/mm/soft-dirty.rst for more details.
 
 config ZSWAP
 	bool "Compressed cache for swap pages (EXPERIMENTAL)"
@@ -557,7 +589,7 @@ config ZPOOL
 	  zsmalloc.
 
 config ZBUD
-	tristate "Low density storage for compressed pages"
+	tristate "Low (Up to 2x) density storage for compressed pages"
 	default n
 	help
 	  A special purpose allocator for storing compressed pages.
@@ -565,6 +597,16 @@ config ZBUD
 	  page.  While this design limits storage density, it has simple and
 	  deterministic reclaim properties that make it preferable to a higher
 	  density approach when reclaim will be used.
+
+config Z3FOLD
+	tristate "Up to 3x density storage for compressed pages"
+	depends on ZPOOL
+	default n
+	help
+	  A special purpose allocator for storing compressed pages.
+	  It is designed to store up to three compressed pages per physical
+	  page. It is a ZBUD derivative so the simplicity and determinism are
+	  still there.
 
 config ZSMALLOC
 	tristate "Memory allocator for compressed pages"
@@ -610,6 +652,21 @@ config VMAP_LAZY_PURGING_FACTOR
 	  single attempt. For 32-bit in order to reduce fragmentation
 	  of vmalloc space, we decrease the default value to "8".
 
+config MM_EVENT_STAT
+	bool "Track per-process MM event"
+	depends on MMU
+	help
+	  This option enables per-process mm event stat(e.g., fault, reclaim,
+	  compaction and so on ) with some interval(Default is 0.5sec).
+	  Admin can see the stat from trace file via debugfs(e.g.,
+	  /sys/kernel/debug/tracing/trace)
+
+	  It includes max/average memory allocation latency for the interval
+	  as well as event count so that admin can see what happens in VM side
+	  (how many each event happens and how much processes spent time for
+	  the MM event). If it's too large, that would be not good situation.
+
+	  System can dump the trace into bugreport when user allows the dump.
 
 config GENERIC_EARLY_IOREMAP
 	bool
@@ -617,33 +674,16 @@ config GENERIC_EARLY_IOREMAP
 config MAX_STACK_SIZE_MB
 	int "Maximum user stack size for 32-bit processes (MB)"
 	default 80
-	range 8 256 if METAG
 	range 8 2048
 	depends on STACK_GROWSUP && (!64BIT || COMPAT)
 	help
 	  This is the maximum stack size in Megabytes in the VM layout of 32-bit
 	  user processes when the stack grows upwards (currently only on parisc
-	  and metag arch). The stack will be located at the highest memory
-	  address minus the given value, unless the RLIMIT_STACK hard limit is
-	  changed to a smaller value in which case that is used.
+	  arch). The stack will be located at the highest memory address minus
+	  the given value, unless the RLIMIT_STACK hard limit is changed to a
+	  smaller value in which case that is used.
 
 	  A sane initial value is 80 MB.
-
-config ZCACHE
-       bool "Compressed cache for file pages (EXPERIMENTAL)"
-       depends on CRYPTO && CLEANCACHE
-       select CRYPTO_LZO
-       select ZBUD
-       default n
-       help
-         A compressed cache for file pages.
-         It takes active file pages that are in the process of being reclaimed
-         and attempts to compress them into a dynamically allocated RAM-based
-         memory pool.
-
-         If this process is successful, when those file pages needed again, the
-         I/O reading operation was avoided. This results in a significant performance
-         gains under memory pressure for systems full with file pages.
 
 config BALANCE_ANON_FILE_RECLAIM
 	bool "During reclaim treat anon and file backed pages equally"
@@ -654,37 +694,22 @@ config BALANCE_ANON_FILE_RECLAIM
 	  Swapping anonymous pages out to memory can be efficient enough to justify
 	  treating anonymous and file backed pages equally.
 
-config KSWAPD_CPU_AFFINITY_MASK
-	string "kswapd cpu affinity mask"
-	depends on SMP
-	help
-	  Set the cpu affinity for the kswapd task.
-	  There can be power benefits on certain targets when limiting kswapd
-	  to run only on certain cores.
-	  The cpu affinity bitmask is represented by a hex string where commas
-	  group hex digits into chunks.  Each chunk defines exactly 32 bits of
-	  the resultant bitmask.
-	  For example to limit kswapd to the first 4 cores use the following:
-	  CONFIG_KSWAPD_CPU_AFFINITY_MASK="f"
-
-# For architectures that support deferred memory initialisation
-config ARCH_SUPPORTS_DEFERRED_STRUCT_PAGE_INIT
-	bool
-
 config DEFERRED_STRUCT_PAGE_INIT
-	bool "Defer initialisation of struct pages to kswapd"
+	bool "Defer initialisation of struct pages to kthreads"
 	default n
-	depends on ARCH_SUPPORTS_DEFERRED_STRUCT_PAGE_INIT
-	depends on MEMORY_HOTPLUG
+	depends on NO_BOOTMEM
+	depends on SPARSEMEM
 	depends on !NEED_PER_CPU_KM
+	depends on 64BIT
 	help
 	  Ordinarily all struct pages are initialised during early boot in a
 	  single thread. On very large machines this can take a considerable
 	  amount of time. If this option is set, large machines will bring up
 	  a subset of memmap at boot and then initialise the rest in parallel
-	  when kswapd starts. This has a potential performance impact on
-	  processes running early in the lifetime of the systemm until kswapd
-	  finishes the initialisation.
+	  by starting one-off "pgdatinitX" kernel thread for each node X. This
+	  has a potential performance impact on processes running early in the
+	  lifetime of the system until these kthreads finish the
+	  initialisation.
 
 config IDLE_PAGE_TRACKING
 	bool "Enable idle page tracking"
@@ -696,15 +721,20 @@ config IDLE_PAGE_TRACKING
 	  be useful to tune memory cgroup limits and/or for job placement
 	  within a compute cluster.
 
-	  See Documentation/vm/idle_page_tracking.txt for more details.
+	  See Documentation/admin-guide/mm/idle_page_tracking.rst for
+	  more details.
+
+# arch_add_memory() comprehends device memory
+config ARCH_HAS_ZONE_DEVICE
+	bool
 
 config ZONE_DEVICE
-	bool "Device memory (pmem, etc...) hotplug support" if EXPERT
-	default !ZONE_DMA
-	depends on !ZONE_DMA
+	bool "Device memory (pmem, HMM, etc...) hotplug support"
 	depends on MEMORY_HOTPLUG
 	depends on MEMORY_HOTREMOVE
-	depends on X86_64 #arch_add_memory() comprehends device memory
+	depends on SPARSEMEM_VMEMMAP
+	depends on ARCH_HAS_ZONE_DEVICE
+	select RADIX_TREE_MULTIORDER
 
 	help
 	  Device memory hotplug support allows for establishing pmem,
@@ -715,23 +745,125 @@ config ZONE_DEVICE
 
 	  If FS_DAX is enabled, then say Y.
 
+config ARCH_HAS_HMM
+	bool
+	default y
+	depends on (X86_64 || PPC64)
+	depends on ZONE_DEVICE
+	depends on MMU && 64BIT
+	depends on MEMORY_HOTPLUG
+	depends on MEMORY_HOTREMOVE
+	depends on SPARSEMEM_VMEMMAP
+
+config MIGRATE_VMA_HELPER
+	bool
+
+config DEV_PAGEMAP_OPS
+	bool
+
+config HMM
+	bool
+	select MMU_NOTIFIER
+	select MIGRATE_VMA_HELPER
+
+config HMM_MIRROR
+	bool "HMM mirror CPU page table into a device page table"
+	depends on ARCH_HAS_HMM
+	select HMM
+	help
+	  Select HMM_MIRROR if you want to mirror range of the CPU page table of a
+	  process into a device page table. Here, mirror means "keep synchronized".
+	  Prerequisites: the device must provide the ability to write-protect its
+	  page tables (at PAGE_SIZE granularity), and must be able to recover from
+	  the resulting potential page faults.
+
+config DEVICE_PRIVATE
+	bool "Unaddressable device memory (GPU memory, ...)"
+	depends on ARCH_HAS_HMM
+	select HMM
+	select DEV_PAGEMAP_OPS
+
+	help
+	  Allows creation of struct pages to represent unaddressable device
+	  memory; i.e., memory that is only accessible from the device (or
+	  group of devices). You likely also want to select HMM_MIRROR.
+
+config DEVICE_PUBLIC
+	bool "Addressable device memory (like GPU memory)"
+	depends on ARCH_HAS_HMM
+	select HMM
+	select DEV_PAGEMAP_OPS
+
+	help
+	  Allows creation of struct pages to represent addressable device
+	  memory; i.e., memory that is accessible from both the device and
+	  the CPU
+
 config FRAME_VECTOR
 	bool
 
-config FORCE_ALLOC_FROM_DMA_ZONE
-	bool "Force certain memory allocators to always return ZONE_DMA memory"
-	depends on ZONE_DMA
-	help
-	  Ensure certain memory allocators always return memory from ZONE_DMA.
-	  This option helps ensure that clients who require ZONE_DMA memory are
-	  always using ZONE_DMA memory.
+config ARCH_USES_HIGH_VMA_FLAGS
+	bool
+config ARCH_HAS_PKEYS
+	bool
 
-	  If unsure, say "n".
+config PERCPU_STATS
+	bool "Collect percpu memory statistics"
+	default n
+	help
+	  This feature collects and exposes statistics via debugfs. The
+	  information includes global and per chunk statistics, which can
+	  be used to help understand percpu memory usage.
+
+config ARCH_SUPPORTS_SPECULATIVE_PAGE_FAULT
+       def_bool n
+
+config SPECULATIVE_PAGE_FAULT
+       bool "Speculative page faults"
+       default y
+       depends on ARCH_SUPPORTS_SPECULATIVE_PAGE_FAULT
+       depends on MMU && SMP
+       help
+         Try to handle user space page faults without holding the mmap_sem.
+
+	 This should allow better concurrency for massively threaded process
+	 since the page fault handler will not wait for other threads memory
+	 layout change to be done, assuming that this change is done in another
+	 part of the process's memory space. This type of page fault is named
+	 speculative page fault.
+
+	 If the speculative page fault fails because of a concurrency is
+	 detected or because underlying PMD or PTE tables are not yet
+	 allocating, it is failing its processing and a classic page fault
+	 is then tried.
+
+config HAVE_USERSPACE_LOW_MEMORY_KILLER
+	bool "Have userspace low memory killer"
+	default n
+	help
+	  The page allocator cannot directly call into a
+	  userspace low memory killer as it can call into the OOM killer.
+	  Therefore, add a timeout mechanism to give the userspace
+	  low memory killer a chance to run.
+
+config GUP_BENCHMARK
+	bool "Enable infrastructure for get_user_pages_fast() benchmarking"
+	default n
+	help
+	  Provides /sys/kernel/debug/gup_benchmark that helps with testing
+	  performance of get_user_pages_fast().
+
+	  See tools/testing/selftests/vm/gup_benchmark.c
+
+config ARCH_HAS_PTE_SPECIAL
+	bool
+
+endmenu
 
 config PROCESS_RECLAIM
 	bool "Enable process reclaim"
 	depends on PROC_FS
-	default n
+	default y
 	help
 	 It allows to reclaim pages of the process by /proc/pid/reclaim.
 
@@ -742,4 +874,14 @@ config PROCESS_RECLAIM
 	 (echo addr size-byte > /proc/PID/reclaim) reclaims pages in
 	 (addr, addr + size-bytes) of the process.
 
-	 Any other vaule is ignored.
+	 Any other value is ignored.
+
+config FORCE_ALLOC_FROM_DMA_ZONE
+	bool "Force certain memory allocators to always return ZONE_DMA32 memory"
+	depends on ZONE_DMA32
+	help
+	  Ensure certain memory allocators always return memory from ZONE_DMA32.
+	  This option helps ensure that clients who require ZONE_DMA32 memory are
+	  always using ZONE_DMA32 memory.
+
+	  If unsure, say "n".

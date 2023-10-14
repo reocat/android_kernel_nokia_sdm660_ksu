@@ -1,7 +1,7 @@
 Introduction:
 =============
 
-Qualcomm Crypto (qcrypto) driver is a Linux crypto driver which interfaces
+QTI Crypto (qcrypto) driver is a Linux crypto driver which interfaces
 with the Linux kernel crypto API layer to provide the HW crypto functions.
 This driver is accessed by kernel space apps via the kernel crypto API layer.
 At present there is no means for user space apps to access this module.
@@ -9,7 +9,7 @@ At present there is no means for user space apps to access this module.
 Hardware description:
 =====================
 
-Qualcomm Crypto HW device family provides a series of algorithms implemented
+QTI Crypto HW device family provides a series of algorithms implemented
 in the device.
 
 Crypto 2 hardware provides hashing - SHA-1, SHA-256, ciphering - DES, 3DES, AES
@@ -55,8 +55,7 @@ AEAD, and ABLKCIPHER.
 AEAD stands for "authentication encryption with association data".
 ABLKCIPHER stands of "asynchronous block cipher".
 
-The AEAD structure is described in the following header file
-    LINUX/opensource/kernel/include/crypto/aead.h
+The AEAD structure is described in the following header file aead.h
 
 The design of the driver is to allow multiple requests
 issued from kernel client SW (eg IPSec).
@@ -94,8 +93,7 @@ Power Management
 
 Interface:
 ==========
-The kernel interface is defined in
-    LINUX/opensource/kernel/include/linux/crypto.h.
+The kernel interface is defined in crypto.h.
 
 
 Module parameters:
@@ -136,9 +134,9 @@ Limitations:
     the registered software implementation of the crypto algorithms.
 
 (3) If your device has Playready application enabled and uses the qcedev module
-    to access the crypto hardware accelarator, please be informed that for
+    to access the crypto hardware accelerator, please be informed that for
     performance reasons, the CE hardware will need to be dedicated to playready
     application.  Any other user space or kernel application should be implemented
-    to use the software implemenation of the crypto algorithms.
+    to use the software implementation of the crypto algorithms.
 
     (NOTE:  Please refer to details on the limitations listed in qce/40.txt)

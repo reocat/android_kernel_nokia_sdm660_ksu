@@ -1,14 +1,6 @@
-/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2011-2021, The Linux Foundation. All rights reserved.
  */
 
 #if !defined(_KGSL_TRACE_H) || defined(TRACE_HEADER_MULTI_READ)
@@ -22,10 +14,11 @@
 #define TRACE_INCLUDE_FILE kgsl_trace
 
 #include <linux/tracepoint.h>
-#include "kgsl_device.h"
-#include "adreno_drawctxt.h"
 
-struct kgsl_device;
+#include "kgsl.h"
+#include "kgsl_drawobj.h"
+#include "kgsl_sharedmem.h"
+
 struct kgsl_ringbuffer_issueibcmds;
 struct kgsl_device_waittimestamp;
 
@@ -66,8 +59,7 @@ TRACE_EVENT(kgsl_issueibcmds,
 	),
 
 	TP_printk(
-		"d_name=%s ctx=%u ib=0x0 numibs=%u ts=%u "
-		"flags=%s result=%d type=%s",
+		"d_name=%s ctx=%u ib=0x0 numibs=%u ts=%u flags=%s result=%d type=%s",
 		__get_str(device_name),
 		__entry->drawctxt_id,
 		__entry->numibs,
@@ -417,7 +409,7 @@ TRACE_EVENT(kgsl_mem_alloc,
 	TP_fast_assign(
 		__entry->gpuaddr = mem_entry->memdesc.gpuaddr;
 		__entry->size = mem_entry->memdesc.size;
-		__entry->tgid = mem_entry->priv->pid;
+		__entry->tgid = pid_nr(mem_entry->priv->pid);
 		kgsl_get_memory_usage(__entry->usage, sizeof(__entry->usage),
 				     mem_entry->memdesc.flags);
 		__entry->id = mem_entry->id;
@@ -433,9 +425,9 @@ TRACE_EVENT(kgsl_mem_alloc,
 
 TRACE_EVENT(kgsl_mem_mmap,
 
-	TP_PROTO(struct kgsl_mem_entry *mem_entry),
+	TP_PROTO(struct kgsl_mem_entry *mem_entry, unsigned long useraddr),
 
-	TP_ARGS(mem_entry),
+	TP_ARGS(mem_entry, useraddr),
 
 	TP_STRUCT__entry(
 		__field(unsigned long, useraddr)
@@ -447,7 +439,7 @@ TRACE_EVENT(kgsl_mem_mmap,
 	),
 
 	TP_fast_assign(
-		__entry->useraddr = mem_entry->memdesc.useraddr;
+		__entry->useraddr = useraddr;
 		__entry->gpuaddr = mem_entry->memdesc.gpuaddr;
 		__entry->size = mem_entry->memdesc.size;
 		kgsl_get_memory_usage(__entry->usage, sizeof(__entry->usage),
@@ -510,7 +502,7 @@ TRACE_EVENT(kgsl_mem_map,
 		__entry->size = mem_entry->memdesc.size;
 		__entry->fd = fd;
 		__entry->type = kgsl_memdesc_usermem_type(&mem_entry->memdesc);
-		__entry->tgid = mem_entry->priv->pid;
+		__entry->tgid = pid_nr(mem_entry->priv->pid);
 		kgsl_get_memory_usage(__entry->usage, sizeof(__entry->usage),
 				     mem_entry->memdesc.flags);
 		__entry->id = mem_entry->id;
@@ -545,7 +537,7 @@ TRACE_EVENT(kgsl_mem_free,
 		__entry->gpuaddr = mem_entry->memdesc.gpuaddr;
 		__entry->size = mem_entry->memdesc.size;
 		__entry->type = kgsl_memdesc_usermem_type(&mem_entry->memdesc);
-		__entry->tgid = mem_entry->priv->pid;
+		__entry->tgid = pid_nr(mem_entry->priv->pid);
 		kgsl_get_memory_usage(__entry->usage, sizeof(__entry->usage),
 				     mem_entry->memdesc.flags);
 		__entry->id = mem_entry->id;
@@ -580,7 +572,7 @@ TRACE_EVENT(kgsl_mem_sync_cache,
 		__entry->gpuaddr = mem_entry->memdesc.gpuaddr;
 		kgsl_get_memory_usage(__entry->usage, sizeof(__entry->usage),
 				     mem_entry->memdesc.flags);
-		__entry->tgid = mem_entry->priv->pid;
+		__entry->tgid = pid_nr(mem_entry->priv->pid);
 		__entry->id = mem_entry->id;
 		__entry->op = op;
 		__entry->offset = offset;
@@ -652,8 +644,7 @@ DECLARE_EVENT_CLASS(kgsl_mem_timestamp_template,
 	),
 
 	TP_printk(
-		"d_name=%s gpuaddr=0x%llx size=%llu type=%s usage=%s id=%u ctx=%u"
-		" curr_ts=%u free_ts=%u",
+		"d_name=%s gpuaddr=0x%llx size=%llu type=%s usage=%s id=%u ctx=%u curr_ts=%u free_ts=%u",
 		__get_str(device_name),
 		__entry->gpuaddr,
 		__entry->size,
@@ -822,15 +813,16 @@ TRACE_EVENT(kgsl_constraint,
 
 TRACE_EVENT(kgsl_mmu_pagefault,
 
-	TP_PROTO(struct kgsl_device *device, unsigned int page,
-		 unsigned int pt, const char *op),
+	TP_PROTO(struct kgsl_device *device, unsigned long page,
+		 unsigned int pt, const char *name, const char *op),
 
-	TP_ARGS(device, page, pt, op),
+	TP_ARGS(device, page, pt, name, op),
 
 	TP_STRUCT__entry(
 		__string(device_name, device->name)
-		__field(unsigned int, page)
+		__field(unsigned long, page)
 		__field(unsigned int, pt)
+		__string(name, name)
 		__string(op, op)
 	),
 
@@ -838,13 +830,14 @@ TRACE_EVENT(kgsl_mmu_pagefault,
 		__assign_str(device_name, device->name);
 		__entry->page = page;
 		__entry->pt = pt;
+		__assign_str(name, name);
 		__assign_str(op, op);
 	),
 
 	TP_printk(
-		"d_name=%s page=0x%08x pt=%u op=%s",
+		"d_name=%s page=0x%lx pt=%u op=%s name=%s",
 		__get_str(device_name), __entry->page, __entry->pt,
-		__get_str(op)
+		__get_str(op), __get_str(name)
 	)
 );
 
@@ -959,7 +952,7 @@ TRACE_EVENT(kgsl_register_event,
 			__entry->func = func;
 		),
 		TP_printk(
-			"ctx=%u ts=%u cb=%pF",
+			"ctx=%u ts=%u cb=%pS",
 			__entry->id, __entry->timestamp, __entry->func)
 );
 
@@ -982,7 +975,7 @@ TRACE_EVENT(kgsl_fire_event,
 			__entry->func = func;
 		),
 		TP_printk(
-			"ctx=%u ts=%u type=%s age=%u cb=%pF",
+			"ctx=%u ts=%u type=%s age=%u cb=%pS",
 			__entry->id, __entry->ts,
 			__print_symbolic(__entry->type, KGSL_EVENT_TYPES),
 			__entry->age, __entry->func)
@@ -1007,7 +1000,7 @@ TRACE_EVENT(kgsl_active_count,
 	),
 
 	TP_printk(
-		"d_name=%s active_cnt=%u func=%pf",
+		"d_name=%s active_cnt=%u func=%ps",
 		__get_str(device_name), __entry->count, (void *) __entry->ip
 	)
 );
@@ -1200,7 +1193,7 @@ TRACE_EVENT(kgsl_clock_throttling,
 		int crc_50pct,
 		int crc_more50pct,
 		int crc_less50pct,
-		int adj
+		int64_t adj
 	),
 	TP_ARGS(
 		idle_10pct,
@@ -1214,7 +1207,7 @@ TRACE_EVENT(kgsl_clock_throttling,
 		__field(int, crc_50pct)
 		__field(int, crc_more50pct)
 		__field(int, crc_less50pct)
-		__field(int, adj)
+		__field(int64_t, adj)
 	),
 	TP_fast_assign(
 		__entry->idle_10pct = idle_10pct;
@@ -1223,9 +1216,256 @@ TRACE_EVENT(kgsl_clock_throttling,
 		__entry->crc_less50pct = crc_less50pct;
 		__entry->adj = adj;
 	),
-	TP_printk("idle_10=%d crc_50=%d crc_more50=%d crc_less50=%d adj=%d",
+	TP_printk("idle_10=%d crc_50=%d crc_more50=%d crc_less50=%d adj=%lld",
 		__entry->idle_10pct, __entry->crc_50pct, __entry->crc_more50pct,
 		__entry->crc_less50pct, __entry->adj
+	)
+);
+
+DECLARE_EVENT_CLASS(gmu_oob_template,
+	TP_PROTO(unsigned int mask),
+	TP_ARGS(mask),
+	TP_STRUCT__entry(
+		__field(unsigned int, mask)
+	),
+	TP_fast_assign(
+		__entry->mask = mask;
+	),
+	TP_printk("mask=0x%08x", __entry->mask)
+);
+
+DEFINE_EVENT(gmu_oob_template, kgsl_gmu_oob_set,
+	TP_PROTO(unsigned int mask),
+	TP_ARGS(mask)
+);
+
+DEFINE_EVENT(gmu_oob_template, kgsl_gmu_oob_clear,
+	TP_PROTO(unsigned int mask),
+	TP_ARGS(mask)
+);
+
+DECLARE_EVENT_CLASS(hfi_msg_template,
+	TP_PROTO(unsigned int id, unsigned int size, unsigned int seqnum),
+	TP_ARGS(id, size, seqnum),
+	TP_STRUCT__entry(
+		__field(unsigned int, id)
+		__field(unsigned int, size)
+		__field(unsigned int, seq)
+	),
+	TP_fast_assign(
+		__entry->id = id;
+		__entry->size = size;
+		__entry->seq = seqnum;
+	),
+	TP_printk("id=0x%x size=0x%x seqnum=0x%x",
+		__entry->id, __entry->size, __entry->seq)
+);
+
+DEFINE_EVENT(hfi_msg_template, kgsl_hfi_send,
+	TP_PROTO(unsigned int id, unsigned int size, unsigned int seqnum),
+	TP_ARGS(id, size, seqnum)
+);
+
+DEFINE_EVENT(hfi_msg_template, kgsl_hfi_receive,
+	TP_PROTO(unsigned int id, unsigned int size, unsigned int seqnum),
+	TP_ARGS(id, size, seqnum)
+);
+
+TRACE_EVENT(kgsl_opp_notify,
+	TP_PROTO(
+		unsigned long min_freq,
+		unsigned long max_freq
+	),
+	TP_ARGS(
+		min_freq,
+		max_freq
+	),
+	TP_STRUCT__entry(
+		__field(unsigned long, min_freq)
+		__field(unsigned long, max_freq)
+	),
+	TP_fast_assign(
+		__entry->min_freq = min_freq;
+		__entry->max_freq = max_freq;
+	),
+	TP_printk("min freq=%ld max freq=%ld",
+		__entry->min_freq, __entry->max_freq
+	)
+);
+
+TRACE_EVENT(kgsl_timeline_alloc,
+	TP_PROTO(
+		u32 id,
+		u64 seqno
+	),
+	TP_ARGS(
+		id,
+		seqno
+	),
+	TP_STRUCT__entry(
+		__field(u32, id)
+		__field(u64, seqno)
+	),
+	TP_fast_assign(
+		__entry->id = id;
+		__entry->seqno = seqno;
+	),
+	TP_printk("id=%u initial=%llu",
+		__entry->id, __entry->seqno
+	)
+);
+
+TRACE_EVENT(kgsl_timeline_destroy,
+	TP_PROTO(
+		u32 id
+	),
+	TP_ARGS(
+		id
+	),
+	TP_STRUCT__entry(
+		__field(u32, id)
+	),
+	TP_fast_assign(
+		__entry->id = id;
+	),
+	TP_printk("id=%u",
+		__entry->id
+	)
+);
+
+
+TRACE_EVENT(kgsl_timeline_signal,
+	TP_PROTO(
+		u32 id,
+		u64 seqno
+	),
+	TP_ARGS(
+		id,
+		seqno
+	),
+	TP_STRUCT__entry(
+		__field(u32, id)
+		__field(u64, seqno)
+	),
+	TP_fast_assign(
+		__entry->id = id;
+		__entry->seqno = seqno;
+	),
+	TP_printk("id=%u seqno=%llu",
+		__entry->id, __entry->seqno
+	)
+);
+
+TRACE_EVENT(kgsl_timeline_fence_alloc,
+	TP_PROTO(
+		u32 timeline,
+		u64 seqno
+	),
+	TP_ARGS(
+		timeline,
+		seqno
+	),
+	TP_STRUCT__entry(
+		__field(u32, timeline)
+		__field(u64, seqno)
+	),
+	TP_fast_assign(
+		__entry->timeline = timeline;
+		__entry->seqno = seqno;
+	),
+	TP_printk("timeline=%u seqno=%llu",
+		__entry->timeline, __entry->seqno
+	)
+);
+
+TRACE_EVENT(kgsl_timeline_fence_release,
+	TP_PROTO(
+		u32 timeline,
+		u64 seqno
+	),
+	TP_ARGS(
+		timeline,
+		seqno
+	),
+	TP_STRUCT__entry(
+		__field(u32, timeline)
+		__field(u64, seqno)
+	),
+	TP_fast_assign(
+		__entry->timeline = timeline;
+		__entry->seqno = seqno;
+	),
+	TP_printk("timeline=%u seqno=%llu",
+		__entry->timeline, __entry->seqno
+	)
+);
+
+
+TRACE_EVENT(kgsl_timeline_wait,
+	TP_PROTO(
+		u32 flags,
+		s64 tv_sec,
+		s64 tv_nsec
+	),
+	TP_ARGS(
+		flags,
+		tv_sec,
+		tv_nsec
+	),
+	TP_STRUCT__entry(
+		__field(u32, flags)
+		__field(s64, tv_sec)
+		__field(s64, tv_nsec)
+	),
+	TP_fast_assign(
+		__entry->flags = flags;
+		__entry->tv_sec = tv_sec;
+		__entry->tv_nsec = tv_nsec;
+	),
+	TP_printk("flags=0x%x tv_sec=%llu tv_nsec=%llu",
+		__entry->flags, __entry->tv_sec, __entry->tv_nsec
+
+	)
+);
+
+TRACE_EVENT(kgsl_aux_command,
+	TP_PROTO(u32 drawctxt_id, u32 numcmds, u32 flags, u32 timestamp
+	),
+	TP_ARGS(drawctxt_id, numcmds, flags, timestamp
+	),
+	TP_STRUCT__entry(
+		__field(u32, drawctxt_id)
+		__field(u32, numcmds)
+		__field(u32, flags)
+		__field(u32, timestamp)
+	),
+	TP_fast_assign(
+		__entry->drawctxt_id = drawctxt_id;
+		__entry->numcmds = numcmds;
+		__entry->flags = flags;
+		__entry->timestamp = timestamp;
+	),
+	TP_printk("context=%u numcmds=%u flags=0x%x timestamp=%u",
+		__entry->drawctxt_id, __entry->numcmds, __entry->flags,
+		__entry->timestamp
+	)
+);
+
+TRACE_EVENT(kgsl_drawobj_timeline,
+	TP_PROTO(u32 timeline, u64 seqno
+	),
+	TP_ARGS(timeline, seqno
+	),
+	TP_STRUCT__entry(
+		__field(u32, timeline)
+		__field(u64, seqno)
+	),
+	TP_fast_assign(
+		__entry->timeline = timeline;
+		__entry->seqno = seqno;
+	),
+	TP_printk("timeline=%u seqno=%llu",
+		__entry->timeline, __entry->seqno
 	)
 );
 

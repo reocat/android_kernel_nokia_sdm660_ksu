@@ -1,13 +1,6 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __SDE_ROTATOR_UTIL_H__
@@ -19,7 +12,6 @@
 #include <linux/kernel.h>
 #include <linux/device.h>
 #include <linux/dma-buf.h>
-#include <linux/msm_ion.h>
 
 #include "sde_rotator_hwio.h"
 #include "sde_rotator_base.h"
@@ -66,25 +58,29 @@ struct sde_rect {
 #define SDE_SECURE_OVERLAY_SESSION	0x00008000
 #define SDE_ROT_EXT_DMA_BUF		0x00010000
 #define SDE_SECURE_CAMERA_SESSION	0x00020000
+#define SDE_ROT_EXT_IOVA			0x00040000
 
 struct sde_rot_data_type;
 
 struct sde_fb_data {
 	uint32_t offset;
 	struct dma_buf *buffer;
-	struct ion_handle *handle;
 	int memory_id;
 	int id;
 	uint32_t flags;
 	uint32_t priv;
-	uint32_t iova;
+	dma_addr_t addr;
+	u32 len;
 };
 
 struct sde_layer_plane {
 	/* DMA buffer file descriptor information. */
 	int fd;
 	struct dma_buf *buffer;
-	struct ion_handle *handle;
+
+	/* i/o virtual address & length */
+	dma_addr_t addr;
+	u32 len;
 
 	/* Pixel offset in the dma buffer. */
 	uint32_t offset;
@@ -127,6 +123,15 @@ struct sde_layer_buffer {
 	 * for new content.
 	 */
 	struct sde_rot_sync_fence *fence;
+
+	/* indicate if this is a stream (inline) buffer */
+	bool sbuf;
+
+	/* specify the system cache id in stream buffer mode */
+	int scid;
+
+	/* indicate if system cache writeback is required */
+	bool writeback;
 };
 
 struct sde_mdp_plane_sizes {
@@ -151,22 +156,12 @@ struct sde_mdp_img_data {
 	struct sg_table *srcp_table;
 };
 
-enum sde_data_state {
-	SDE_BUF_STATE_UNUSED,
-	SDE_BUF_STATE_READY,
-	SDE_BUF_STATE_ACTIVE,
-	SDE_BUF_STATE_CLEANUP,
-};
-
 struct sde_mdp_data {
-	enum sde_data_state state;
 	u8 num_planes;
 	struct sde_mdp_img_data p[SDE_ROT_MAX_PLANES];
-	struct list_head buf_list;
-	struct list_head pipe_list;
-	struct list_head chunk_list;
-	u64 last_alloc;
-	u64 last_freed;
+	bool sbuf;
+	int scid;
+	bool writeback;
 };
 
 void sde_mdp_get_v_h_subsample_rate(u8 chroma_sample,
@@ -199,4 +194,6 @@ int sde_mdp_data_check(struct sde_mdp_data *data,
 			struct sde_mdp_format_params *fmt);
 
 void sde_mdp_data_free(struct sde_mdp_data *data, bool rotator, int dir);
+
+struct dma_buf *sde_rot_get_dmabuf(struct sde_mdp_img_data *data);
 #endif /* __SDE_ROTATOR_UTIL_H__ */

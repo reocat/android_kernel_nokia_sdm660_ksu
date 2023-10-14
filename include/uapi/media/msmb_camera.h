@@ -1,9 +1,11 @@
+/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 #ifndef __UAPI_LINUX_MSMB_CAMERA_H
 #define __UAPI_LINUX_MSMB_CAMERA_H
 
 #include <linux/videodev2.h>
 #include <linux/types.h>
 #include <linux/ioctl.h>
+#include <linux/media.h>
 
 #define MSM_CAM_LOGSYNC_FILE_NAME "logsync"
 #define MSM_CAM_LOGSYNC_FILE_BASEDIR "camera"
@@ -26,41 +28,45 @@
 #define MSM_CAM_V4L2_IOCTL_DAEMON_DISABLED \
 	_IOW('V', BASE_VIDIOC_PRIVATE + 35, struct msm_v4l2_event_data)
 
-#define QCAMERA_DEVICE_GROUP_ID	1
-#define QCAMERA_VNODE_GROUP_ID	2
+#define QCAMERA_VNODE_GROUP_ID	MEDIA_ENT_F_IO_V4L
 #define MSM_CAMERA_NAME			"msm_camera"
 #define MSM_CONFIGURATION_NAME	"msm_config"
 
-#define MSM_CAMERA_SUBDEV_CSIPHY       0
-#define MSM_CAMERA_SUBDEV_CSID         1
-#define MSM_CAMERA_SUBDEV_ISPIF        2
-#define MSM_CAMERA_SUBDEV_VFE          3
-#define MSM_CAMERA_SUBDEV_AXI          4
-#define MSM_CAMERA_SUBDEV_VPE          5
-#define MSM_CAMERA_SUBDEV_SENSOR       6
-#define MSM_CAMERA_SUBDEV_ACTUATOR     7
-#define MSM_CAMERA_SUBDEV_EEPROM       8
-#define MSM_CAMERA_SUBDEV_CPP          9
-#define MSM_CAMERA_SUBDEV_CCI          10
-#define MSM_CAMERA_SUBDEV_LED_FLASH    11
-#define MSM_CAMERA_SUBDEV_STROBE_FLASH 12
-#define MSM_CAMERA_SUBDEV_BUF_MNGR     13
-#define MSM_CAMERA_SUBDEV_SENSOR_INIT  14
-#define MSM_CAMERA_SUBDEV_OIS          15
-#define MSM_CAMERA_SUBDEV_FLASH        16
-#define MSM_CAMERA_SUBDEV_IR_LED       17
-#define MSM_CAMERA_SUBDEV_IR_CUT       18
-#define MSM_CAMERA_SUBDEV_EXT          19
-#define MSM_CAMERA_SUBDEV_TOF          20
-#define MSM_CAMERA_SUBDEV_LASER_LED    21
-#define MSM_MAX_CAMERA_SENSORS  6
+//#define MSM_CAMERA_SUBDEV_BASE         (MEDIA_ENT_F_OLD_SUBDEV_BASE + 1)
+#define MSM_CAMERA_SUBDEV_BASE         (MEDIA_ENT_F_OLD_BASE + 0xF00)
+#define MSM_CAMERA_SUBDEV_CSIPHY       (MSM_CAMERA_SUBDEV_BASE + 0)
+//#define MSM_CAMERA_SUBDEV_CSID         (MSM_CAMERA_SUBDEV_BASE + 1)
+#define MSM_CAMERA_SUBDEV_CSID         (MSM_CAMERA_SUBDEV_BASE + 13)
+#define MSM_CAMERA_SUBDEV_ISPIF        (MSM_CAMERA_SUBDEV_BASE + 2)
+#define MSM_CAMERA_SUBDEV_VFE          (MSM_CAMERA_SUBDEV_BASE + 3)
+#define MSM_CAMERA_SUBDEV_AXI          (MSM_CAMERA_SUBDEV_BASE + 4)
+#define MSM_CAMERA_SUBDEV_VPE          (MSM_CAMERA_SUBDEV_BASE + 5)
+#define MSM_CAMERA_SUBDEV_SENSOR       (MSM_CAMERA_SUBDEV_BASE + 6)
+#define MSM_CAMERA_SUBDEV_ACTUATOR     (MSM_CAMERA_SUBDEV_BASE + 7)
+#define MSM_CAMERA_SUBDEV_EEPROM       (MSM_CAMERA_SUBDEV_BASE + 8)
+#define MSM_CAMERA_SUBDEV_CPP          (MSM_CAMERA_SUBDEV_BASE + 9)
+#define MSM_CAMERA_SUBDEV_CCI          (MSM_CAMERA_SUBDEV_BASE + 10)
+#define MSM_CAMERA_SUBDEV_LED_FLASH    (MSM_CAMERA_SUBDEV_BASE + 11)
+#define MSM_CAMERA_SUBDEV_STROBE_FLASH (MSM_CAMERA_SUBDEV_BASE + 12)
+#define MSM_CAMERA_SUBDEV_BUF_MNGR     (MSM_CAMERA_SUBDEV_BASE + 1)
+//#define MSM_CAMERA_SUBDEV_BUF_MNGR     (MSM_CAMERA_SUBDEV_BASE + 13)
+#define MSM_CAMERA_SUBDEV_SENSOR_INIT  (MSM_CAMERA_SUBDEV_BASE + 14)
+#define MSM_CAMERA_SUBDEV_OIS          (MSM_CAMERA_SUBDEV_BASE + 15)
+#define MSM_CAMERA_SUBDEV_FLASH        (MSM_CAMERA_SUBDEV_BASE + 16)
+#define MSM_CAMERA_SUBDEV_IR_LED       (MSM_CAMERA_SUBDEV_BASE + 17)
+#define MSM_CAMERA_SUBDEV_IR_CUT       (MSM_CAMERA_SUBDEV_BASE + 18)
+#define MSM_CAMERA_SUBDEV_EXT          (MSM_CAMERA_SUBDEV_BASE + 19)
+#define MSM_CAMERA_SUBDEV_TOF          (MSM_CAMERA_SUBDEV_BASE + 20)
+#define MSM_CAMERA_SUBDEV_LASER_LED    (MSM_CAMERA_SUBDEV_BASE + 21)
+#define MSM_MAX_CAMERA_SENSORS  5
 
 /* The below macro is defined to put an upper limit on maximum
  * number of buffer requested per stream. In case of extremely
  * large value for number of buffer due to data structure corruption
  * we return error to avoid integer overflow. Group processing
  * can have max of 9 groups of 8 bufs each. This value may be
- * configured in future*/
+ * configured in future
+ */
 #define MSM_CAMERA_MAX_STREAM_BUF 72
 
 /* Max batch size of processing */
@@ -107,8 +113,8 @@
 #define MSM_CAMERA_PRIV_CMD_MAX  20
 
 /* data.status - success */
-#define MSM_CAMERA_CMD_SUCESS      0x00000001
-#define MSM_CAMERA_BUF_MAP_SUCESS  0x00000002
+#define MSM_CAMERA_CMD_SUCCESS      0x00000001
+#define MSM_CAMERA_BUF_MAP_SUCCESS  0x00000002
 
 /* data.status - error */
 #define MSM_CAMERA_ERR_EVT_BASE 0x00010000
@@ -116,13 +122,10 @@
 #define MSM_CAMERA_ERR_MAPPING		(MSM_CAMERA_ERR_EVT_BASE + 2)
 #define MSM_CAMERA_ERR_DEVICE_BUSY	(MSM_CAMERA_ERR_EVT_BASE + 3)
 
-/* data.status - success values should be same as above*/
-#define MSM_CAMERA_CMD_SUCCESS      0x00000001
-#define MSM_CAMERA_BUF_MAP_SUCCESS  0x00000002
-
 /* The msm_v4l2_event_data structure should match the
  * v4l2_event.u.data field.
- * should not exceed 16 elements */
+ * should not exceed 16 elements
+ */
 struct msm_v4l2_event_data {
 	/*word 0*/
 	unsigned int command;
@@ -222,11 +225,10 @@ struct msm_camera_private_ioctl_arg {
 	__u32 size;
 	__u32 result;
 	__u32 reserved;
-	__user __u64 ioctl_ptr;
+	__u64 ioctl_ptr;
 };
 
 #define VIDIOC_MSM_CAMERA_PRIVATE_IOCTL_CMD \
 	_IOWR('V', BASE_VIDIOC_PRIVATE, struct msm_camera_private_ioctl_arg)
 
 #endif
-

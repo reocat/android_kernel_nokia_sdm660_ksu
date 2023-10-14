@@ -1,14 +1,9 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
+
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -43,6 +38,7 @@
 #define BVAL(val, n)		((val & BIT(n)) >> n)
 
 #ifdef CONFIG_ARM64
+#define ARM_DEBUG_ARCH_V8_8	(0x8)
 #define ARM_DEBUG_ARCH_V8	(0x6)
 #endif
 
@@ -50,11 +46,12 @@
 #define MAX_DBG_STATE_SIZE	(MAX_DBG_REGS * num_possible_cpus())
 
 #define OSLOCK_MAGIC		(0xC5ACCE55)
+#define GET_FEAT_VERSION_CMD	3
 #define TZ_DBG_ETM_FEAT_ID	(0x8)
 #define TZ_DBG_ETM_VER		(0x400000)
 
-uint32_t msm_jtag_save_cntr[NR_CPUS];
-uint32_t msm_jtag_restore_cntr[NR_CPUS];
+static uint32_t msm_jtag_save_cntr[NR_CPUS];
+static uint32_t msm_jtag_restore_cntr[NR_CPUS];
 
 /* access debug registers using system instructions */
 struct dbg_cpu_ctx {
@@ -75,8 +72,6 @@ struct dbg_ctx {
 };
 
 static struct dbg_ctx dbg;
-static struct notifier_block jtag_hotcpu_save_notifier;
-static struct notifier_block jtag_hotcpu_restore_notifier;
 static struct notifier_block jtag_cpu_pm_notifier;
 
 #ifdef CONFIG_ARM64
@@ -379,6 +374,7 @@ static inline void dbg_save_state(int cpu)
 	i = cpu * MAX_DBG_REGS;
 
 	switch (dbg.arch) {
+	case ARM_DEBUG_ARCH_V8_8:
 	case ARM_DEBUG_ARCH_V8:
 		/* Set OS Lock to inform the debugger that the OS is in the
 		 * process of saving debug registers. It prevents accidental
@@ -417,6 +413,7 @@ static inline void dbg_restore_state(int cpu)
 	i = cpu * MAX_DBG_REGS;
 
 	switch (dbg.arch) {
+	case ARM_DEBUG_ARCH_V8_8:
 	case ARM_DEBUG_ARCH_V8:
 		/* Clear the OS double lock */
 		isb();
@@ -762,6 +759,7 @@ static inline void dbg_save_state(int cpu)
 	i = cpu * MAX_DBG_REGS;
 
 	switch (dbg.arch) {
+	case ARM_DEBUG_ARCH_V8_8:
 	case ARM_DEBUG_ARCH_V8:
 		/* Set OS Lock to inform the debugger that the OS is in the
 		 * process of saving debug registers. It prevents accidental
@@ -800,6 +798,7 @@ static inline void dbg_restore_state(int cpu)
 	i = cpu * MAX_DBG_REGS;
 
 	switch (dbg.arch) {
+	case ARM_DEBUG_ARCH_V8_8:
 	case ARM_DEBUG_ARCH_V8:
 		/* Clear the OS double lock */
 		isb();
@@ -913,6 +912,7 @@ EXPORT_SYMBOL(msm_jtag_restore_state);
 static inline bool dbg_arch_supported(uint8_t arch)
 {
 	switch (arch) {
+	case ARM_DEBUG_ARCH_V8_8:
 	case ARM_DEBUG_ARCH_V8:
 		break;
 	default:
@@ -921,36 +921,17 @@ static inline bool dbg_arch_supported(uint8_t arch)
 	return true;
 }
 
-static int jtag_hotcpu_save_callback(struct notifier_block *nfb,
-				unsigned long action, void *hcpu)
+static int jtag_hotcpu_save_callback(unsigned int cpu)
 {
-	switch (action & (~CPU_TASKS_FROZEN)) {
-	case CPU_DYING:
-		msm_jtag_save_state();
-		break;
-	}
-	return NOTIFY_OK;
+	msm_jtag_save_state();
+	return 0;
 }
 
-static struct notifier_block jtag_hotcpu_save_notifier = {
-	.notifier_call = jtag_hotcpu_save_callback,
-};
-
-static int jtag_hotcpu_restore_callback(struct notifier_block *nfb,
-					unsigned long action, void *hcpu)
+static int jtag_hotcpu_restore_callback(unsigned int cpu)
 {
-	switch (action & (~CPU_TASKS_FROZEN)) {
-	case CPU_STARTING:
-		msm_jtag_restore_state();
-		break;
-	}
-	return NOTIFY_OK;
+	msm_jtag_restore_state();
+	return 0;
 }
-
-static struct notifier_block jtag_hotcpu_restore_notifier = {
-	.notifier_call = jtag_hotcpu_restore_callback,
-	.priority = 1,
-};
 
 static int jtag_cpu_pm_callback(struct notifier_block *nfb,
 				unsigned long action, void *hcpu)
@@ -974,20 +955,23 @@ static struct notifier_block jtag_cpu_pm_notifier = {
 static int __init msm_jtag_dbg_init(void)
 {
 	int ret;
-	u64 version = 0;
-	if (msm_jtag_fuse_apps_access_disabled())
-		return -EPERM;
+	struct scm_desc desc = {0};
 
 	/* This will run on core0 so use it to populate parameters */
 	dbg_init_arch_data();
 
 	if (dbg_arch_supported(dbg.arch)) {
-		if (!scm_get_feat_version(TZ_DBG_ETM_FEAT_ID, &version)  &&
-			version < TZ_DBG_ETM_VER) {
-			dbg.save_restore_enabled = true;
-		} else {
-			pr_info("dbg save-restore supported by TZ\n");
-			goto dbg_out;
+		desc.args[0] = TZ_DBG_ETM_FEAT_ID;
+		desc.arginfo = SCM_ARGS(1);
+		ret = scm_call2(SCM_SIP_FNID(SCM_SVC_INFO,
+				GET_FEAT_VERSION_CMD), &desc);
+		if (!ret) {
+			if (desc.ret[0] < TZ_DBG_ETM_VER)
+				dbg.save_restore_enabled = true;
+			else {
+				pr_info("dbg save-restore supported by TZ\n");
+				goto dbg_out;
+			}
 		}
 	} else {
 		pr_info("dbg arch %u not supported\n", dbg.arch);
@@ -1005,8 +989,11 @@ static int __init msm_jtag_dbg_init(void)
 		goto dbg_err;
 	}
 
-	register_hotcpu_notifier(&jtag_hotcpu_save_notifier);
-	register_hotcpu_notifier(&jtag_hotcpu_restore_notifier);
+	cpuhp_setup_state_nocalls(CPUHP_AP_ARM_SAVE_RESTORE_CORESIGHT4_STARTING,
+				  "AP_ARM_SAVE_RESTORE_CORESIGHT4_STARTING",
+				  jtag_hotcpu_restore_callback,
+				  jtag_hotcpu_save_callback);
+
 	cpu_pm_register_notifier(&jtag_cpu_pm_notifier);
 dbg_out:
 	return 0;

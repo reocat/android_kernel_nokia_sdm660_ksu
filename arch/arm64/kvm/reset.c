@@ -31,6 +31,7 @@
 #include <asm/kvm_arm.h>
 #include <asm/kvm_asm.h>
 #include <asm/kvm_coproc.h>
+#include <asm/kvm_emulate.h>
 #include <asm/kvm_mmu.h>
 
 /*
@@ -42,20 +43,15 @@ static const struct kvm_regs default_regs_reset = {
 };
 
 static const struct kvm_regs default_regs_reset32 = {
-	.regs.pstate = (COMPAT_PSR_MODE_SVC | COMPAT_PSR_A_BIT |
-			COMPAT_PSR_I_BIT | COMPAT_PSR_F_BIT),
-};
-
-static const struct kvm_irq_level default_vtimer_irq = {
-	.irq	= 27,
-	.level	= 1,
+	.regs.pstate = (PSR_AA32_MODE_SVC | PSR_AA32_A_BIT |
+			PSR_AA32_I_BIT | PSR_AA32_F_BIT),
 };
 
 static bool cpu_has_32bit_el1(void)
 {
 	u64 pfr0;
 
-	pfr0 = read_system_reg(SYS_ID_AA64PFR0_EL1);
+	pfr0 = read_sanitised_ftr_reg(SYS_ID_AA64PFR0_EL1);
 	return !!(pfr0 & 0x20);
 }
 
@@ -65,7 +61,7 @@ static bool cpu_has_32bit_el1(void)
  * We currently assume that the number of HW registers is uniform
  * across all CPUs (see cpuinfo_sanity_check).
  */
-int kvm_arch_dev_ioctl_check_extension(long ext)
+int kvm_arch_dev_ioctl_check_extension(struct kvm *kvm, long ext)
 {
 	int r;
 
@@ -79,7 +75,15 @@ int kvm_arch_dev_ioctl_check_extension(long ext)
 	case KVM_CAP_GUEST_DEBUG_HW_WPS:
 		r = get_num_wrps();
 		break;
+	case KVM_CAP_ARM_PMU_V3:
+		r = kvm_arm_support_pmu_v3();
+		break;
+	case KVM_CAP_ARM_INJECT_SERROR_ESR:
+		r = cpus_have_const_cap(ARM64_HAS_RAS_EXTN);
+		break;
 	case KVM_CAP_SET_GUEST_DEBUG:
+	case KVM_CAP_VCPU_ATTRIBUTES:
+	case KVM_CAP_VCPU_EVENTS:
 		r = 1;
 		break;
 	default:
@@ -94,25 +98,43 @@ int kvm_arch_dev_ioctl_check_extension(long ext)
  * @vcpu: The VCPU pointer
  *
  * This function finds the right table above and sets the registers on
- * the virtual CPU struct to their architectually defined reset
+ * the virtual CPU struct to their architecturally defined reset
  * values.
+ *
+ * Note: This function can be called from two paths: The KVM_ARM_VCPU_INIT
+ * ioctl or as part of handling a request issued by another VCPU in the PSCI
+ * handling code.  In the first case, the VCPU will not be loaded, and in the
+ * second case the VCPU will be loaded.  Because this function operates purely
+ * on the memory-backed valus of system registers, we want to do a full put if
+ * we were loaded (handling a request) and load the values back at the end of
+ * the function.  Otherwise we leave the state alone.  In both cases, we
+ * disable preemption around the vcpu reset as we would otherwise race with
+ * preempt notifiers which also call put/load.
  */
 int kvm_reset_vcpu(struct kvm_vcpu *vcpu)
 {
-	const struct kvm_irq_level *cpu_vtimer_irq;
 	const struct kvm_regs *cpu_reset;
+	int ret = -EINVAL;
+	bool loaded;
+
+	/* Reset PMU outside of the non-preemptible section */
+	kvm_pmu_vcpu_reset(vcpu);
+
+	preempt_disable();
+	loaded = (vcpu->cpu != -1);
+	if (loaded)
+		kvm_arch_vcpu_put(vcpu);
 
 	switch (vcpu->arch.target) {
 	default:
 		if (test_bit(KVM_ARM_VCPU_EL1_32BIT, vcpu->arch.features)) {
 			if (!cpu_has_32bit_el1())
-				return -EINVAL;
+				goto out;
 			cpu_reset = &default_regs_reset32;
 		} else {
 			cpu_reset = &default_regs_reset;
 		}
 
-		cpu_vtimer_irq = &default_vtimer_irq;
 		break;
 	}
 
@@ -122,8 +144,40 @@ int kvm_reset_vcpu(struct kvm_vcpu *vcpu)
 	/* Reset system registers */
 	kvm_reset_sys_regs(vcpu);
 
+	/*
+	 * Additional reset state handling that PSCI may have imposed on us.
+	 * Must be done after all the sys_reg reset.
+	 */
+	if (vcpu->arch.reset_state.reset) {
+		unsigned long target_pc = vcpu->arch.reset_state.pc;
+
+		/* Gracefully handle Thumb2 entry point */
+		if (vcpu_mode_is_32bit(vcpu) && (target_pc & 1)) {
+			target_pc &= ~1UL;
+			vcpu_set_thumb(vcpu);
+		}
+
+		/* Propagate caller endianness */
+		if (vcpu->arch.reset_state.be)
+			kvm_vcpu_set_be(vcpu);
+
+		*vcpu_pc(vcpu) = target_pc;
+		vcpu_set_reg(vcpu, 0, vcpu->arch.reset_state.r0);
+
+		vcpu->arch.reset_state.reset = false;
+	}
+
+	/* Default workaround setup is enabled (if supported) */
+	if (kvm_arm_have_ssbd() == KVM_SSBD_KERNEL)
+		vcpu->arch.workaround_flags |= VCPU_WORKAROUND_2_FLAG;
+
 	/* Reset timer */
-	return kvm_timer_vcpu_reset(vcpu, cpu_vtimer_irq);
+	ret = kvm_timer_vcpu_reset(vcpu);
+out:
+	if (loaded)
+		kvm_arch_vcpu_load(vcpu, smp_processor_id());
+	preempt_enable();
+	return ret;
 }
 
 extern char __hyp_idmap_text_start[];

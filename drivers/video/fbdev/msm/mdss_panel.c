@@ -1,15 +1,5 @@
-/* Copyright (c) 2014-2016, 2018 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2014-2016, 2018-2020, The Linux Foundation. All rights reserved. */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
@@ -135,15 +125,18 @@ static ssize_t panel_debugfs_array_read(struct file *file, char __user *buf,
 
 		if (data->size == sizeof(u8)) {
 			u8 *array = (u8 *)data->array;
-			bufp += snprintf(bufp, buf_size-(bufp-buffer),
+
+			bufp += scnprintf(bufp, buf_size-(bufp-buffer),
 						"0x%02x%c", array[i], term);
 		} else if (data->size == sizeof(u16)) {
 			u16 *array = (u16 *)data->array;
-			bufp += snprintf(bufp, buf_size-(bufp-buffer),
+
+			bufp += scnprintf(bufp, buf_size-(bufp-buffer),
 						"0x%02x%c", array[i], term);
 		} else {
 			u32 *array = (u32 *)data->array;
-			bufp += snprintf(bufp, buf_size-(bufp-buffer),
+
+			bufp += scnprintf(bufp, buf_size-(bufp-buffer),
 						"0x%02x%c", array[i], term);
 		}
 		i++;
@@ -186,6 +179,7 @@ static ssize_t panel_debugfs_array_write(struct file *file,
 	while (i < elements) {
 		uint32_t value = 0;
 		int step = 0;
+
 		if (sscanf(bufp, "%x%n", &value, &step) > 0) {
 			if (data->size == sizeof(u8)) {
 				u8 *array = (u8 *)data->array;
@@ -218,10 +212,8 @@ struct dentry *panel_debugfs_create_array(const char *name, umode_t mode,
 {
 	struct array_data *data = kmalloc(sizeof(*data), GFP_KERNEL);
 
-	if (data == NULL) {
-		pr_err("Failed to allocate memory\n");
+	if (data == NULL)
 		return NULL;
-	}
 
 	/* only support integer of 3 kinds of length format */
 	if ((size != sizeof(u8)) &&
@@ -245,8 +237,8 @@ struct dentry *panel_debugfs_create_array(const char *name, umode_t mode,
 				   sizeof(array[0]), ARRAY_SIZE(array))
 
 static int _create_phy_ctrl_nodes(struct mdss_panel_debugfs_info *debugfs_info,
-	struct dentry *node) {
-
+	struct dentry *node)
+{
 	struct mdss_panel_info *pinfo = &debugfs_info->panel_info;
 	struct dentry *phy_node;
 
@@ -449,11 +441,10 @@ int mdss_panel_debugfs_setup(struct mdss_panel_info *panel_info, struct dentry
 		*parent, char *intf_str)
 {
 	struct mdss_panel_debugfs_info *debugfs_info;
+
 	debugfs_info = kzalloc(sizeof(*debugfs_info), GFP_KERNEL);
-	if (!debugfs_info) {
-		pr_err("No memory to create panel debugfs info");
+	if (!debugfs_info)
 		return -ENOMEM;
-	}
 
 	debugfs_info->parent = parent;
 	debugfs_info->root = debugfs_create_dir(intf_str, parent);
@@ -520,6 +511,7 @@ void mdss_panel_debugfs_cleanup(struct mdss_panel_info *panel_info)
 	struct mdss_panel_data *pdata;
 	struct mdss_panel_debugfs_info *debugfs_info;
 	struct dentry *parent = NULL;
+
 	pdata = container_of(panel_info, struct mdss_panel_data, panel_info);
 	do {
 		debugfs_info = pdata->panel_info.debugfs_info;
@@ -549,6 +541,7 @@ void mdss_panel_debugfsinfo_to_panelinfo(struct mdss_panel_info *panel_info)
 	struct mdss_panel_data *pdata;
 	struct mdss_panel_info *pinfo;
 	struct mdss_panel_debugfs_info *dfs_info;
+
 	pdata = container_of(panel_info, struct mdss_panel_data, panel_info);
 
 	do {

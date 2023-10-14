@@ -119,7 +119,7 @@ static unsigned int __hlwd_pic_get_irq(struct irq_domain *h)
 	irq_status = in_be32(io_base + HW_BROADWAY_ICR) &
 		     in_be32(io_base + HW_BROADWAY_IMR);
 	if (irq_status == 0)
-		return NO_IRQ;	/* no more IRQs pending */
+		return 0;	/* no more IRQs pending */
 
 	irq = __ffs(irq_status);
 	return irq_linear_revmap(h, irq);
@@ -136,7 +136,7 @@ static void hlwd_pic_irq_cascade(struct irq_desc *desc)
 	raw_spin_unlock(&desc->lock);
 
 	virq = __hlwd_pic_get_irq(irq_domain);
-	if (virq != NO_IRQ)
+	if (virq)
 		generic_handle_irq(virq);
 	else
 		pr_err("spurious interrupt!\n");
@@ -160,7 +160,7 @@ static void __hlwd_quiesce(void __iomem *io_base)
 	out_be32(io_base + HW_BROADWAY_ICR, 0xffffffff);
 }
 
-struct irq_domain *hlwd_pic_init(struct device_node *np)
+static struct irq_domain *hlwd_pic_init(struct device_node *np)
 {
 	struct irq_domain *irq_domain;
 	struct resource res;
@@ -178,7 +178,7 @@ struct irq_domain *hlwd_pic_init(struct device_node *np)
 		return NULL;
 	}
 
-	pr_info("controller at 0x%08x mapped to 0x%p\n", res.start, io_base);
+	pr_info("controller at 0x%pa mapped to 0x%p\n", &res.start, io_base);
 
 	__hlwd_quiesce(io_base);
 

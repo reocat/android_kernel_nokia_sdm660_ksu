@@ -1,15 +1,5 @@
-/* Copyright (c) 2012-2017, 2019, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2012-2020, The Linux Foundation. All rights reserved. */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
@@ -682,7 +672,7 @@ static int mdss_mdp_writeback_prepare_rot(struct mdss_mdp_ctl *ctl, void *arg)
 	perf = entry->perf;
 	mdata = ctl->mdata;
 	if (!mdata) {
-		pr_err("no mdata attached to ctl=%d", ctl->num);
+		pr_err("no mdata attached to ctl=%d\n", ctl->num);
 		return -ENODEV;
 	}
 	pr_debug("rot setup wb_num=%d\n", ctx->wb_num);
@@ -749,6 +739,7 @@ static int mdss_mdp_wb_remove_vsync_handler(struct mdss_mdp_ctl *ctl,
 	struct mdss_mdp_writeback_ctx *ctx;
 	unsigned long flags;
 	int ret = 0;
+
 	if (!handle || !(handle->vsync_handler)) {
 		ret = -EINVAL;
 		goto exit;
@@ -850,6 +841,7 @@ static bool mdss_mdp_traffic_shaper_helper(struct mdss_mdp_ctl *ctl,
 		struct mdss_mdp_pipe *pipe;
 		struct mdss_mdp_perf_params perf;
 		u32 traffic_shaper;
+
 		pipe = mixer->stage_pipe[i];
 
 		memset(&perf, 0, sizeof(perf));
@@ -906,7 +898,7 @@ static bool mdss_mdp_traffic_shaper_helper(struct mdss_mdp_ctl *ctl,
 static void mdss_mdp_traffic_shaper(struct mdss_mdp_ctl *ctl,
 		struct mdss_mdp_writeback_ctx *ctx, bool enable)
 {
-	bool traffic_shaper_enabled = 0;
+	bool traffic_shaper_enabled = false;
 
 	if (mdss_mdp_ctl_is_power_on(ctl)) {
 		traffic_shaper_enabled = mdss_mdp_traffic_shaper_helper
@@ -1059,7 +1051,7 @@ static int mdss_mdp_writeback_display(struct mdss_mdp_ctl *ctl, void *arg)
 	mdss_mdp_irq_enable(ctx->intr_type, ctx->intf_num);
 
 	ret = mdss_iommu_ctrl(1);
-	if (IS_ERR_VALUE(ret)) {
+	if (IS_ERR_VALUE((unsigned long) ret)) {
 		pr_err("IOMMU attach failed\n");
 		return ret;
 	}
@@ -1067,6 +1059,7 @@ static int mdss_mdp_writeback_display(struct mdss_mdp_ctl *ctl, void *arg)
 	mdss_bus_bandwidth_ctrl(true);
 	ctx->start_time = ktime_get();
 	mdss_mdp_ctl_write(ctl, MDSS_MDP_REG_CTL_START, 1);
+	/* make sure MDP writeback is enabled */
 	wmb();
 
 	MDSS_XLOG(ctx->wb_num, ctx->type, ctx->xin_id, ctx->intf_num,

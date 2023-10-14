@@ -1,8 +1,9 @@
-			DMA attributes
-			==============
+==============
+DMA attributes
+==============
 
 This document describes the semantics of the DMA attributes that are
-defined in linux/dma-attrs.h.
+defined in linux/dma-mapping.h.
 
 DMA_ATTR_WRITE_BARRIER
 ----------------------
@@ -101,56 +102,64 @@ be mapped as contiguous chunk into device dma address space. By
 specifying this attribute the allocated buffer is forced to be contiguous
 also in physical memory.
 
-DMA_ATTR_STRONGLY_ORDERED
--------------------------
-
-DMA_ATTR_STRONGLY_ORDERED allocates memory with a very restrictive type
-of mapping (no unaligned accesses, no re-ordering, no write merging, no
-buffering, no pre-fetching). This has severe performance penalties and
-should not be used for general purpose DMA allocations. It should only
-be used if one of the restrictions on strongly ordered memory is required.
-
-DMA_ATTR_NO_DELAYED_UNMAP
--------------------------
-
-DMA_ATTR_NO_DELAYED_UNMAP is used only by the msm specific lazy mapping
-feature. By default, the lazy mapping and unmapping holds an additional
-reference so that when the buffer is freed, the mapping is not destroyed
-and can be re-used. By specifying this attribute, an additional reference
-will NOT be held by the lazy mapping code and it will be released as soon
-as the buffer is freed.
-
-DMA_ATTR_EXEC_MAPPING
----------------------
-
-By default, the DMA mappings are non-executable. Some use cases might require
-an executable mapping. This attribute can be used to indicate to the DMA
-subsystem to create an executable mappings for the buffer.
-
-DMA_ATTR_FORCE_COHERENT
------------------------
-
-When passed to a DMA map call the DMA_ATTR_FORCE_COHERENT DMA
-attribute can be used to force a buffer to be mapped as IO coherent.
-
-When the DMA_ATTR_FORCE_COHERENT attribute is set during a map call ensure
-that it is also set during for the matching unmap call to ensure that the
-correct cache maintenance is carried out.
-
-This DMA attribute is only currently supported for arm64 stage 1 IOMMU
-mappings.
-
-DMA_ATTR_FORCE_NON_COHERENT
+DMA_ATTR_ALLOC_SINGLE_PAGES
 ---------------------------
-When passed to a DMA map call the DMA_ATTR_FORCE_NON_COHERENT DMA
-attribute can be used to force a buffer to not be mapped as IO
-coherent.
-The DMA_ATTR_FORCE_NON_COHERENT DMA attribute overrides the buffer IO
-coherency configuration set by making the device IO coherent.
 
-When the DMA_ATTR_FORCE_NON_COHERENT attribute is set during a map call
-ensure that it is also set during for the matching unmap call to ensure
-that the correct cache maintenance is carried out.
+This is a hint to the DMA-mapping subsystem that it's probably not worth
+the time to try to allocate memory to in a way that gives better TLB
+efficiency (AKA it's not worth trying to build the mapping out of larger
+pages).  You might want to specify this if:
 
-This DMA attribute is only currently supported for arm64 stage 1 IOMMU
-mappings.
+- You know that the accesses to this memory won't thrash the TLB.
+  You might know that the accesses are likely to be sequential or
+  that they aren't sequential but it's unlikely you'll ping-pong
+  between many addresses that are likely to be in different physical
+  pages.
+- You know that the penalty of TLB misses while accessing the
+  memory will be small enough to be inconsequential.  If you are
+  doing a heavy operation like decryption or decompression this
+  might be the case.
+- You know that the DMA mapping is fairly transitory.  If you expect
+  the mapping to have a short lifetime then it may be worth it to
+  optimize allocation (avoid coming up with large pages) instead of
+  getting the slight performance win of larger pages.
+
+Setting this hint doesn't guarantee that you won't get huge pages, but it
+means that we won't try quite as hard to get them.
+
+.. note:: At the moment DMA_ATTR_ALLOC_SINGLE_PAGES is only implemented on ARM,
+	  though ARM64 patches will likely be posted soon.
+
+DMA_ATTR_NO_WARN
+----------------
+
+This tells the DMA-mapping subsystem to suppress allocation failure reports
+(similarly to __GFP_NOWARN).
+
+On some architectures allocation failures are reported with error messages
+to the system logs.  Although this can help to identify and debug problems,
+drivers which handle failures (eg, retry later) have no problems with them,
+and can actually flood the system logs with error messages that aren't any
+problem at all, depending on the implementation of the retry mechanism.
+
+So, this provides a way for drivers to avoid those error messages on calls
+where allocation failures are not a problem, and shouldn't bother the logs.
+
+.. note:: At the moment DMA_ATTR_NO_WARN is only implemented on PowerPC.
+
+DMA_ATTR_PRIVILEGED
+-------------------
+
+Some advanced peripherals such as remote processors and GPUs perform
+accesses to DMA buffers in both privileged "supervisor" and unprivileged
+"user" modes.  This attribute is used to indicate to the DMA-mapping
+subsystem that the buffer is fully accessible at the elevated privilege
+level (and ideally inaccessible or at least read-only at the
+lesser-privileged levels).
+
+DMA_ATTR_IOMMU_USE_LLC_NWA
+------------------------------------
+
+DMA_ATTR_IOMMU_USE_LLC_NWA: Overrides the bus attributes to use
+System Cache(LLC) with allocation policy as Inner Non-Cacheable, Outer Cacheable:
+Write-Back, Read-Allocate, No Write-Allocate policy.

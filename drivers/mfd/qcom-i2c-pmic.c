@@ -1,13 +1,6 @@
-/* Copyright (c) 2016-2017 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2016-2017, 2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "I2C PMIC: %s: " fmt, __func__
@@ -62,8 +55,13 @@ struct i2c_pmic {
 	struct irq_domain	*domain;
 	struct i2c_pmic_periph	*periph;
 	struct pinctrl		*pinctrl;
+	struct mutex		irq_complete;
 	const char		*pinctrl_name;
 	int			num_periphs;
+	int			summary_irq;
+	bool			resume_completed;
+	bool			irq_waiting;
+	bool			toggle_stat;
 };
 
 static void i2c_pmic_irq_bus_lock(struct irq_data *d)
@@ -400,6 +398,16 @@ static irqreturn_t i2c_pmic_irq_handler(int irq, void *dev_id)
 	unsigned int summary_status;
 	int rc, i;
 
+	mutex_lock(&chip->irq_complete);
+	chip->irq_waiting = true;
+	if (!chip->resume_completed) {
+		pr_debug("IRQ triggered before device-resume\n");
+		disable_irq_nosync(irq);
+		mutex_unlock(&chip->irq_complete);
+		return IRQ_HANDLED;
+	}
+	chip->irq_waiting = false;
+
 	for (i = 0; i < DIV_ROUND_UP(chip->num_periphs, BITS_PER_BYTE); i++) {
 		rc = regmap_read(chip->regmap, I2C_INTR_STATUS_BASE + i,
 				&summary_status);
@@ -415,6 +423,8 @@ static irqreturn_t i2c_pmic_irq_handler(int irq, void *dev_id)
 		periph = &chip->periph[i * 8];
 		i2c_pmic_summary_status_handler(chip, periph, summary_status);
 	}
+
+	mutex_unlock(&chip->irq_complete);
 
 	return IRQ_HANDLED;
 }
@@ -464,6 +474,9 @@ static int i2c_pmic_parse_dt(struct i2c_pmic *chip)
 
 	of_property_read_string(node, "pinctrl-names", &chip->pinctrl_name);
 
+	chip->toggle_stat = of_property_read_bool(node,
+				"qcom,enable-toggle-stat");
+
 	return rc;
 }
 
@@ -502,6 +515,69 @@ static int i2c_pmic_determine_initial_status(struct i2c_pmic *chip)
 	}
 
 	return 0;
+}
+
+#define INT_TEST_OFFSET			0xE0
+#define INT_TEST_MODE_EN_BIT		BIT(7)
+#define INT_TEST_VAL_OFFSET		0xE1
+#define INT_0_BIT			BIT(0)
+static int i2c_pmic_toggle_stat(struct i2c_pmic *chip)
+{
+	int rc = 0, i;
+
+	if (!chip->toggle_stat || !chip->num_periphs)
+		return 0;
+
+	rc = regmap_write(chip->regmap,
+				chip->periph[0].addr | INT_EN_SET_OFFSET,
+				INT_0_BIT);
+	if (rc < 0) {
+		pr_err("Couldn't write to int_en_set rc=%d\n", rc);
+		return rc;
+	}
+
+	rc = regmap_write(chip->regmap, chip->periph[0].addr | INT_TEST_OFFSET,
+				INT_TEST_MODE_EN_BIT);
+	if (rc < 0) {
+		pr_err("Couldn't write to int_test rc=%d\n", rc);
+		return rc;
+	}
+
+	for (i = 0; i < 5; i++) {
+		rc = regmap_write(chip->regmap,
+				chip->periph[0].addr | INT_TEST_VAL_OFFSET,
+				INT_0_BIT);
+		if (rc < 0) {
+			pr_err("Couldn't write to int_test_val rc=%d\n", rc);
+			goto exit;
+		}
+
+		usleep_range(5000, 5500);
+
+		rc = regmap_write(chip->regmap,
+				chip->periph[0].addr | INT_TEST_VAL_OFFSET,
+				0);
+		if (rc < 0) {
+			pr_err("Couldn't write to int_test_val rc=%d\n", rc);
+			goto exit;
+		}
+
+		rc = regmap_write(chip->regmap,
+				chip->periph[0].addr | INT_LATCHED_CLR_OFFSET,
+				INT_0_BIT);
+		if (rc < 0) {
+			pr_err("Couldn't write to int_latched_clr rc=%d\n", rc);
+			goto exit;
+		}
+
+		usleep_range(5000, 5500);
+	}
+exit:
+	regmap_write(chip->regmap, chip->periph[0].addr | INT_TEST_OFFSET, 0);
+	regmap_write(chip->regmap, chip->periph[0].addr | INT_EN_CLR_OFFSET,
+							INT_0_BIT);
+
+	return rc;
 }
 
 static struct regmap_config i2c_pmic_regmap_config = {
@@ -559,6 +635,15 @@ static int i2c_pmic_probe(struct i2c_client *client,
 		}
 	}
 
+	chip->resume_completed = true;
+	mutex_init(&chip->irq_complete);
+
+	rc = i2c_pmic_toggle_stat(chip);
+	if (rc < 0) {
+		pr_err("Couldn't toggle stat rc=%d\n", rc);
+		goto cleanup;
+	}
+
 	rc = devm_request_threaded_irq(&client->dev, client->irq, NULL,
 				       i2c_pmic_irq_handler,
 				       IRQF_ONESHOT | IRQF_SHARED,
@@ -568,6 +653,7 @@ static int i2c_pmic_probe(struct i2c_client *client,
 		goto cleanup;
 	}
 
+	chip->summary_irq = client->irq;
 	enable_irq_wake(client->irq);
 
 probe_children:
@@ -594,6 +680,17 @@ static int i2c_pmic_remove(struct i2c_client *client)
 }
 
 #ifdef CONFIG_PM_SLEEP
+static int i2c_pmic_suspend_noirq(struct device *dev)
+{
+	struct i2c_pmic *chip = dev_get_drvdata(dev);
+
+	if (chip->irq_waiting) {
+		pr_err_ratelimited("Aborting suspend, an interrupt was detected while suspending\n");
+		return -EBUSY;
+	}
+	return 0;
+}
+
 static int i2c_pmic_suspend(struct device *dev)
 {
 	struct i2c_pmic *chip = dev_get_drvdata(dev);
@@ -617,6 +714,11 @@ static int i2c_pmic_suspend(struct device *dev)
 		if (rc < 0)
 			pr_err_ratelimited("Couldn't enable 0x%04x wake irqs 0x%02x rc=%d\n",
 			       periph->addr, periph->wake, rc);
+	}
+	if (!rc) {
+		mutex_lock(&chip->irq_complete);
+		chip->resume_completed = false;
+		mutex_unlock(&chip->irq_complete);
 	}
 
 	return rc;
@@ -647,10 +749,38 @@ static int i2c_pmic_resume(struct device *dev)
 			       periph->addr, periph->synced[IRQ_EN_SET], rc);
 	}
 
+	mutex_lock(&chip->irq_complete);
+	chip->resume_completed = true;
+	if (chip->irq_waiting) {
+		mutex_unlock(&chip->irq_complete);
+		/* irq was pending, call the handler */
+		i2c_pmic_irq_handler(chip->summary_irq, chip);
+		enable_irq(chip->summary_irq);
+	} else {
+		mutex_unlock(&chip->irq_complete);
+	}
+
 	return rc;
 }
+#else
+static int i2c_pmic_suspend(struct device *dev)
+{
+	return 0;
+}
+static int i2c_pmic_resume(struct device *dev)
+{
+	return 0;
+}
+static int i2c_pmic_suspend_noirq(struct device *dev)
+{
+	return 0
+}
 #endif
-static SIMPLE_DEV_PM_OPS(i2c_pmic_pm_ops, i2c_pmic_suspend, i2c_pmic_resume);
+static const struct dev_pm_ops i2c_pmic_pm_ops = {
+	.suspend	= i2c_pmic_suspend,
+	.suspend_noirq	= i2c_pmic_suspend_noirq,
+	.resume		= i2c_pmic_resume,
+};
 
 static const struct of_device_id i2c_pmic_match_table[] = {
 	{ .compatible = "qcom,i2c-pmic", },
@@ -666,7 +796,6 @@ MODULE_DEVICE_TABLE(i2c, i2c_pmic_id);
 static struct i2c_driver i2c_pmic_driver = {
 	.driver		= {
 		.name		= "i2c_pmic",
-		.owner		= THIS_MODULE,
 		.pm		= &i2c_pmic_pm_ops,
 		.of_match_table	= i2c_pmic_match_table,
 	},

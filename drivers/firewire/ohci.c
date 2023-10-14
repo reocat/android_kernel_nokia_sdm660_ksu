@@ -734,7 +734,7 @@ static unsigned int ar_search_last_active_buffer(struct ar_context *ctx,
 	__le16 res_count, next_res_count;
 
 	i = ar_first_buffer_index(ctx);
-	res_count = ACCESS_ONCE(ctx->descriptors[i].res_count);
+	res_count = READ_ONCE(ctx->descriptors[i].res_count);
 
 	/* A buffer that is not yet completely filled must be the last one. */
 	while (i != last && res_count == 0) {
@@ -742,8 +742,7 @@ static unsigned int ar_search_last_active_buffer(struct ar_context *ctx,
 		/* Peek at the next descriptor. */
 		next_i = ar_next_buffer_index(i);
 		rmb(); /* read descriptors in order */
-		next_res_count = ACCESS_ONCE(
-				ctx->descriptors[next_i].res_count);
+		next_res_count = READ_ONCE(ctx->descriptors[next_i].res_count);
 		/*
 		 * If the next descriptor is still empty, we must stop at this
 		 * descriptor.
@@ -759,8 +758,7 @@ static unsigned int ar_search_last_active_buffer(struct ar_context *ctx,
 			if (MAX_AR_PACKET_SIZE > PAGE_SIZE && i != last) {
 				next_i = ar_next_buffer_index(next_i);
 				rmb();
-				next_res_count = ACCESS_ONCE(
-					ctx->descriptors[next_i].res_count);
+				next_res_count = READ_ONCE(ctx->descriptors[next_i].res_count);
 				if (next_res_count != cpu_to_le16(PAGE_SIZE))
 					goto next_buffer_is_active;
 			}
@@ -1114,7 +1112,7 @@ static void context_tasklet(unsigned long data)
 static int context_add_buffer(struct context *ctx)
 {
 	struct descriptor_buffer *desc;
-	dma_addr_t uninitialized_var(bus_addr);
+	dma_addr_t bus_addr;
 	int offset;
 
 	/*
@@ -1304,7 +1302,7 @@ static int at_context_queue_packet(struct context *ctx,
 				   struct fw_packet *packet)
 {
 	struct fw_ohci *ohci = ctx->ohci;
-	dma_addr_t d_bus, uninitialized_var(payload_bus);
+	dma_addr_t d_bus, payload_bus;
 	struct driver_data *driver_data;
 	struct descriptor *d, *last;
 	__le32 *header;
@@ -2284,9 +2282,10 @@ static int ohci_enable(struct fw_card *card,
 	u32 lps, version, irqs;
 	int i, ret;
 
-	if (software_reset(ohci)) {
+	ret = software_reset(ohci);
+	if (ret < 0) {
 		ohci_err(ohci, "failed to reset ohci card\n");
-		return -EBUSY;
+		return ret;
 	}
 
 	/*
@@ -2459,7 +2458,7 @@ static int ohci_set_config_rom(struct fw_card *card,
 {
 	struct fw_ohci *ohci;
 	__be32 *next_config_rom;
-	dma_addr_t uninitialized_var(next_config_rom_bus);
+	dma_addr_t next_config_rom_bus;
 
 	ohci = fw_ohci(card);
 
@@ -2817,7 +2816,7 @@ static int handle_ir_buffer_fill(struct context *context,
 	u32 buffer_dma;
 
 	req_count = le16_to_cpu(last->req_count);
-	res_count = le16_to_cpu(ACCESS_ONCE(last->res_count));
+	res_count = le16_to_cpu(READ_ONCE(last->res_count));
 	completed = req_count - res_count;
 	buffer_dma = le32_to_cpu(last->data_address);
 
@@ -2948,10 +2947,10 @@ static struct fw_iso_context *ohci_allocate_iso_context(struct fw_card *card,
 				int type, int channel, size_t header_size)
 {
 	struct fw_ohci *ohci = fw_ohci(card);
-	struct iso_context *uninitialized_var(ctx);
-	descriptor_callback_t uninitialized_var(callback);
-	u64 *uninitialized_var(channels);
-	u32 *uninitialized_var(mask), uninitialized_var(regs);
+	struct iso_context *ctx;
+	descriptor_callback_t callback;
+	u64 *channels;
+	u32 *mask, regs;
 	int index, ret = -EBUSY;
 
 	spin_lock_irq(&ohci->lock);

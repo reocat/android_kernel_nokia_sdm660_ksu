@@ -1,14 +1,5 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2012-2018, 2020, The Linux Foundation. All rights reserved. */
 
 #ifndef __MDSS_HDMI_PLL_H
 #define __MDSS_HDMI_PLL_H
@@ -19,6 +10,7 @@ struct hdmi_pll_cfg {
 };
 
 struct hdmi_pll_vco_clk {
+	struct clk_hw	hw;
 	unsigned long	rate;	/* current vco rate */
 	unsigned long	min_rate;	/* min vco rate */
 	unsigned long	max_rate;	/* max vco rate */
@@ -30,13 +22,15 @@ struct hdmi_pll_vco_clk {
 	struct hdmi_pll_cfg *crctrl;
 	void		*priv;
 
-	struct clk	c;
 };
 
-static inline struct hdmi_pll_vco_clk *to_hdmi_vco_clk(struct clk *clk)
+static inline struct hdmi_pll_vco_clk *to_hdmi_vco_clk_hw(struct clk_hw *hw)
 {
-	return container_of(clk, struct hdmi_pll_vco_clk, c);
+	return container_of(hw, struct hdmi_pll_vco_clk, hw);
 }
+
+int hdmi_pll_clock_register_28lpm(struct platform_device *pdev,
+				struct mdss_pll_resources *pll_res);
 
 int hdmi_pll_clock_register(struct platform_device *pdev,
 				struct mdss_pll_resources *pll_res);

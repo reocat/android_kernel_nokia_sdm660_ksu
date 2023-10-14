@@ -18,22 +18,22 @@ static char avb_invalidate_on_error[4];
 
 static void invalidate_vbmeta_endio(struct bio *bio)
 {
-	if (bio->bi_error)
-		DMERR("invalidate_vbmeta_endio: error %d", bio->bi_error);
+	if (bio->bi_status)
+		DMERR("invalidate_vbmeta_endio: error %d", bio->bi_status);
 	complete(bio->bi_private);
 }
 
 static int invalidate_vbmeta_submit(struct bio *bio,
 				    struct block_device *bdev,
-				    int rw, int access_last_sector,
+				    int op, int access_last_sector,
 				    struct page *page)
 {
 	DECLARE_COMPLETION_ONSTACK(wait);
 
 	bio->bi_private = &wait;
 	bio->bi_end_io = invalidate_vbmeta_endio;
-	bio->bi_bdev = bdev;
-	bio->bi_rw = rw;
+	bio_set_dev(bio, bdev);
+	bio_set_op_attrs(bio, op, REQ_SYNC);
 
 	bio->bi_iter.bi_sector = 0;
 	if (access_last_sector) {
@@ -47,7 +47,7 @@ static int invalidate_vbmeta_submit(struct bio *bio,
 		return -EIO;
 	}
 
-	submit_bio(rw, bio);
+	submit_bio(bio);
 	/* Wait up to 2 seconds for completion or fail. */
 	if (!wait_for_completion_timeout(&wait, msecs_to_jiffies(2000)))
 		return -EIO;
@@ -64,7 +64,6 @@ static int invalidate_vbmeta(dev_t vbmeta_devt)
 	/* Ensure we do synchronous unblocked I/O. We may also need
 	 * sync_bdev() on completion, but it really shouldn't.
 	 */
-	int rw = REQ_SYNC | REQ_SOFTBARRIER | REQ_NOIDLE;
 	int access_last_sector = 0;
 
 	DMINFO("invalidate_vbmeta: acting on device %d:%d",
@@ -94,7 +93,8 @@ static int invalidate_vbmeta(dev_t vbmeta_devt)
 	}
 
 	access_last_sector = 0;
-	ret = invalidate_vbmeta_submit(bio, bdev, rw, access_last_sector, page);
+	ret = invalidate_vbmeta_submit(bio, bdev, REQ_OP_READ,
+				       access_last_sector, page);
 	if (ret) {
 		DMERR("invalidate_vbmeta: error reading");
 		goto failed_to_submit_read;
@@ -113,7 +113,7 @@ static int invalidate_vbmeta(dev_t vbmeta_devt)
 		size_t offset = (1<<SECTOR_SHIFT) - 64;
 
 		access_last_sector = 1;
-		ret = invalidate_vbmeta_submit(bio, bdev, rw,
+		ret = invalidate_vbmeta_submit(bio, bdev, REQ_OP_READ,
 					       access_last_sector, page);
 		if (ret) {
 			DMERR("invalidate_vbmeta: error reading");
@@ -148,8 +148,8 @@ static int invalidate_vbmeta(dev_t vbmeta_devt)
 	 */
 	bio_reset(bio);
 
-	rw |= REQ_WRITE;
-	ret = invalidate_vbmeta_submit(bio, bdev, rw, access_last_sector, page);
+	ret = invalidate_vbmeta_submit(bio, bdev, REQ_OP_WRITE,
+				       access_last_sector, page);
 	if (ret) {
 		DMERR("invalidate_vbmeta: error writing");
 		goto failed_to_submit_write;

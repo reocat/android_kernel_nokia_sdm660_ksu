@@ -1,5 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -20,11 +21,10 @@
 #include <linux/of.h>
 #include <linux/clk.h>
 #include <linux/regulator/consumer.h>
-#include <linux/regulator/rpm-smd-regulator.h>
-#include <linux/clk/msm-clk.h>
 #include <trace/events/trace_msm_pil_event.h>
 
 #include "peripheral-loader.h"
+#include "pil-msa.h"
 #include "pil-q6v5.h"
 
 /* QDSP6SS Register Offsets */
@@ -42,7 +42,7 @@
 #define AXI_HALTACK			0x4
 #define AXI_IDLE			0x8
 
-#define HALT_ACK_TIMEOUT_US		25000
+#define HALT_ACK_TIMEOUT_US		100000
 
 /* QDSP6SS_RESET */
 #define Q6SS_STOP_CORE			BIT(0)
@@ -82,6 +82,14 @@
 #define BHS_CHECK_MAX_LOOPS             (200)
 #define QDSP6SS_XO_CBCR                 (0x0038)
 
+/* QDSP6v65 parameters */
+#define QDSP6SS_BOOT_CORE_START		(0x400)
+#define QDSP6SS_BOOT_CMD		(0x404)
+#define MSS_STATUS			(0x40)
+#define QDSP6SS_SLEEP			(0x3C)
+#define SLEEP_CHECK_MAX_LOOPS		(200)
+#define BOOT_FSM_TIMEOUT		(10000)
+
 #define QDSP6SS_ACC_OVERRIDE_VAL	0x20
 
 int pil_q6v5_make_proxy_votes(struct pil_desc *pil)
@@ -113,6 +121,18 @@ int pil_q6v5_make_proxy_votes(struct pil_desc *pil)
 	if (ret) {
 		dev_err(pil->dev, "Failed to vote for qdss(rc:%d)\n", ret);
 		goto err_qdss_vote;
+	}
+
+	ret = clk_prepare_enable(drv->prng_clk);
+	if (ret) {
+		dev_err(pil->dev, "Failed to vote for prng(rc:%d)\n", ret);
+		goto err_prng_vote;
+	}
+
+	ret = clk_prepare_enable(drv->axis2_clk);
+	if (ret) {
+		dev_err(pil->dev, "Failed to vote for axis2(rc:%d)\n", ret);
+		goto err_axis2_vote;
 	}
 
 	ret = regulator_set_voltage(drv->vreg_cx, uv, INT_MAX);
@@ -150,8 +170,12 @@ err_vreg_pll:
 err_cx_enable:
 	regulator_set_load(drv->vreg_cx, 0);
 err_cx_mode:
-	regulator_set_voltage(drv->vreg_cx, RPM_REGULATOR_CORNER_NONE, INT_MAX);
+	regulator_set_voltage(drv->vreg_cx, 0, INT_MAX);
 err_cx_voltage:
+	clk_disable_unprepare(drv->axis2_clk);
+err_axis2_vote:
+	clk_disable_unprepare(drv->prng_clk);
+err_prng_vote:
 	clk_disable_unprepare(drv->qdss_clk);
 err_qdss_vote:
 	clk_disable_unprepare(drv->pnoc_clk);
@@ -180,10 +204,12 @@ void pil_q6v5_remove_proxy_votes(struct pil_desc *pil)
 	}
 	regulator_disable(drv->vreg_cx);
 	regulator_set_load(drv->vreg_cx, 0);
-	regulator_set_voltage(drv->vreg_cx, RPM_REGULATOR_CORNER_NONE, INT_MAX);
+	regulator_set_voltage(drv->vreg_cx, 0, INT_MAX);
 	clk_disable_unprepare(drv->xo);
 	clk_disable_unprepare(drv->pnoc_clk);
 	clk_disable_unprepare(drv->qdss_clk);
+	clk_disable_unprepare(drv->prng_clk);
+	clk_disable_unprepare(drv->axis2_clk);
 }
 EXPORT_SYMBOL(pil_q6v5_remove_proxy_votes);
 
@@ -262,11 +288,12 @@ static void __pil_q6v5_shutdown(struct pil_desc *pil)
 void pil_q6v5_shutdown(struct pil_desc *pil)
 {
 	struct q6v5_data *drv = container_of(pil, struct q6v5_data, desc);
-	if (drv->qdsp6v55)
+
+	if (drv->qdsp6v55) {
 		/* Subsystem driver expected to halt bus and assert reset */
 		return;
-	else
-		__pil_q6v5_shutdown(pil);
+	}
+	__pil_q6v5_shutdown(pil);
 }
 EXPORT_SYMBOL(pil_q6v5_shutdown);
 
@@ -284,6 +311,8 @@ static int __pil_q6v5_reset(struct pil_desc *pil)
 	val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
 	val |= QDSS_BHS_ON | QDSS_LDO_BYP;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
+
+	/* Ensure physical memory access is done*/
 	mb();
 	udelay(1);
 
@@ -355,6 +384,50 @@ static int q6v55_branch_clk_enable(struct q6v5_data *drv)
 	return -EINVAL;
 }
 
+static int __pil_q6v65_reset(struct pil_desc *pil)
+{
+	struct q6v5_data *drv = container_of(pil, struct q6v5_data, desc);
+	u32 val, count;
+	int ret;
+
+	val = readl_relaxed(drv->reg_base + QDSP6SS_SLEEP);
+	val |= 0x1;
+	writel_relaxed(val, drv->reg_base + QDSP6SS_SLEEP);
+	for (count = SLEEP_CHECK_MAX_LOOPS; count > 0; count--) {
+		val = readl_relaxed(drv->reg_base + QDSP6SS_SLEEP);
+		if (!(val & BIT(31)))
+			break;
+		udelay(1);
+	}
+
+	if (!count) {
+		dev_err(drv->desc.dev, "Sleep clock did not come on in time\n");
+		return -ETIMEDOUT;
+	}
+
+	/* De-assert QDSP6 stop core */
+	writel_relaxed(1, drv->reg_base + QDSP6SS_BOOT_CORE_START);
+	/* De-assert stop core before starting boot FSM */
+	mb();
+	/* Trigger boot FSM */
+	writel_relaxed(1, drv->reg_base + QDSP6SS_BOOT_CMD);
+
+	/* Wait for boot FSM to complete */
+	ret = readl_poll_timeout(drv->rmb_base + MSS_STATUS, val,
+			(val & BIT(0)) != 0, 10, BOOT_FSM_TIMEOUT);
+
+	if (ret) {
+		dev_err(drv->desc.dev, "Boot FSM failed to complete.\n");
+		/* Reset the modem so that boot FSM is in reset state */
+		pil_mss_assert_resets(drv);
+		/* Wait 6 32kHz sleep cycles for reset */
+		udelay(200);
+		pil_mss_deassert_resets(drv);
+	}
+
+	return ret;
+}
+
 static int __pil_q6v55_reset(struct pil_desc *pil)
 {
 	struct q6v5_data *drv = container_of(pil, struct q6v5_data, desc);
@@ -387,10 +460,12 @@ static int __pil_q6v55_reset(struct pil_desc *pil)
 	val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
 	val |= QDSP6v55_BHS_ON;
 	writel_relaxed(val, drv->reg_base + QDSP6SS_PWR_CTL);
+
+	/* Ensure physical memory access is done*/
 	mb();
 	udelay(1);
 
-	if (drv->qdsp6v62_1_2 || drv->qdsp6v62_1_5) {
+	if (drv->qdsp6v62_1_2 || drv->qdsp6v62_1_5 || drv->qdsp6v62_1_4) {
 		for (i = BHS_CHECK_MAX_LOOPS; i > 0; i--) {
 			if (readl_relaxed(drv->reg_base + QDSP6V62SS_BHS_STATUS)
 			    & QDSP6v55_BHS_EN_REST_ACK)
@@ -491,7 +566,7 @@ static int __pil_q6v55_reset(struct pil_desc *pil)
 			udelay(1);
 		}
 	} else if (drv->qdsp6v61_1_1 || drv->qdsp6v62_1_2 ||
-						drv->qdsp6v62_1_5) {
+			drv->qdsp6v62_1_4 || drv->qdsp6v62_1_5) {
 		/* Deassert QDSP6 compiler memory clamp */
 		val = readl_relaxed(drv->reg_base + QDSP6SS_PWR_CTL);
 		val &= ~QDSP6v55_CLAMP_QMC_MEM;
@@ -505,7 +580,7 @@ static int __pil_q6v55_reset(struct pil_desc *pil)
 		val = readl_relaxed(drv->reg_base +
 				QDSP6V6SS_MEM_PWR_CTL);
 
-		if (drv->qdsp6v62_1_5)
+		if (drv->qdsp6v62_1_4 || drv->qdsp6v62_1_5)
 			i = 29;
 		else
 			i = 28;
@@ -513,8 +588,6 @@ static int __pil_q6v55_reset(struct pil_desc *pil)
 		for ( ; i >= 0; i--) {
 			val |= BIT(i);
 			writel_relaxed(val, drv->reg_base +
-					QDSP6V6SS_MEM_PWR_CTL);
-			val = readl_relaxed(drv->reg_base +
 					QDSP6V6SS_MEM_PWR_CTL);
 			/*
 			 * Wait for 1us for both memory peripheral and
@@ -560,7 +633,11 @@ static int __pil_q6v55_reset(struct pil_desc *pil)
 int pil_q6v5_reset(struct pil_desc *pil)
 {
 	struct q6v5_data *drv = container_of(pil, struct q6v5_data, desc);
-	if (drv->qdsp6v55)
+
+
+	if (drv->qdsp6v65_1_0)
+		return __pil_q6v65_reset(pil);
+	else if (drv->qdsp6v55)
 		return __pil_q6v55_reset(pil);
 	else
 		return __pil_q6v5_reset(pil);
@@ -581,8 +658,8 @@ struct q6v5_data *pil_q6v5_init(struct platform_device *pdev)
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "qdsp6_base");
 	drv->reg_base = devm_ioremap_resource(&pdev->dev, res);
-	if (!drv->reg_base)
-		return ERR_PTR(-ENOMEM);
+	if (IS_ERR(drv->reg_base))
+		return drv->reg_base;
 
 	desc = &drv->desc;
 	ret = of_property_read_string(pdev->dev.of_node, "qcom,firmware-name",
@@ -675,8 +752,14 @@ struct q6v5_data *pil_q6v5_init(struct platform_device *pdev)
 	drv->qdsp6v62_1_2 = of_property_read_bool(pdev->dev.of_node,
 						"qcom,qdsp6v62-1-2");
 
+	drv->qdsp6v62_1_4 = of_property_read_bool(pdev->dev.of_node,
+						"qcom,qdsp6v62-1-4");
+
 	drv->qdsp6v62_1_5 = of_property_read_bool(pdev->dev.of_node,
 						"qcom,qdsp6v62-1-5");
+
+	drv->qdsp6v65_1_0 = of_property_read_bool(pdev->dev.of_node,
+						"qcom,qdsp6v65-1-0");
 
 	drv->non_elf_image = of_property_read_bool(pdev->dev.of_node,
 						"qcom,mba-image-is-not-elf");
@@ -708,6 +791,24 @@ struct q6v5_data *pil_q6v5_init(struct platform_device *pdev)
 			return ERR_CAST(drv->qdss_clk);
 	} else {
 		drv->qdss_clk = NULL;
+	}
+
+	if (of_property_match_string(pdev->dev.of_node,
+			"qcom,proxy-clock-names", "prng_clk") >= 0) {
+		drv->prng_clk = devm_clk_get(&pdev->dev, "prng_clk");
+		if (IS_ERR(drv->prng_clk))
+			return ERR_CAST(drv->prng_clk);
+	} else {
+		drv->prng_clk = NULL;
+	}
+
+	if (of_property_match_string(pdev->dev.of_node,
+			"qcom,proxy-clock-names", "axis2_clk") >= 0) {
+		drv->axis2_clk = devm_clk_get(&pdev->dev, "axis2_clk");
+		if (IS_ERR(drv->axis2_clk))
+			return ERR_CAST(drv->axis2_clk);
+	} else {
+		drv->axis2_clk = NULL;
 	}
 
 	drv->vreg_cx = devm_regulator_get(&pdev->dev, "vdd_cx");

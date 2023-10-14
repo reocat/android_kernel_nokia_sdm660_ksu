@@ -1,15 +1,5 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2013-2021, The Linux Foundation. All rights reserved. */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
@@ -19,10 +9,10 @@
 #include <linux/err.h>
 #include <linux/delay.h>
 #include <linux/iopoll.h>
-
 #include "mdss-pll.h"
 #include "mdss-dsi-pll.h"
 #include "mdss-dp-pll.h"
+#include "mdss-hdmi-pll.h"
 
 int mdss_pll_resource_enable(struct mdss_pll_resources *pll_res, bool enable)
 {
@@ -126,46 +116,24 @@ static int mdss_pll_resource_parse(struct platform_device *pdev,
 		goto err;
 	}
 
-	if (!strcmp(compatible_stream, "qcom,mdss_dsi_pll_8996")) {
-		pll_res->pll_interface_type = MDSS_DSI_PLL_8996;
-		pll_res->target_id = MDSS_PLL_TARGET_8996;
-		pll_res->revision = 1;
-	} else if (!strcmp(compatible_stream, "qcom,mdss_dsi_pll_8996_v2")) {
-		pll_res->pll_interface_type = MDSS_DSI_PLL_8996;
-		pll_res->target_id = MDSS_PLL_TARGET_8996;
-		pll_res->revision = 2;
-	} else if (!strcmp(compatible_stream, "qcom,mdss_dsi_pll_sdm660")) {
-		pll_res->pll_interface_type = MDSS_DSI_PLL_8996;
+	if (!strcmp(compatible_stream, "qcom,mdss_dsi_pll_14nm"))
+		pll_res->pll_interface_type = MDSS_DSI_PLL_14NM;
+	else if (!strcmp(compatible_stream, "qcom,mdss_dp_pll_14nm"))
+		pll_res->pll_interface_type = MDSS_DP_PLL_14NM;
+	else if (!strcmp(compatible_stream, "qcom,mdss_dsi_pll_sdm660")) {
+		pll_res->pll_interface_type = MDSS_DSI_PLL_14NM;
 		pll_res->target_id = MDSS_PLL_TARGET_SDM660;
 		pll_res->revision = 2;
-	} else if (!strcmp(compatible_stream, "qcom,mdss_dsi_pll_sdm630")) {
-		pll_res->pll_interface_type = MDSS_DSI_PLL_8996;
-		pll_res->target_id = MDSS_PLL_TARGET_SDM630;
-		pll_res->revision = 2;
-	} else if (!strcmp(compatible_stream, "qcom,mdss_dsi_pll_8998")) {
-		pll_res->pll_interface_type = MDSS_DSI_PLL_8998;
-	} else if (!strcmp(compatible_stream, "qcom,mdss_dp_pll_8998")) {
-		pll_res->pll_interface_type = MDSS_DP_PLL_8998;
 	} else if (!strcmp(compatible_stream, "qcom,mdss_dp_pll_sdm660")) {
+		pll_res->pll_interface_type = MDSS_DP_PLL_14NM;
 		pll_res->target_id = MDSS_PLL_TARGET_SDM660;
-		pll_res->pll_interface_type = MDSS_DP_PLL_SDM660;
-	} else if (!strcmp(compatible_stream, "qcom,mdss_dp_pll_sdm630")) {
-		pll_res->target_id = MDSS_PLL_TARGET_SDM630;
-		pll_res->pll_interface_type = MDSS_DP_PLL_SDM630;
-	} else if (!strcmp(compatible_stream, "qcom,mdss_hdmi_pll_8996")) {
-		pll_res->pll_interface_type = MDSS_HDMI_PLL_8996;
-	} else if (!strcmp(compatible_stream, "qcom,mdss_hdmi_pll_8996_v2")) {
-		pll_res->pll_interface_type = MDSS_HDMI_PLL_8996_V2;
-	} else if (!strcmp(compatible_stream, "qcom,mdss_hdmi_pll_8996_v3")) {
-		pll_res->pll_interface_type = MDSS_HDMI_PLL_8996_V3;
-	} else if (!strcmp(compatible_stream,
-				"qcom,mdss_hdmi_pll_8996_v3_1p8")) {
-		pll_res->pll_interface_type = MDSS_HDMI_PLL_8996_V3_1_8;
-	} else if (!strcmp(compatible_stream, "qcom,mdss_hdmi_pll_8998")) {
-		pll_res->pll_interface_type = MDSS_HDMI_PLL_8998;
-	} else {
+		pll_res->revision = 2;
+	} else if (!strcmp(compatible_stream, "qcom,mdss_dsi_pll_12nm"))
+		pll_res->pll_interface_type = MDSS_DSI_PLL_12NM;
+	else if (!strcmp(compatible_stream, "qcom,mdss_dsi_pll_28lpm"))
+		pll_res->pll_interface_type = MDSS_DSI_PLL_28LPM;
+	else
 		goto err;
-	}
 
 	return rc;
 
@@ -186,14 +154,17 @@ static int mdss_pll_clock_register(struct platform_device *pdev,
 	}
 
 	switch (pll_res->pll_interface_type) {
-	case MDSS_DSI_PLL_8996:
+	case MDSS_DSI_PLL_14NM:
 		rc = dsi_pll_clock_register_14nm(pdev, pll_res);
 		break;
-	case MDSS_DP_PLL_SDM660:
+	case MDSS_DP_PLL_14NM:
 		rc = dp_pll_clock_register_14nm(pdev, pll_res);
 		break;
-	case MDSS_DP_PLL_SDM630:
-		rc = dp_pll_clock_register_14nm(pdev, pll_res);
+	case MDSS_DSI_PLL_28LPM:
+		rc = dsi_pll_clock_register_28lpm(pdev, pll_res);
+		break;
+	case MDSS_DSI_PLL_12NM:
+		rc = dsi_pll_clock_register_12nm(pdev, pll_res);
 		break;
 	case MDSS_UNKNOWN_PLL:
 	default:
@@ -215,6 +186,7 @@ static int mdss_pll_probe(struct platform_device *pdev)
 	const char *label;
 	struct resource *pll_base_reg;
 	struct resource *phy_base_reg;
+	struct resource *tx0_base_reg, *tx1_base_reg;
 	struct resource *dynamic_pll_base_reg;
 	struct resource *gdsc_base_reg;
 	struct mdss_pll_resources *pll_res;
@@ -316,6 +288,30 @@ static int mdss_pll_probe(struct platform_device *pdev)
 		}
 	}
 
+	tx0_base_reg = platform_get_resource_byname(pdev,
+					IORESOURCE_MEM, "ln_tx0_base");
+	if (tx0_base_reg) {
+		pll_res->ln_tx0_base = ioremap(tx0_base_reg->start,
+				resource_size(tx0_base_reg));
+		if (!pll_res->ln_tx0_base) {
+			pr_err("Unable to remap Lane TX0 base resources\n");
+			rc = -ENOMEM;
+			goto tx0_io_error;
+		}
+	}
+
+	tx1_base_reg = platform_get_resource_byname(pdev,
+					IORESOURCE_MEM, "ln_tx1_base");
+	if (tx1_base_reg) {
+		pll_res->ln_tx1_base = ioremap(tx1_base_reg->start,
+				resource_size(tx1_base_reg));
+		if (!pll_res->ln_tx1_base) {
+			pr_err("Unable to remap Lane TX1 base resources\n");
+			rc = -ENOMEM;
+			goto tx1_io_error;
+		}
+	}
+
 	gdsc_base_reg = platform_get_resource_byname(pdev,
 					IORESOURCE_MEM, "gdsc_base");
 	if (!gdsc_base_reg) {
@@ -345,6 +341,8 @@ static int mdss_pll_probe(struct platform_device *pdev)
 		goto clock_register_error;
 	}
 
+	mdss_pll_util_parse_dt_dfps(pdev, pll_res);
+
 	return rc;
 
 clock_register_error:
@@ -353,6 +351,12 @@ res_init_error:
 	if (pll_res->gdsc_base)
 		iounmap(pll_res->gdsc_base);
 gdsc_io_error:
+	if (pll_res->ln_tx1_base)
+		iounmap(pll_res->ln_tx1_base);
+tx1_io_error:
+	if (pll_res->ln_tx0_base)
+		iounmap(pll_res->ln_tx0_base);
+tx0_io_error:
 	if (pll_res->dyn_pll_base)
 		iounmap(pll_res->dyn_pll_base);
 dyn_pll_io_error:
@@ -363,7 +367,6 @@ phy_io_error:
 res_parse_error:
 	iounmap(pll_res->pll_base);
 io_error:
-	devm_kfree(&pdev->dev, pll_res);
 error:
 	return rc;
 }
@@ -374,7 +377,7 @@ static int mdss_pll_remove(struct platform_device *pdev)
 
 	pll_res = platform_get_drvdata(pdev);
 	if (!pll_res) {
-		pr_err("Invalid PLL resource data");
+		pr_err("Invalid PLL resource data\n");
 		return 0;
 	}
 
@@ -385,24 +388,16 @@ static int mdss_pll_remove(struct platform_device *pdev)
 		iounmap(pll_res->gdsc_base);
 	mdss_pll_resource_release(pdev, pll_res);
 	iounmap(pll_res->pll_base);
-	devm_kfree(&pdev->dev, pll_res);
 	return 0;
 }
 
 static const struct of_device_id mdss_pll_dt_match[] = {
-	{.compatible = "qcom,mdss_dsi_pll_8996"},
-	{.compatible = "qcom,mdss_dsi_pll_8996_v2"},
-	{.compatible = "qcom,mdss_dsi_pll_8998"},
-	{.compatible = "qcom,mdss_hdmi_pll_8996"},
-	{.compatible = "qcom,mdss_hdmi_pll_8996_v2"},
-	{.compatible = "qcom,mdss_hdmi_pll_8996_v3"},
-	{.compatible = "qcom,mdss_hdmi_pll_8996_v3_1p8"},
-	{.compatible = "qcom,mdss_dp_pll_8998"},
-	{.compatible = "qcom,mdss_hdmi_pll_8998"},
+	{.compatible = "qcom,mdss_dsi_pll_14nm"},
+	{.compatible = "qcom,mdss_dp_pll_14nm"},
 	{.compatible = "qcom,mdss_dsi_pll_sdm660"},
 	{.compatible = "qcom,mdss_dp_pll_sdm660"},
-	{.compatible = "qcom,mdss_dsi_pll_sdm630"},
-	{.compatible = "qcom,mdss_dp_pll_sdm630"},
+	{.compatible = "qcom,mdss_dsi_pll_12nm"},
+	{.compatible = "qcom,mdss_dsi_pll_28lpm"},
 	{}
 };
 
@@ -427,7 +422,7 @@ static int __init mdss_pll_driver_init(void)
 
 	return rc;
 }
-subsys_initcall(mdss_pll_driver_init);
+fs_initcall(mdss_pll_driver_init);
 
 static void __exit mdss_pll_driver_deinit(void)
 {

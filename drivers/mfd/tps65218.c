@@ -33,19 +33,17 @@
 
 #define TPS65218_PASSWORD_REGS_UNLOCK   0x7D
 
-/**
- * tps65218_reg_read: Read a single tps65218 register.
- *
- * @tps: Device to read from.
- * @reg: Register to read.
- * @val: Contians the value
- */
-int tps65218_reg_read(struct tps65218 *tps, unsigned int reg,
-			unsigned int *val)
-{
-	return regmap_read(tps->regmap, reg, val);
-}
-EXPORT_SYMBOL_GPL(tps65218_reg_read);
+static const struct mfd_cell tps65218_cells[] = {
+	{
+		.name = "tps65218-pwrbutton",
+		.of_compatible = "ti,tps65218-pwrbutton",
+	},
+	{
+		.name = "tps65218-gpio",
+		.of_compatible = "ti,tps65218-gpio",
+	},
+	{ .name = "tps65218-regulator", },
+};
 
 /**
  * tps65218_reg_write: Write a single tps65218 register.
@@ -93,7 +91,7 @@ static int tps65218_update_bits(struct tps65218 *tps, unsigned int reg,
 	int ret;
 	unsigned int data;
 
-	ret = tps65218_reg_read(tps, reg, &data);
+	ret = regmap_read(tps->regmap, reg, &data);
 	if (ret) {
 		dev_err(tps->dev, "Read from reg 0x%x failed\n", reg);
 		return ret;
@@ -217,15 +215,8 @@ static int tps65218_probe(struct i2c_client *client,
 				const struct i2c_device_id *ids)
 {
 	struct tps65218 *tps;
-	const struct of_device_id *match;
 	int ret;
-
-	match = of_match_device(of_tps65218_match_table, &client->dev);
-	if (!match) {
-		dev_err(&client->dev,
-			"Failed to find matching dt id\n");
-		return -EINVAL;
-	}
+	unsigned int chipid;
 
 	tps = devm_kzalloc(&client->dev, sizeof(*tps), GFP_KERNEL);
 	if (!tps)
@@ -244,32 +235,25 @@ static int tps65218_probe(struct i2c_client *client,
 
 	mutex_init(&tps->tps_lock);
 
-	ret = regmap_add_irq_chip(tps->regmap, tps->irq,
-			IRQF_ONESHOT, 0, &tps65218_irq_chip,
-			&tps->irq_data);
+	ret = devm_regmap_add_irq_chip(&client->dev, tps->regmap, tps->irq,
+				       IRQF_ONESHOT, 0, &tps65218_irq_chip,
+				       &tps->irq_data);
 	if (ret < 0)
 		return ret;
 
-	ret = of_platform_populate(client->dev.of_node, NULL, NULL,
-				   &client->dev);
-	if (ret < 0)
-		goto err_irq;
+	ret = regmap_read(tps->regmap, TPS65218_REG_CHIPID, &chipid);
+	if (ret) {
+		dev_err(tps->dev, "Failed to read chipid: %d\n", ret);
+		return ret;
+	}
 
-	return 0;
+	tps->rev = chipid & TPS65218_CHIPID_REV_MASK;
 
-err_irq:
-	regmap_del_irq_chip(tps->irq, tps->irq_data);
+	ret = mfd_add_devices(tps->dev, PLATFORM_DEVID_AUTO, tps65218_cells,
+			      ARRAY_SIZE(tps65218_cells), NULL, 0,
+			      regmap_irq_get_domain(tps->irq_data));
 
 	return ret;
-}
-
-static int tps65218_remove(struct i2c_client *client)
-{
-	struct tps65218 *tps = i2c_get_clientdata(client);
-
-	regmap_del_irq_chip(tps->irq, tps->irq_data);
-
-	return 0;
 }
 
 static const struct i2c_device_id tps65218_id_table[] = {
@@ -284,7 +268,6 @@ static struct i2c_driver tps65218_driver = {
 		.of_match_table = of_tps65218_match_table,
 	},
 	.probe		= tps65218_probe,
-	.remove		= tps65218_remove,
 	.id_table       = tps65218_id_table,
 };
 

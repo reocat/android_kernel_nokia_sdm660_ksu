@@ -1,5 +1,13 @@
+/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
+/*
+ * Copyright (c) 2017-2018, 2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ */
+
 #ifndef _SDE_DRM_H_
 #define _SDE_DRM_H_
+
+#include "drm.h"
 
 /* Total number of supported color planes */
 #define SDE_MAX_PLANES  4
@@ -46,6 +54,8 @@
  *                                  alpha pre-multiplied. Apply
  *                                  pre-multiplication. If fg plane alpha is
  *                                  less than 0xff, apply modulation as well.
+ * @SDE_DRM_BLEND_OP_LAYER_COLOR:   Blend_op type for layer color component,
+ *                                  apply a constant blend operation.
  * @SDE_DRM_BLEND_OP_MAX:           Used to track maximum blend operation
  *                                  possible by mdp.
  */
@@ -53,20 +63,20 @@
 #define SDE_DRM_BLEND_OP_OPAQUE         1
 #define SDE_DRM_BLEND_OP_PREMULTIPLIED  2
 #define SDE_DRM_BLEND_OP_COVERAGE       3
-#define SDE_DRM_BLEND_OP_MAX            4
+#define SDE_DRM_BLEND_OP_LAYER_COLOR    4
+#define SDE_DRM_BLEND_OP_MAX            5
 
 /**
  * Bit masks for "src_config" property
  * construct bitmask via (1UL << SDE_DRM_<flag>)
  */
 #define SDE_DRM_DEINTERLACE         0   /* Specifies interlaced input */
-#define SDE_DRM_LINEPADDING         1   /* Specifies line padding input */
 
 /* DRM bitmasks are restricted to 0..63 */
 #define SDE_DRM_BITMASK_COUNT       64
 
 /**
- * Framebuffer modes for "fb_translation_mode" PLANE property
+ * Framebuffer modes for "fb_translation_mode" PLANE and CONNECTOR property
  *
  * @SDE_DRM_FB_NON_SEC:          IOMMU configuration for this framebuffer mode
  *                               is non-secure domain and requires
@@ -85,7 +95,7 @@
  *                               is secure domain and requires
  *                               only stage II translation when
  *                               this buffer is accessed by the display HW.
-*/
+ */
 
 #define SDE_DRM_FB_NON_SEC              0
 #define SDE_DRM_FB_SEC                  1
@@ -211,6 +221,17 @@ struct sde_drm_de_v1 {
 	int16_t adjust_c[SDE_MAX_DE_CURVES];
 };
 
+/*
+ * Scaler configuration flags
+ */
+
+/* Disable dynamic expansion */
+#define SDE_DYN_EXP_DISABLE 0x1
+
+#define SDE_DRM_QSEED3LITE
+#define SDE_DRM_QSEED4
+#define SDE_DRM_INLINE_PREDOWNSCALE
+
 /**
  * struct sde_drm_scaler_v2 - version 2 of struct sde_drm_scaler
  * @enable:            Scaler enable
@@ -239,7 +260,15 @@ struct sde_drm_de_v1 {
  * @y_rgb_sep_lut_idx: Y/RGB separable LUT index
  * @uv_sep_lut_idx:    UV separable LUT index
  * @de:                Detail enhancer settings
-*/
+ * @dir_weight:        Directional Weight
+ * @unsharp_mask_blend: Unsharp Blend Filter Ratio
+ * @de_blend:          Ratio of two unsharp mask filters
+ * @flags:             Scaler configuration flags
+ * @pre_downscale_x_0  Pre-downscale ratio, x-direction, plane 0(Y/RGB)
+ * @pre_downscale_x_1  Pre-downscale ratio, x-direction, plane 1(UV)
+ * @pre_downscale_y_0  Pre-downscale ratio, y-direction, plane 0(Y/RGB)
+ * @pre_downscale_y_1  Pre-downscale ratio, y-direction, plane 1(UV)
+ */
 struct sde_drm_scaler_v2 {
 	/*
 	 * General definitions
@@ -292,8 +321,58 @@ struct sde_drm_scaler_v2 {
 	 * Detail enhancer settings
 	 */
 	struct sde_drm_de_v1 de;
+	uint32_t dir_weight;
+	uint32_t unsharp_mask_blend;
+	uint32_t de_blend;
+	uint32_t flags;
+
+	/*
+	 * Inline pre-downscale settings
+	 */
+	uint32_t pre_downscale_x_0;
+	uint32_t pre_downscale_x_1;
+	uint32_t pre_downscale_y_0;
+	uint32_t pre_downscale_y_1;
 };
 
+/* Number of dest scalers supported */
+#define SDE_MAX_DS_COUNT 2
+
+/*
+ * Destination scaler flag config
+ */
+#define SDE_DRM_DESTSCALER_ENABLE           0x1
+#define SDE_DRM_DESTSCALER_SCALE_UPDATE     0x2
+#define SDE_DRM_DESTSCALER_ENHANCER_UPDATE  0x4
+#define SDE_DRM_DESTSCALER_PU_ENABLE        0x8
+
+/**
+ * struct sde_drm_dest_scaler_cfg - destination scaler config structure
+ * @flags:      Flag to switch between mode for destination scaler
+ *              refer to destination scaler flag config
+ * @index:      Destination scaler selection index
+ * @lm_width:   Layer mixer width configuration
+ * @lm_height:  Layer mixer height configuration
+ * @scaler_cfg: The scaling parameters for all the mode except disable
+ *              Userspace pointer to struct sde_drm_scaler_v2
+ */
+struct sde_drm_dest_scaler_cfg {
+	uint32_t flags;
+	uint32_t index;
+	uint32_t lm_width;
+	uint32_t lm_height;
+	uint64_t scaler_cfg;
+};
+
+/**
+ * struct sde_drm_dest_scaler_data - destination scaler data struct
+ * @num_dest_scaler: Number of dest scalers to be configured
+ * @ds_cfg:          Destination scaler block configuration
+ */
+struct sde_drm_dest_scaler_data {
+	uint32_t num_dest_scaler;
+	struct sde_drm_dest_scaler_cfg ds_cfg[SDE_MAX_DS_COUNT];
+};
 
 /*
  * Define constants for struct sde_drm_csc
@@ -318,6 +397,53 @@ struct sde_drm_csc_v1 {
 	uint32_t post_clamp[SDE_CSC_CLAMP_SIZE];
 };
 
+/**
+ * struct sde_drm_color - struct to store the color and alpha values
+ * @color_0: Color 0 value
+ * @color_1: Color 1 value
+ * @color_2: Color 2 value
+ * @color_3: Color 3 value
+ */
+struct sde_drm_color {
+	uint32_t color_0;
+	uint32_t color_1;
+	uint32_t color_2;
+	uint32_t color_3;
+};
+
+/* Total number of supported dim layers */
+#define SDE_MAX_DIM_LAYERS 7
+
+/* SDE_DRM_DIM_LAYER_CONFIG_FLAG - flags for Dim Layer */
+/* Color fill inside of the rect, including border */
+#define SDE_DRM_DIM_LAYER_INCLUSIVE     0x1
+/* Color fill outside of the rect, excluding border */
+#define SDE_DRM_DIM_LAYER_EXCLUSIVE     0x2
+
+/**
+ * struct sde_drm_dim_layer - dim layer cfg struct
+ * @flags:         Refer SDE_DRM_DIM_LAYER_CONFIG_FLAG for possible values
+ * @stage:         Blending stage of the dim layer
+ * @color_fill:    Color fill for dim layer
+ * @rect:          Dim layer coordinates
+ */
+struct sde_drm_dim_layer_cfg {
+	uint32_t flags;
+	uint32_t stage;
+	struct sde_drm_color color_fill;
+	struct drm_clip_rect rect;
+};
+
+/**
+ * struct sde_drm_dim_layer_v1 - version 1 of dim layer struct
+ * @num_layers:    Numer of Dim Layers
+ * @layer:         Dim layer user cfgs ptr for the num_layers
+ */
+struct sde_drm_dim_layer_v1 {
+	uint32_t num_layers;
+	struct sde_drm_dim_layer_cfg layer_cfg[SDE_MAX_DIM_LAYERS];
+};
+
 /* Writeback Config version definition */
 #define SDE_DRM_WB_CFG		0x1
 
@@ -338,14 +464,41 @@ struct sde_drm_wb_cfg {
 	uint64_t modes;
 };
 
+#define SDE_MAX_ROI_V1	4
+
+/**
+ * struct sde_drm_roi_v1 - list of regions of interest for a drm object
+ * @num_rects: number of valid rectangles in the roi array
+ * @roi: list of roi rectangles
+ */
+struct sde_drm_roi_v1 {
+	uint32_t num_rects;
+	struct drm_clip_rect roi[SDE_MAX_ROI_V1];
+};
+
 /**
  * Define extended power modes supported by the SDE connectors.
  */
-#define SDE_MODE_DPMS_ON       0
-#define SDE_MODE_DPMS_LP1      1
-#define SDE_MODE_DPMS_LP2      2
-#define SDE_MODE_DPMS_STANDBY  3
-#define SDE_MODE_DPMS_SUSPEND  4
-#define SDE_MODE_DPMS_OFF      5
+#define SDE_MODE_DPMS_ON	0
+#define SDE_MODE_DPMS_LP1	1
+#define SDE_MODE_DPMS_LP2	2
+#define SDE_MODE_DPMS_STANDBY	3
+#define SDE_MODE_DPMS_SUSPEND	4
+#define SDE_MODE_DPMS_OFF	5
 
+/**
+ * sde recovery events for notifying client
+ */
+#define SDE_RECOVERY_SUCCESS		0
+#define SDE_RECOVERY_CAPTURE		1
+#define SDE_RECOVERY_HARD_RESET		2
+
+/* display format modifiers */
+/*
+ * QTI planar fsc Tile Format
+ *
+ * Refers to a tile variant of the planar format.
+ * Implementation may be platform and base-format specific.
+ */
+#define DRM_FORMAT_MOD_QCOM_FSC_TILE       fourcc_mod_code(QCOM, 0x10)
 #endif /* _SDE_DRM_H_ */

@@ -96,7 +96,7 @@ lx-symbols command."""
             return ""
         attrs = sect_attrs['attrs']
         section_name_to_address = {
-            attrs[n]['name'].string(): attrs[n]['address']
+            attrs[n]['battr']['attr']['name'].string(): attrs[n]['address']
             for n in range(int(sect_attrs['nsections']))}
         args = []
         for section_name in [".data", ".data..read_mostly", ".rodata", ".bss",
@@ -109,7 +109,7 @@ lx-symbols command."""
 
     def load_module_symbols(self, module):
         module_name = module['name'].string()
-        module_addr = str(module['module_core']).split()[0]
+        module_addr = str(module['core_layout']['base']).split()[0]
 
         module_file = self._get_module_file(module_name)
         if not module_file and not self.module_files_updated:
@@ -154,7 +154,7 @@ lx-symbols command."""
             saved_state['breakpoint'].enabled = saved_state['enabled']
 
     def invoke(self, arg, from_tty):
-        self.module_paths = arg.split()
+        self.module_paths = [os.path.expanduser(p) for p in arg.split()]
         self.module_paths.append(os.getcwd())
 
         # enforce update

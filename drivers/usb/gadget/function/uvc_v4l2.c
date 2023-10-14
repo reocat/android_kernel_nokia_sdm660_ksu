@@ -1,19 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  *	uvc_v4l2.c  --  USB Video Class Gadget driver
  *
  *	Copyright (C) 2009-2010
  *	    Laurent Pinchart (laurent.pinchart@ideasonboard.com)
- *
- *	This program is free software; you can redistribute it and/or modify
- *	it under the terms of the GNU General Public License as published by
- *	the Free Software Foundation; either version 2 of the License, or
- *	(at your option) any later version.
  */
 
-#include <linux/kernel.h>
 #include <linux/device.h>
 #include <linux/errno.h>
+#include <linux/kernel.h>
 #include <linux/list.h>
+#include <linux/usb/g_uvc.h>
 #include <linux/videodev2.h>
 #include <linux/vmalloc.h>
 #include <linux/wait.h>
@@ -53,8 +50,7 @@ uvc_send_response(struct uvc_device *uvc, struct uvc_request_data *data)
  * V4L2 ioctls
  */
 
-struct uvc_format
-{
+struct uvc_format {
 	u8 bpp;
 	u32 fcc;
 };
@@ -233,10 +229,17 @@ static int
 uvc_v4l2_subscribe_event(struct v4l2_fh *fh,
 			 const struct v4l2_event_subscription *sub)
 {
+	struct uvc_device *uvc = video_get_drvdata(fh->vdev);
+	int ret;
+
 	if (sub->type < UVC_EVENT_FIRST || sub->type > UVC_EVENT_LAST)
 		return -EINVAL;
 
-	return v4l2_event_subscribe(fh, sub, 2, NULL);
+	ret = v4l2_event_subscribe(fh, sub, 2, NULL);
+	if (!ret && sub->type == UVC_EVENT_UNBIND)
+		uvc->wait_for_close = true;
+
+	return ret;
 }
 
 static int
@@ -334,7 +337,7 @@ uvc_v4l2_mmap(struct file *file, struct vm_area_struct *vma)
 	return uvcg_queue_mmap(&uvc->video.queue, vma);
 }
 
-static unsigned int
+static __poll_t
 uvc_v4l2_poll(struct file *file, poll_table *wait)
 {
 	struct video_device *vdev = video_devdata(file);
@@ -355,7 +358,7 @@ static unsigned long uvcg_v4l2_get_unmapped_area(struct file *file,
 }
 #endif
 
-struct v4l2_file_operations uvc_v4l2_fops = {
+const struct v4l2_file_operations uvc_v4l2_fops = {
 	.owner		= THIS_MODULE,
 	.open		= uvc_v4l2_open,
 	.release	= uvc_v4l2_release,

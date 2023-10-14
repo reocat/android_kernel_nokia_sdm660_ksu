@@ -1,13 +1,7 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (c) 2012-2015, 2017, 2019 The Linux Foundation.
+ * All rights reserved.
  */
 
 #ifndef __BMS_BATTERYDATA_H
@@ -144,12 +138,30 @@ struct bms_battery_data {
 	const char		*battery_type;
 };
 
+/**
+ * struct soh_range -
+ * @batt_age_level:	Battery age level (e.g. 0, 1 etc.,)
+ * @soh_min:		Minimum SOH (state of health) level that this battery
+ *			profile can support.
+ * @soh_max:		Maximum SOH (state of health) level that this battery
+ *			profile can support.
+ */
+struct soh_range {
+	int	batt_age_level;
+	int	soh_min;
+	int	soh_max;
+};
+
 #define is_between(left, right, value) \
 		(((left) >= (right) && (left) >= (value) \
 			&& (value) >= (right)) \
 		|| ((left) <= (right) && (left) <= (value) \
 			&& (value) <= (right)))
 
+#if defined(CONFIG_PM8921_BMS) || \
+	defined(CONFIG_PM8921_BMS_MODULE) || \
+	defined(CONFIG_QPNP_BMS) || \
+	defined(CONFIG_QPNP_VM_BMS)
 extern struct bms_battery_data  palladium_1500_data;
 extern struct bms_battery_data  desay_5200_data;
 extern struct bms_battery_data  oem_batt_data;
@@ -169,5 +181,46 @@ int interpolate_slope(struct pc_temp_ocv_lut *pc_temp_ocv,
 int interpolate_acc(struct ibat_temp_acc_lut *ibat_acc_lut,
 					int batt_temp, int ibat);
 int linear_interpolate(int y0, int x0, int y1, int x1, int x);
+#else
+static inline int interpolate_fcc(struct single_row_lut *fcc_temp_lut,
+			int batt_temp)
+{
+	return -EINVAL;
+}
+static inline int interpolate_scalingfactor(struct sf_lut *sf_lut,
+			int row_entry, int pc)
+{
+	return -EINVAL;
+}
+static inline int interpolate_scalingfactor_fcc(
+			struct single_row_lut *fcc_sf_lut, int cycles)
+{
+	return -EINVAL;
+}
+static inline int interpolate_pc(struct pc_temp_ocv_lut *pc_temp_ocv,
+			int batt_temp_degc, int ocv)
+{
+	return -EINVAL;
+}
+static inline int interpolate_ocv(struct pc_temp_ocv_lut *pc_temp_ocv,
+			int batt_temp_degc, int pc)
+{
+	return -EINVAL;
+}
+static inline int interpolate_slope(struct pc_temp_ocv_lut *pc_temp_ocv,
+					int batt_temp, int pc)
+{
+	return -EINVAL;
+}
+static inline int linear_interpolate(int y0, int x0, int y1, int x1, int x)
+{
+	return -EINVAL;
+}
+static inline int interpolate_acc(struct ibat_temp_acc_lut *ibat_acc_lut,
+						int batt_temp, int ibat)
+{
+	return -EINVAL;
+}
+#endif
 
 #endif

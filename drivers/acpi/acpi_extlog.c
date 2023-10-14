@@ -13,6 +13,7 @@
 #include <linux/ratelimit.h>
 #include <linux/edac.h>
 #include <linux/ras.h>
+#include <acpi/ghes.h>
 #include <asm/cpu.h>
 #include <asm/mce.h>
 
@@ -141,9 +142,9 @@ static int extlog_print(struct notifier_block *nb, unsigned long val,
 	int	cpu = mce->extcpu;
 	struct acpi_hest_generic_status *estatus, *tmp;
 	struct acpi_hest_generic_data *gdata;
-	const uuid_le *fru_id = &NULL_UUID_LE;
-	char *fru_text = "";
-	uuid_le *sec_type;
+	const guid_t *fru_id;
+	char *fru_text;
+	guid_t *sec_type;
 	static u32 err_seq;
 
 	estatus = extlog_elog_entry_check(cpu, bank);
@@ -163,17 +164,23 @@ static int extlog_print(struct notifier_block *nb, unsigned long val,
 
 	/* log event via trace */
 	err_seq++;
-	gdata = (struct acpi_hest_generic_data *)(tmp + 1);
-	if (gdata->validation_bits & CPER_SEC_VALID_FRU_ID)
-		fru_id = (uuid_le *)gdata->fru_id;
-	if (gdata->validation_bits & CPER_SEC_VALID_FRU_TEXT)
-		fru_text = gdata->fru_text;
-	sec_type = (uuid_le *)gdata->section_type;
-	if (!uuid_le_cmp(*sec_type, CPER_SEC_PLATFORM_MEM)) {
-		struct cper_sec_mem_err *mem = (void *)(gdata + 1);
-		if (gdata->error_data_length >= sizeof(*mem))
-			trace_extlog_mem_event(mem, err_seq, fru_id, fru_text,
-					       (u8)gdata->error_severity);
+	apei_estatus_for_each_section(tmp, gdata) {
+		if (gdata->validation_bits & CPER_SEC_VALID_FRU_ID)
+			fru_id = (guid_t *)gdata->fru_id;
+		else
+			fru_id = &guid_null;
+		if (gdata->validation_bits & CPER_SEC_VALID_FRU_TEXT)
+			fru_text = gdata->fru_text;
+		else
+			fru_text = "";
+		sec_type = (guid_t *)gdata->section_type;
+		if (guid_equal(sec_type, &CPER_SEC_PLATFORM_MEM)) {
+			struct cper_sec_mem_err *mem = (void *)(gdata + 1);
+
+			if (gdata->error_data_length >= sizeof(*mem))
+				trace_extlog_mem_event(mem, err_seq, fru_id, fru_text,
+						       (u8)gdata->error_severity);
+		}
 	}
 
 out:
@@ -182,17 +189,17 @@ out:
 
 static bool __init extlog_get_l1addr(void)
 {
-	u8 uuid[16];
+	guid_t guid;
 	acpi_handle handle;
 	union acpi_object *obj;
 
-	acpi_str_to_uuid(extlog_dsm_uuid, uuid);
-
+	if (guid_parse(extlog_dsm_uuid, &guid))
+		return false;
 	if (ACPI_FAILURE(acpi_get_handle(NULL, "\\_SB", &handle)))
 		return false;
-	if (!acpi_check_dsm(handle, uuid, EXTLOG_DSM_REV, 1 << EXTLOG_FN_ADDR))
+	if (!acpi_check_dsm(handle, &guid, EXTLOG_DSM_REV, 1 << EXTLOG_FN_ADDR))
 		return false;
-	obj = acpi_evaluate_dsm_typed(handle, uuid, EXTLOG_DSM_REV,
+	obj = acpi_evaluate_dsm_typed(handle, &guid, EXTLOG_DSM_REV,
 				      EXTLOG_FN_ADDR, NULL, ACPI_TYPE_INTEGER);
 	if (!obj) {
 		return false;
@@ -212,6 +219,7 @@ static bool __init extlog_get_l1addr(void)
 }
 static struct notifier_block extlog_mce_dec = {
 	.notifier_call	= extlog_print,
+	.priority	= MCE_PRIO_EXTLOG,
 };
 
 static int __init extlog_init(void)
@@ -228,7 +236,7 @@ static int __init extlog_init(void)
 	    !extlog_get_l1addr())
 		return -ENODEV;
 
-	if (get_edac_report_status() == EDAC_REPORTING_FORCE) {
+	if (edac_get_report_status() == EDAC_REPORTING_FORCE) {
 		pr_warn("Not loading eMCA, error reporting force-enabled through EDAC.\n");
 		return -EPERM;
 	}
@@ -284,8 +292,8 @@ static int __init extlog_init(void)
 	 * eMCA event report method has higher priority than EDAC method,
 	 * unless EDAC event report method is mandatory.
 	 */
-	old_edac_report_status = get_edac_report_status();
-	set_edac_report_status(EDAC_REPORTING_DISABLED);
+	old_edac_report_status = edac_get_report_status();
+	edac_set_report_status(EDAC_REPORTING_DISABLED);
 	mce_register_decode_chain(&extlog_mce_dec);
 	/* enable OS to be involved to take over management from BIOS */
 	((struct extlog_l1_head *)extlog_l1_addr)->flags |= FLAG_OS_OPTIN;
@@ -307,7 +315,7 @@ err:
 
 static void __exit extlog_exit(void)
 {
-	set_edac_report_status(old_edac_report_status);
+	edac_set_report_status(old_edac_report_status);
 	mce_unregister_decode_chain(&extlog_mce_dec);
 	((struct extlog_l1_head *)extlog_l1_addr)->flags &= ~FLAG_OS_OPTIN;
 	if (extlog_l1_addr)

@@ -1,13 +1,6 @@
-/* Copyright (c) 2015, 2017 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/debugfs.h>
@@ -56,12 +49,12 @@
 
 
 #define IPA_MHI_FUNC_ENTRY() \
-	IPA_MHI_DBG_LOW("ENTRY\n")
+	IPA_MHI_DBG("ENTRY\n")
 #define IPA_MHI_FUNC_EXIT() \
-	IPA_MHI_DBG_LOW("EXIT\n")
+	IPA_MHI_DBG("EXIT\n")
 
 #define IPA_MHI_MAX_UL_CHANNELS 1
-#define IPA_MHI_MAX_DL_CHANNELS 1
+#define IPA_MHI_MAX_DL_CHANNELS 2
 
 /* bit #40 in address should be asserted for MHI transfers over pcie */
 #define IPA_MHI_HOST_ADDR_COND(addr) \
@@ -189,7 +182,8 @@ static int ipa3_mhi_get_ch_poll_cfg(enum ipa_client_type client,
 }
 
 static int ipa_mhi_start_gsi_channel(enum ipa_client_type client,
-	int ipa_ep_idx, struct start_gsi_channel *params)
+	int ipa_ep_idx, struct start_gsi_channel *params,
+	struct ipa_ep_cfg *ipa_ep_cfg)
 {
 	int res = 0;
 	struct gsi_evt_ring_props ev_props;
@@ -197,14 +191,17 @@ static int ipa_mhi_start_gsi_channel(enum ipa_client_type client,
 	struct gsi_chan_props ch_props;
 	union __packed gsi_channel_scratch ch_scratch;
 	struct ipa3_ep_context *ep;
-	struct ipa_gsi_ep_config *ep_cfg;
+	const struct ipa_gsi_ep_config *ep_cfg;
+	struct ipa_ep_cfg_ctrl ep_cfg_ctrl;
+	bool burst_mode_enabled = false;
+	int code = 0;
 
 	IPA_MHI_FUNC_ENTRY();
 
 	ep = &ipa3_ctx->ep[ipa_ep_idx];
 
 	msi = params->msi;
-	ep_cfg = ipa_get_gsi_ep_info(ipa_ep_idx);
+	ep_cfg = ipa3_get_gsi_ep_info(client);
 	if (!ep_cfg) {
 		IPA_MHI_ERR("Wrong parameter, ep_cfg is NULL\n");
 		return -EPERM;
@@ -280,9 +277,24 @@ static int ipa_mhi_start_gsi_channel(enum ipa_client_type client,
 	ch_props.ring_len = params->ch_ctx_host->rlen;
 	ch_props.ring_base_addr = IPA_MHI_HOST_ADDR_COND(
 			params->ch_ctx_host->rbase);
-	ch_props.use_db_eng = GSI_CHAN_DB_MODE;
+
+	/* Burst mode is not supported on DPL pipes */
+	if ((client != IPA_CLIENT_MHI_DPL_CONS) &&
+		(params->ch_ctx_host->brstmode == IPA_MHI_BURST_MODE_DEFAULT ||
+		params->ch_ctx_host->brstmode == IPA_MHI_BURST_MODE_ENABLE)) {
+		burst_mode_enabled = true;
+	}
+
+	if (ipa3_ctx->ipa_hw_type >= IPA_HW_v4_0 &&
+		!burst_mode_enabled)
+		ch_props.use_db_eng = GSI_CHAN_DIRECT_MODE;
+	else
+		ch_props.use_db_eng = GSI_CHAN_DB_MODE;
+
 	ch_props.max_prefetch = GSI_ONE_PREFETCH_SEG;
 	ch_props.low_weight = 1;
+	ch_props.prefetch_mode = ep_cfg->prefetch_mode;
+	ch_props.empty_lvl_threshold = ep_cfg->prefetch_threshold;
 	ch_props.err_cb = params->ch_err_cb;
 	ch_props.chan_user_data = params->channel;
 	res = gsi_alloc_channel(&ch_props, ipa3_ctx->gsi_dev_hdl,
@@ -298,14 +310,23 @@ static int ipa_mhi_start_gsi_channel(enum ipa_client_type client,
 			params->channel_context_addr +
 			offsetof(struct ipa_mhi_ch_ctx, wp));
 	ch_scratch.mhi.assert_bit40 = params->assert_bit40;
-	ch_scratch.mhi.max_outstanding_tre =
-		ep_cfg->ipa_if_tlv * ch_props.re_size;
-	ch_scratch.mhi.outstanding_threshold =
-		min(ep_cfg->ipa_if_tlv / 2, 8) * ch_props.re_size;
+
+	/*
+	 * Update scratch for MCS smart prefetch:
+	 * Starting IPA4.5, smart prefetch implemented by H/W.
+	 * At IPA 4.0/4.1/4.2, we do not use MCS smart prefetch
+	 *  so keep the fields zero.
+	 */
+	if (ipa3_ctx->ipa_hw_type < IPA_HW_v4_0) {
+		ch_scratch.mhi.max_outstanding_tre =
+			ep_cfg->ipa_if_tlv * ch_props.re_size;
+		ch_scratch.mhi.outstanding_threshold =
+			min(ep_cfg->ipa_if_tlv / 2, 8) * ch_props.re_size;
+	}
 	ch_scratch.mhi.oob_mod_threshold = 4;
-	if (params->ch_ctx_host->brstmode == IPA_MHI_BURST_MODE_DEFAULT ||
-		params->ch_ctx_host->brstmode == IPA_MHI_BURST_MODE_ENABLE) {
-		ch_scratch.mhi.burst_mode_enabled = true;
+
+	if (burst_mode_enabled) {
+		ch_scratch.mhi.burst_mode_enabled = burst_mode_enabled;
 		ch_scratch.mhi.polling_configuration =
 			ipa3_mhi_get_ch_poll_cfg(client, params->ch_ctx_host,
 				(ch_props.ring_len / ch_props.re_size));
@@ -323,6 +344,54 @@ static int ipa_mhi_start_gsi_channel(enum ipa_client_type client,
 
 	*params->mhi = ch_scratch.mhi;
 
+	res = ipa3_enable_data_path(ipa_ep_idx);
+	if (res) {
+		IPA_MHI_ERR("enable data path failed res=%d clnt=%d.\n", res,
+			ipa_ep_idx);
+		goto fail_ep_cfg;
+	}
+
+	if (!ep->skip_ep_cfg) {
+		if (ipa3_cfg_ep(ipa_ep_idx, ipa_ep_cfg)) {
+			IPAERR("fail to configure EP.\n");
+			goto fail_ep_cfg;
+		}
+		if (ipa3_cfg_ep_status(ipa_ep_idx, &ep->status)) {
+			IPAERR("fail to configure status of EP.\n");
+			goto fail_ep_cfg;
+		}
+		IPA_MHI_DBG("ep configuration successful\n");
+	} else {
+		IPA_MHI_DBG("skipping ep configuration\n");
+		if (IPA_CLIENT_IS_PROD(ipa3_ctx->ep[ipa_ep_idx].client) &&
+			ipa3_ctx->ep[ipa_ep_idx].client == IPA_CLIENT_MHI_PROD
+				&& !ipa3_is_mhip_offload_enabled()) {
+			if (ipa3_cfg_ep_seq(ipa_ep_idx,
+						&ipa_ep_cfg->seq)) {
+				IPA_MHI_ERR("fail to configure USB pipe seq\n");
+				goto fail_ep_cfg;
+			}
+		}
+
+	}
+
+	if (IPA_CLIENT_IS_PROD(ep->client) && ep->skip_ep_cfg) {
+		memset(&ep_cfg_ctrl, 0, sizeof(struct ipa_ep_cfg_ctrl));
+		ep_cfg_ctrl.ipa_ep_delay = true;
+		ep->ep_delay_set = true;
+		res = ipa3_cfg_ep_ctrl(ipa_ep_idx, &ep_cfg_ctrl);
+		if (res)
+			IPA_MHI_ERR("client (ep: %d) failed result=%d\n",
+			ipa_ep_idx, res);
+		else
+			IPA_MHI_DBG("client (ep: %d) success\n", ipa_ep_idx);
+	} else {
+		ep->ep_delay_set = false;
+	}
+
+	if (!ep->skip_ep_cfg && IPA_CLIENT_IS_PROD(client))
+		ipa3_install_dflt_flt_rules(ipa_ep_idx);
+
 	IPA_MHI_DBG("Starting channel\n");
 	res = gsi_start_channel(ep->gsi_chan_hdl);
 	if (res) {
@@ -330,9 +399,24 @@ static int ipa_mhi_start_gsi_channel(enum ipa_client_type client,
 		goto fail_ch_start;
 	}
 
+	if (IPA_CLIENT_IS_PROD(ep->client) && ep->skip_ep_cfg &&
+			ipa3_ctx->ipa_endp_delay_wa &&
+			!ipa3_is_mhip_offload_enabled()) {
+		res = gsi_enable_flow_control_ee(ep->gsi_chan_hdl, 0, &code);
+		if (res == GSI_STATUS_SUCCESS) {
+			IPA_MHI_DBG("flow ctrl sussess gsi ch %d code %d\n",
+					ep->gsi_chan_hdl, code);
+		} else {
+			IPA_MHI_DBG("failed to flow ctrll gsi ch %d code %d\n",
+					ep->gsi_chan_hdl, code);
+		}
+	}
+
 	IPA_MHI_FUNC_EXIT();
 	return 0;
 
+fail_ep_cfg:
+	ipa3_disable_data_path(ipa_ep_idx);
 fail_ch_start:
 fail_ch_scratch:
 	gsi_dealloc_channel(ep->gsi_chan_hdl);
@@ -347,7 +431,7 @@ int ipa3_mhi_init_engine(struct ipa_mhi_init_engine *params)
 {
 	int res;
 	struct gsi_device_scratch gsi_scratch;
-	struct ipa_gsi_ep_config *gsi_ep_info;
+	const struct ipa_gsi_ep_config *gsi_ep_info;
 
 	IPA_MHI_FUNC_ENTRY();
 
@@ -356,9 +440,16 @@ int ipa3_mhi_init_engine(struct ipa_mhi_init_engine *params)
 		return -EINVAL;
 	}
 
+	if ((IPA_MHI_MAX_UL_CHANNELS + IPA_MHI_MAX_DL_CHANNELS) >
+		((ipa3_ctx->mhi_evid_limits[1] -
+		ipa3_ctx->mhi_evid_limits[0]) + 1)) {
+		IPAERR("Not enough event rings for MHI\n");
+		ipa_assert();
+		return -EINVAL;
+	}
+
 	/* Initialize IPA MHI engine */
-	gsi_ep_info = ipa_get_gsi_ep_info(
-		ipa_get_ep_mapping(IPA_CLIENT_MHI_PROD));
+	gsi_ep_info = ipa3_get_gsi_ep_info(IPA_CLIENT_MHI_PROD);
 	if (!gsi_ep_info) {
 		IPAERR("MHI PROD has no ep allocated\n");
 		ipa_assert();
@@ -408,6 +499,8 @@ int ipa3_connect_mhi_pipe(struct ipa_mhi_connect_params_internal *in,
 		return -EINVAL;
 	}
 
+	in->start.gsi.evchid += ipa3_ctx->mhi_evid_limits[0];
+
 	client = in->sys->client;
 	ipa_ep_idx = ipa3_get_ep_mapping(client);
 	if (ipa_ep_idx == -1) {
@@ -431,49 +524,22 @@ int ipa3_connect_mhi_pipe(struct ipa_mhi_connect_params_internal *in,
 	ep->keep_ipa_awake = in->sys->keep_ipa_awake;
 
 	res = ipa_mhi_start_gsi_channel(client,
-					ipa_ep_idx, &in->start.gsi);
+					ipa_ep_idx, &in->start.gsi,
+					&in->sys->ipa_ep_cfg);
 	if (res) {
 		IPA_MHI_ERR("ipa_mhi_start_gsi_channel failed %d\n",
 			res);
 		goto fail_start_channel;
 	}
 
-	res = ipa3_enable_data_path(ipa_ep_idx);
-	if (res) {
-		IPA_MHI_ERR("enable data path failed res=%d clnt=%d.\n", res,
-			ipa_ep_idx);
-		goto fail_ep_cfg;
-	}
-
-	if (!ep->skip_ep_cfg) {
-		if (ipa3_cfg_ep(ipa_ep_idx, &in->sys->ipa_ep_cfg)) {
-			IPAERR("fail to configure EP.\n");
-			goto fail_ep_cfg;
-		}
-		if (ipa3_cfg_ep_status(ipa_ep_idx, &ep->status)) {
-			IPAERR("fail to configure status of EP.\n");
-			goto fail_ep_cfg;
-		}
-		IPA_MHI_DBG("ep configuration successful\n");
-	} else {
-		IPA_MHI_DBG("skipping ep configuration\n");
-	}
-
 	*clnt_hdl = ipa_ep_idx;
-
-	if (!ep->skip_ep_cfg && IPA_CLIENT_IS_PROD(client))
-		ipa3_install_dflt_flt_rules(ipa_ep_idx);
-
 	ipa3_ctx->skip_ep_cfg_shadow[ipa_ep_idx] = ep->skip_ep_cfg;
-	IPA_MHI_DBG("client %d (ep: %d) connected\n", client,
-		ipa_ep_idx);
+	IPA_MHI_DBG("client %d (ep: %d) connected\n", client, ipa_ep_idx);
 
 	IPA_MHI_FUNC_EXIT();
 
 	return 0;
 
-fail_ep_cfg:
-	ipa3_disable_data_path(ipa_ep_idx);
 fail_start_channel:
 	memset(ep, 0, offsetof(struct ipa3_ep_context, sys));
 	return -EPERM;
@@ -497,6 +563,7 @@ int ipa3_disconnect_mhi_pipe(u32 clnt_hdl)
 {
 	struct ipa3_ep_context *ep;
 	int res;
+	struct ipa_ep_cfg_ctrl ep_cfg_ctrl;
 
 	IPA_MHI_FUNC_ENTRY();
 
@@ -511,13 +578,26 @@ int ipa3_disconnect_mhi_pipe(u32 clnt_hdl)
 	}
 
 	ep = &ipa3_ctx->ep[clnt_hdl];
-
-	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
-		res = gsi_dealloc_channel(ep->gsi_chan_hdl);
+	if (ep->ep_delay_set) {
+		memset(&ep_cfg_ctrl, 0, sizeof(struct ipa_ep_cfg_ctrl));
+		ep_cfg_ctrl.ipa_ep_delay = false;
+		res = ipa3_cfg_ep_ctrl(clnt_hdl,
+			&ep_cfg_ctrl);
 		if (res) {
-			IPAERR("gsi_dealloc_channel failed %d\n", res);
-			goto fail_reset_channel;
+			IPAERR
+			("client(ep:%d) failed to remove delay res=%d\n",
+				clnt_hdl, res);
+		} else {
+			IPADBG("client (ep: %d) delay removed\n",
+				clnt_hdl);
+			ep->ep_delay_set = false;
 		}
+	}
+
+	res = gsi_dealloc_channel(ep->gsi_chan_hdl);
+	if (res) {
+		IPAERR("gsi_dealloc_channel failed %d\n", res);
+		goto fail_reset_channel;
 	}
 
 	ep->valid = 0;
@@ -538,6 +618,7 @@ int ipa3_mhi_resume_channels_internal(enum ipa_client_type client,
 	int res;
 	int ipa_ep_idx;
 	struct ipa3_ep_context *ep;
+	union __packed gsi_channel_scratch gsi_ch_scratch;
 
 	IPA_MHI_FUNC_ENTRY();
 
@@ -549,12 +630,41 @@ int ipa3_mhi_resume_channels_internal(enum ipa_client_type client,
 	ep = &ipa3_ctx->ep[ipa_ep_idx];
 
 	if (brstmode_enabled && !LPTransitionRejected) {
+
+		res = gsi_read_channel_scratch(ep->gsi_chan_hdl,
+			&gsi_ch_scratch);
+		if (res) {
+			IPA_MHI_ERR("read ch scratch fail %d\n", res);
+			return res;
+		}
+
 		/*
 		 * set polling mode bit to DB mode before
 		 * resuming the channel
+		 *
+		 * For MHI-->IPA pipes:
+		 * when resuming due to transition to M0,
+		 * set the polling mode bit to 0.
+		 * In other cases, restore it's value form
+		 * when you stopped the channel.
+		 * Here, after successful resume client move to M0 state.
+		 * So, by default setting polling mode bit to 0.
+		 *
+		 * For IPA-->MHI pipe:
+		 * always restore the polling mode bit.
 		 */
-		res = gsi_write_channel_scratch(
-			ep->gsi_chan_hdl, ch_scratch);
+		if (IPA_CLIENT_IS_PROD(client))
+			ch_scratch.mhi.polling_mode =
+				IPA_MHI_POLLING_MODE_DB_MODE;
+		else
+			ch_scratch.mhi.polling_mode =
+				gsi_ch_scratch.mhi.polling_mode;
+
+		/* Use GSI update API to not affect non-SWI fields
+		 * inside the scratch while in suspend-resume operation
+		 */
+		res = gsi_update_mhi_channel_scratch(
+			ep->gsi_chan_hdl, ch_scratch.mhi);
 		if (res) {
 			IPA_MHI_ERR("write ch scratch fail %d\n"
 				, res);

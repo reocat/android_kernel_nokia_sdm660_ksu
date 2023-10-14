@@ -1,4 +1,5 @@
-/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -150,8 +151,9 @@ static int32_t msm_vfe40_init_qos_parms(struct vfe_device *vfe_dev,
 	void __iomem *vfebase = vfe_dev->vfe_base;
 	struct device_node *of_node;
 	uint32_t *ds_settings = NULL, *ds_regs = NULL, ds_entries = 0;
-	int32_t i = 0 , rc = 0;
+	int32_t i = 0, rc = 0;
 	uint32_t *qos_settings = NULL, *qos_regs = NULL, qos_entries = 0;
+
 	of_node = vfe_dev->pdev->dev.of_node;
 
 	rc = of_property_read_u32(of_node, qos_parms->entries,
@@ -159,16 +161,13 @@ static int32_t msm_vfe40_init_qos_parms(struct vfe_device *vfe_dev,
 	if (rc < 0 || !qos_entries) {
 		pr_err("%s: NO QOS entries found\n", __func__);
 	} else {
-		qos_settings = kzalloc(sizeof(uint32_t) * qos_entries,
+		qos_settings = kcalloc(qos_entries, sizeof(uint32_t),
 			GFP_KERNEL);
-		if (!qos_settings) {
-			pr_err("%s:%d No memory\n", __func__, __LINE__);
+		if (!qos_settings)
 			return -ENOMEM;
-		}
-		qos_regs = kzalloc(sizeof(uint32_t) * qos_entries,
+		qos_regs = kcalloc(qos_entries, sizeof(uint32_t),
 			GFP_KERNEL);
 		if (!qos_regs) {
-			pr_err("%s:%d No memory\n", __func__, __LINE__);
 			kfree(qos_settings);
 			return -ENOMEM;
 		}
@@ -176,6 +175,8 @@ static int32_t msm_vfe40_init_qos_parms(struct vfe_device *vfe_dev,
 			qos_regs, qos_entries);
 		if (rc < 0) {
 			pr_err("%s: NO QOS BUS BDG info\n", __func__);
+			kfree(qos_settings);
+			kfree(qos_regs);
 		} else {
 			if (qos_parms->settings) {
 				rc = of_property_read_u32_array(of_node,
@@ -184,15 +185,20 @@ static int32_t msm_vfe40_init_qos_parms(struct vfe_device *vfe_dev,
 				if (rc < 0) {
 					pr_err("%s: NO QOS settings\n",
 						__func__);
+					kfree(qos_settings);
+					kfree(qos_regs);
 				} else {
 					for (i = 0; i < qos_entries; i++)
 						msm_camera_io_w(qos_settings[i],
 							vfebase + qos_regs[i]);
+					kfree(qos_settings);
+					kfree(qos_regs);
 				}
+			} else {
+				kfree(qos_settings);
+				kfree(qos_regs);
 			}
 		}
-		kfree(qos_settings);
-		kfree(qos_regs);
 	}
 	rc = of_property_read_u32(of_node, ds_parms->entries,
 		&ds_entries);
@@ -201,14 +207,11 @@ static int32_t msm_vfe40_init_qos_parms(struct vfe_device *vfe_dev,
 	} else {
 		ds_settings = kcalloc(ds_entries, sizeof(uint32_t),
 				GFP_KERNEL);
-		if (!ds_settings) {
-			pr_err("%s:%d No memory\n", __func__, __LINE__);
+		if (!ds_settings)
 			return -ENOMEM;
-		}
-		ds_regs = kzalloc(sizeof(uint32_t) * ds_entries,
+		ds_regs = kcalloc(ds_entries, sizeof(uint32_t),
 				GFP_KERNEL);
 		if (!ds_regs) {
-			pr_err("%s:%d No memory\n", __func__, __LINE__);
 			kfree(ds_settings);
 			return -ENOMEM;
 		}
@@ -216,6 +219,8 @@ static int32_t msm_vfe40_init_qos_parms(struct vfe_device *vfe_dev,
 			ds_regs, ds_entries);
 		if (rc < 0) {
 			pr_err("%s: NO D/S register info\n", __func__);
+			kfree(ds_settings);
+			kfree(ds_regs);
 		} else {
 			if (ds_parms->settings) {
 				rc = of_property_read_u32_array(of_node,
@@ -224,17 +229,20 @@ static int32_t msm_vfe40_init_qos_parms(struct vfe_device *vfe_dev,
 				if (rc < 0) {
 					pr_err("%s: NO D/S settings\n",
 						__func__);
+					kfree(ds_settings);
+					kfree(ds_regs);
 				} else {
 					for (i = 0; i < ds_entries; i++)
 						msm_camera_io_w(ds_settings[i],
 							vfebase + ds_regs[i]);
-					kfree(ds_regs);
-					kfree(ds_settings);
+						kfree(ds_regs);
+						kfree(ds_settings);
 				}
+			} else {
+				kfree(ds_regs);
+				kfree(ds_settings);
 			}
 		}
-		kfree(ds_settings);
-		kfree(ds_regs);
 	}
 	return 0;
 }
@@ -244,8 +252,9 @@ static int32_t msm_vfe40_init_vbif_parms(struct vfe_device *vfe_dev,
 {
 	void __iomem *vfe_vbif_base = vfe_dev->vfe_vbif_base;
 	struct device_node *of_node;
-	int32_t i = 0 , rc = 0;
+	int32_t i = 0, rc = 0;
 	uint32_t *vbif_settings = NULL, *vbif_regs = NULL, vbif_entries = 0;
+
 	of_node = vfe_dev->pdev->dev.of_node;
 
 	rc = of_property_read_u32(of_node, vbif_parms->entries,
@@ -253,16 +262,13 @@ static int32_t msm_vfe40_init_vbif_parms(struct vfe_device *vfe_dev,
 	if (rc < 0 || !vbif_entries) {
 		pr_err("%s: NO VBIF entries found\n", __func__);
 	} else {
-		vbif_settings = kzalloc(sizeof(uint32_t) * vbif_entries,
+		vbif_settings = kcalloc(vbif_entries, sizeof(uint32_t),
 			GFP_KERNEL);
-		if (!vbif_settings) {
-			pr_err("%s:%d No memory\n", __func__, __LINE__);
+		if (!vbif_settings)
 			return -ENOMEM;
-		}
-		vbif_regs = kzalloc(sizeof(uint32_t) * vbif_entries,
+		vbif_regs = kcalloc(vbif_entries, sizeof(uint32_t),
 			GFP_KERNEL);
 		if (!vbif_regs) {
-			pr_err("%s:%d No memory\n", __func__, __LINE__);
 			kfree(vbif_settings);
 			return -ENOMEM;
 		}
@@ -406,6 +412,7 @@ static void msm_vfe40_process_violation_status(
 	struct vfe_device *vfe_dev)
 {
 	uint32_t violation_status = vfe_dev->error_info.violation_status;
+
 	if (!violation_status)
 		return;
 
@@ -435,7 +442,7 @@ static void msm_vfe40_process_violation_status(
 	if (violation_status & (1 << 10))
 		pr_err("%s: chroma enhance violation\n", __func__);
 	if (violation_status & (1 << 11))
-		pr_err("%s: chroma supress mce violation\n", __func__);
+		pr_err("%s: chroma suppress mce violation\n", __func__);
 	if (violation_status & (1 << 12))
 		pr_err("%s: skin enhance violation\n", __func__);
 	if (violation_status & (1 << 13))
@@ -473,6 +480,7 @@ static void msm_vfe40_process_violation_status(
 static void msm_vfe40_process_error_status(struct vfe_device *vfe_dev)
 {
 	uint32_t error_status1 = vfe_dev->error_info.error_mask1;
+
 	if (error_status1 & (1 << 0)) {
 		pr_err_ratelimited("%s: vfe %d camif error status: 0x%x\n",
 			__func__, vfe_dev->pdev->id,
@@ -491,9 +499,8 @@ static void msm_vfe40_process_error_status(struct vfe_device *vfe_dev)
 		pr_err_ratelimited("%s: realign buf cb overflow\n", __func__);
 	if (error_status1 & (1 << 6))
 		pr_err_ratelimited("%s: realign buf cr overflow\n", __func__);
-	if (error_status1 & (1 << 7)) {
+	if (error_status1 & (1 << 7))
 		msm_vfe40_process_violation_status(vfe_dev);
-	}
 	if (error_status1 & (1 << 9)) {
 		vfe_dev->stats->imagemaster0_overflow++;
 		pr_err_ratelimited("%s: image master 0 bus overflow\n",
@@ -563,7 +570,7 @@ static void msm_vfe40_process_error_status(struct vfe_device *vfe_dev)
 			__func__);
 	}
 
-	/* Update ab/ib values for any overflow that may have occured*/
+	/* Update ab/ib values for any overflow that may have occurred*/
 	if ((error_status1 >> 9) & 0x7FFF)
 		msm_isp_update_last_overflow_ab_ib(vfe_dev);
 }
@@ -641,11 +648,11 @@ static void msm_vfe40_process_reg_update(struct vfe_device *vfe_dev,
 					MSM_ISP_COMP_IRQ_REG_UPD);
 				if (vfe_dev->axi_data.src_info[i].stream_count
 									== 0 &&
-					vfe_dev->axi_data.src_info[i].
-						raw_stream_count == 0 &&
-					vfe_dev->axi_data.src_info[i].active)
-					vfe_dev->hw_info->vfe_ops.core_ops.
-						reg_update(vfe_dev, i);
+					vfe_dev->axi_data.src_info[i]
+						.raw_stream_count == 0
+					&& vfe_dev->axi_data.src_info[i].active)
+					vfe_dev->hw_info->vfe_ops.core_ops
+						.reg_update(vfe_dev, i);
 				break;
 			case VFE_RAW_0:
 			case VFE_RAW_1:
@@ -723,8 +730,8 @@ static void msm_vfe40_reg_update(struct vfe_device *vfe_dev,
 	} else if (!vfe_dev->is_split ||
 		((frame_src == VFE_PIX_0) &&
 		(vfe_dev->axi_data.src_info[VFE_PIX_0].stream_count == 0) &&
-		(vfe_dev->axi_data.src_info[VFE_PIX_0].
-					raw_stream_count == 0)) ||
+		(vfe_dev->axi_data.src_info[VFE_PIX_0]
+			.raw_stream_count == 0)) ||
 		(frame_src >= VFE_RAW_0 && frame_src <= VFE_SRC_MAX)) {
 		msm_camera_io_w_mb(update_mask,
 			vfe_dev->vfe_base + 0x378);
@@ -748,8 +755,7 @@ static void msm_vfe40_process_epoch_irq(struct vfe_device *vfe_dev,
 		msm_isp_update_error_frame_count(vfe_dev);
 		msm_isp_notify(vfe_dev, ISP_EVENT_SOF, VFE_PIX_0, ts);
 		if (vfe_dev->axi_data.src_info[VFE_PIX_0].raw_stream_count > 0
-			&& vfe_dev->axi_data.src_info[VFE_PIX_0].
-			stream_count == 0) {
+		  && vfe_dev->axi_data.src_info[VFE_PIX_0].stream_count == 0) {
 			ISP_DBG("%s: SOF IRQ\n", __func__);
 			msm_isp_notify(vfe_dev, ISP_EVENT_SOF, VFE_PIX_0, ts);
 			msm_isp_process_reg_upd_epoch_irq(vfe_dev, VFE_PIX_0,
@@ -777,8 +783,8 @@ static long msm_vfe40_reset_hardware(struct vfe_device *vfe_dev,
 		msm_camera_io_w(0x7FFFFFFF, vfe_dev->vfe_base + 0x30);
 		msm_camera_io_w(0xFEFFFEFF, vfe_dev->vfe_base + 0x34);
 		msm_camera_io_w(0x1, vfe_dev->vfe_base + 0x24);
-		vfe_dev->hw_info->vfe_ops.axi_ops.
-			reload_wm(vfe_dev, vfe_dev->vfe_base, 0x0003FFFF);
+		vfe_dev->hw_info->vfe_ops.axi_ops.reload_wm(
+			vfe_dev, vfe_dev->vfe_base, 0x0003FFFF);
 	}
 
 
@@ -813,17 +819,12 @@ static void msm_vfe40_axi_enable_wm(void __iomem *vfe_base,
 	uint8_t wm_idx, uint8_t enable)
 {
 	uint32_t val;
+
 	val = msm_camera_io_r(vfe_base + VFE40_WM_BASE(wm_idx));
 	if (enable)
 		val |= 0x1;
 	else
 		val &= ~0x1;
-
-	trace_printk("%s:%d  wm_idx %d enable %d\n",
-		__func__, __LINE__,
-		wm_idx,
-		enable);
-
 	msm_camera_io_w_mb(val,
 		vfe_base + VFE40_WM_BASE(wm_idx));
 }
@@ -839,8 +840,9 @@ static void msm_vfe40_axi_cfg_comp_mask(struct vfe_device *vfe_dev,
 
 	comp_mask = msm_camera_io_r(vfe_dev->vfe_base + 0x40);
 	comp_mask &= ~(0x7F << (comp_mask_index * 8));
-	comp_mask |= (axi_data->composite_info[comp_mask_index].
-		stream_composite_mask << (comp_mask_index * 8));
+	comp_mask |= (axi_data->composite_info[comp_mask_index]
+				.stream_composite_mask <<
+				(comp_mask_index * 8));
 
 	msm_camera_io_w(comp_mask, vfe_dev->vfe_base + 0x40);
 	msm_vfe40_config_irq(vfe_dev, 1 << (comp_mask_index + 25), 0,
@@ -900,8 +902,6 @@ static void msm_vfe40_cfg_framedrop(struct vfe_device *vfe_dev,
 		msm_camera_io_w(temp | (framedrop_period - 1) << 2,
 		vfe_base + VFE40_WM_BASE(stream_info->wm[vfe_idx][i]) + 0xC);
 	}
-
-	msm_camera_io_w_mb(0x1, vfe_base + 0x378);
 }
 
 static void msm_vfe40_clear_framedrop(struct vfe_device *vfe_dev,
@@ -930,7 +930,7 @@ static int32_t msm_vfe40_convert_bpp_to_reg(int32_t bpp, uint32_t *bpp_reg)
 		*bpp_reg = 1 << 1;
 		break;
 	default:
-		pr_err("%s:%d invalid bpp %d", __func__, __LINE__, bpp);
+		pr_err("%s:%d invalid bpp %d\n", __func__, __LINE__, bpp);
 		return -EINVAL;
 	}
 	return rc;
@@ -1056,7 +1056,8 @@ static int msm_vfe40_start_fetch_engine(struct vfe_device *vfe_dev,
 	}
 	memset(&mapped_info, 0, sizeof(struct msm_isp_buffer_mapped_info));
 	/* There is other option of passing buffer address from user,
-		in such case, driver needs to map the buffer and use it*/
+	 *in such case, driver needs to map the buffer and use it
+	 */
 	vfe_dev->fetch_engine_info.session_id = fe_cfg->session_id;
 	vfe_dev->fetch_engine_info.stream_id = fe_cfg->stream_id;
 	vfe_dev->fetch_engine_info.offline_mode = fe_cfg->offline_mode;
@@ -1084,7 +1085,7 @@ static int msm_vfe40_start_fetch_engine(struct vfe_device *vfe_dev,
 		rc = vfe_dev->buf_mgr->ops->map_buf(vfe_dev->buf_mgr,
 			&mapped_info, fe_cfg->fd);
 	if (rc < 0) {
-			pr_err("%s: can not map buffer\n", __func__);
+		pr_err("%s: can not map buffer\n", __func__);
 		return -EINVAL;
 	}
 	}
@@ -1173,7 +1174,7 @@ static void msm_vfe40_cfg_fetch_engine(struct vfe_device *vfe_dev,
 	struct msm_vfe_fetch_engine_cfg *fe_cfg = NULL;
 
 	if (pix_cfg->input_mux != EXTERNAL_READ) {
-		pr_err("%s: Invalid mux configuration - mux: %d",
+		pr_err("%s: Invalid mux configuration - mux: %d\n",
 			__func__, pix_cfg->input_mux);
 		return;
 	}
@@ -1238,6 +1239,10 @@ static void msm_vfe40_cfg_fetch_engine(struct vfe_device *vfe_dev,
 	case V4L2_PIX_FMT_P16GBRG10:
 	case V4L2_PIX_FMT_P16GRBG10:
 	case V4L2_PIX_FMT_P16RGGB10:
+	case V4L2_PIX_FMT_P16BGGR12:
+	case V4L2_PIX_FMT_P16GBRG12:
+	case V4L2_PIX_FMT_P16GRBG12:
+	case V4L2_PIX_FMT_P16RGGB12:
 		main_unpack_pattern = 0xB210;
 		break;
 	default:
@@ -1248,7 +1253,6 @@ static void msm_vfe40_cfg_fetch_engine(struct vfe_device *vfe_dev,
 		vfe_dev->vfe_base + 0x248);
 	msm_camera_io_w(0xF, vfe_dev->vfe_base + 0x264);
 
-	return;
 }
 
 static void msm_vfe40_cfg_testgen(struct vfe_device *vfe_dev,
@@ -1391,9 +1395,9 @@ static void msm_vfe40_cfg_camif(struct vfe_device *vfe_dev,
 	msm_camera_io_w(first_line << 16 | last_line,
 	vfe_dev->vfe_base + 0x308);
 
-	/*configure EPOCH0: 20 lines, and
-	* configure EPOCH1: epoch_line1 before EOF
-	*/
+	/* configure EPOCH0: 20 lines, and
+	 * configure EPOCH1: epoch_line1 before EOF
+	 */
 	msm_camera_io_w_mb(0x140000 | epoch_line1,
 		vfe_dev->vfe_base + 0x318);
 	pr_debug("%s:%d: epoch_line1: %d\n",
@@ -1504,7 +1508,6 @@ static void msm_vfe40_cfg_input_mux(struct vfe_device *vfe_dev,
 			__func__, pix_cfg->input_mux);
 		break;
 	}
-	return;
 }
 
 static void msm_vfe40_update_camif_state(struct vfe_device *vfe_dev,
@@ -1512,6 +1515,7 @@ static void msm_vfe40_update_camif_state(struct vfe_device *vfe_dev,
 {
 	uint32_t val;
 	bool bus_en, vfe_en;
+
 	if (update_state == NO_UPDATE)
 		return;
 
@@ -1523,11 +1527,11 @@ static void msm_vfe40_update_camif_state(struct vfe_device *vfe_dev,
 				MSM_ISP_IRQ_ENABLE);
 
 		bus_en =
-			((vfe_dev->axi_data.
-			src_info[VFE_PIX_0].raw_stream_count > 0) ? 1 : 0);
+			((vfe_dev->axi_data.src_info[VFE_PIX_0].raw_stream_count
+				> 0) ? 1 : 0);
 		vfe_en =
-			((vfe_dev->axi_data.
-			src_info[VFE_PIX_0].stream_count > 0) ? 1 : 0);
+			((vfe_dev->axi_data.src_info[VFE_PIX_0].stream_count
+				> 0) ? 1 : 0);
 		val = msm_camera_io_r(vfe_dev->vfe_base + 0x2F8);
 		val &= 0xFFFFFF3F;
 		val = val | bus_en << 7 | vfe_en << 6;
@@ -1539,7 +1543,7 @@ static void msm_vfe40_update_camif_state(struct vfe_device *vfe_dev,
 		msm_camera_io_w_mb(0x1, vfe_dev->vfe_base + 0x2F4);
 		vfe_dev->axi_data.src_info[VFE_PIX_0].active = 1;
 	} else if (update_state == DISABLE_CAMIF ||
-		DISABLE_CAMIF_IMMEDIATELY == update_state) {
+		update_state == DISABLE_CAMIF_IMMEDIATELY) {
 		uint32_t poll_val;
 
 		if (vfe_dev->axi_data.src_info[VFE_PIX_0].input_mux == TESTGEN)
@@ -1574,6 +1578,7 @@ static void msm_vfe40_cfg_rdi_reg(
 {
 	uint8_t rdi = input_src - VFE_RAW_0;
 	uint32_t rdi_reg_cfg;
+
 	rdi_reg_cfg = msm_camera_io_r(
 		vfe_dev->vfe_base + VFE40_RDI_BASE(0));
 	rdi_reg_cfg &= ~(BIT(16 + rdi));
@@ -1618,24 +1623,16 @@ static void msm_vfe40_axi_cfg_wm_reg(
 		burst_len = VFE40_BURST_LEN;
 	}
 
-	trace_printk("%s:%d state %d src %d stream id %d session_id %x frame_base %d\n",
-	__func__, __LINE__,
-	stream_info->state,
-	stream_info->stream_src,
-	stream_info->stream_id,
-	stream_info->session_id,
-	stream_info->frame_based);
-
 	if (!stream_info->frame_based) {
 		msm_camera_io_w(0x0, vfe_dev->vfe_base + wm_base);
 		/*WR_IMAGE_SIZE*/
 		val =
 			((msm_isp_cal_word_per_line(
 				stream_info->output_format,
-				stream_info->plane_cfg[vfe_idx][plane_idx].
-				output_width)+1)/2 - 1) << 16 |
-				(stream_info->plane_cfg[vfe_idx][plane_idx].
-				output_height - 1);
+				stream_info->plane_cfg[vfe_idx][plane_idx]
+					.output_width)+1)/2 - 1) << 16 |
+				(stream_info->plane_cfg[vfe_idx][
+					plane_idx].output_height - 1);
 		msm_camera_io_w(val, vfe_dev->vfe_base + wm_base + 0x14);
 
 		/*WR_BUFFER_CFG*/
@@ -1663,7 +1660,6 @@ static void msm_vfe40_axi_cfg_wm_reg(
 	msm_camera_io_w(0xFFFFFFFF,
 		vfe_dev->vfe_base + wm_base + 0x20);
 	/* TD: Add IRQ subsample pattern */
-	return;
 }
 
 static void msm_vfe40_axi_clear_wm_reg(
@@ -1683,7 +1679,6 @@ static void msm_vfe40_axi_clear_wm_reg(
 	msm_camera_io_w(val, vfe_dev->vfe_base + wm_base + 0x18);
 	/*WR_IRQ_SUBSAMPLE_PATTERN*/
 	msm_camera_io_w(val, vfe_dev->vfe_base + wm_base + 0x20);
-	return;
 }
 
 static void msm_vfe40_axi_cfg_wm_xbar_reg(
@@ -1747,7 +1742,6 @@ static void msm_vfe40_axi_cfg_wm_xbar_reg(
 	xbar_reg_cfg |= (xbar_cfg << VFE40_XBAR_SHIFT(wm));
 	msm_camera_io_w(xbar_reg_cfg,
 		vfe_dev->vfe_base + VFE40_XBAR_BASE(wm));
-	return;
 }
 
 static void msm_vfe40_axi_clear_wm_xbar_reg(
@@ -1780,6 +1774,7 @@ static void msm_vfe40_update_ping_pong_addr(
 	int32_t buf_size)
 {
 	uint32_t paddr32 = (paddr & 0xFFFFFFFF);
+
 	msm_camera_io_w(paddr32, vfe_base +
 		VFE40_PING_PONG_BASE(wm_idx, pingpong_bit));
 }
@@ -1845,8 +1840,8 @@ static void msm_vfe40_axi_restart(struct vfe_device *vfe_dev,
 	memset(&vfe_dev->error_info, 0, sizeof(vfe_dev->error_info));
 	atomic_set(&vfe_dev->error_info.overflow_state, NO_OVERFLOW);
 	if (enable_camif)
-		vfe_dev->hw_info->vfe_ops.core_ops.
-			update_camif_state(vfe_dev, ENABLE_CAMIF);
+		vfe_dev->hw_info->vfe_ops.core_ops.update_camif_state(vfe_dev,
+			ENABLE_CAMIF);
 }
 
 static uint32_t msm_vfe40_get_wm_mask(
@@ -1955,7 +1950,6 @@ static void msm_vfe40_stats_cfg_comp_mask(struct vfe_device *vfe_dev,
 		atomic_read(&stats_data->stats_comp_mask[0]),
 		atomic_read(&stats_data->stats_comp_mask[1]));
 
-	return;
 }
 
 static void msm_vfe40_stats_cfg_wm_irq_mask(
@@ -2268,13 +2262,15 @@ struct msm_vfe_hardware_info vfe40_hw_info = {
 			.process_camif_irq = msm_vfe40_process_input_irq,
 			.process_reset_irq = msm_vfe40_process_reset_irq,
 			.process_halt_irq = msm_vfe40_process_halt_irq,
-			.process_reset_irq = msm_vfe40_process_reset_irq,
 			.process_reg_update = msm_vfe40_process_reg_update,
 			.process_axi_irq = msm_isp_process_axi_irq,
 			.process_stats_irq = msm_isp_process_stats_irq,
 			.process_epoch_irq = msm_vfe40_process_epoch_irq,
 			.config_irq = msm_vfe40_config_irq,
 			.preprocess_camif_irq = msm_isp47_preprocess_camif_irq,
+			.dual_config_irq = NULL,
+			.clear_dual_irq_status =
+				NULL,
 		},
 		.axi_ops = {
 			.reload_wm = msm_vfe40_axi_reload_wm,
@@ -2367,6 +2363,9 @@ struct msm_vfe_hardware_info vfe40_hw_info = {
 			.init_bw_mgr = msm_vfe47_init_bandwidth_mgr,
 			.deinit_bw_mgr = msm_vfe47_deinit_bandwidth_mgr,
 			.update_bw = msm_vfe47_update_bandwidth,
+			.set_dual_vfe_mode = NULL,
+			.clear_dual_vfe_mode = NULL,
+			.get_dual_sync_platform_data = NULL,
 		}
 	},
 	.dmi_reg_offset = 0x918,
@@ -2390,7 +2389,6 @@ static struct platform_driver vfe40_driver = {
 	.probe = vfe_hw_probe,
 	.driver = {
 		.name = "msm_vfe40",
-		.owner = THIS_MODULE,
 		.of_match_table = msm_vfe40_dt_match,
 	},
 };
@@ -2409,4 +2407,3 @@ module_init(msm_vfe40_init_module);
 module_exit(msm_vfe40_exit_module);
 MODULE_DESCRIPTION("MSM VFE40 driver");
 MODULE_LICENSE("GPL v2");
-

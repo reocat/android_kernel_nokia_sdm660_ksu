@@ -1,15 +1,5 @@
-/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2013-2014, 2018, 2020, The Linux Foundation. All rights reserved. */
 
 #include <linux/types.h>
 #include <linux/delay.h>
@@ -46,11 +36,11 @@ static bool mhl_check_tmds_enabled(struct mhl_tx_ctrl *mhl_ctrl)
 	if (mhl_ctrl && mhl_ctrl->hdmi_mhl_ops) {
 		struct msm_hdmi_mhl_ops *ops = mhl_ctrl->hdmi_mhl_ops;
 		struct platform_device *pdev = mhl_ctrl->pdata->hdmi_pdev;
+
 		return (ops->tmds_enabled(pdev) == true);
-	} else {
-		pr_err("%s: invalid input\n", __func__);
-		return false;
 	}
+	pr_err("%s: invalid input\n", __func__);
+	return false;
 }
 
 static void mhl_print_devcap(u8 offset, u8 devcap)
@@ -113,7 +103,7 @@ static int mhl_flag_scrpd_burst_req(struct mhl_tx_ctrl *mhl_ctrl,
 				mhl_ctrl->scrpd_busy = true;
 				mhl_ctrl->wr_burst_pending = true;
 			} else if (req->payload.data[0] == MHL_INT_GRT_WRT) {
-					mhl_ctrl->scrpd_busy = true;
+				mhl_ctrl->scrpd_busy = true;
 			}
 		}
 	}
@@ -157,6 +147,7 @@ void mhl_msc_send_work(struct work_struct *work)
 						   &cmd_env->msc_cmd_msg);
 			if (ret == -EAGAIN) {
 				int retry = 2;
+
 				while (retry--) {
 					ret = mhl_send_msc_command(
 						mhl_ctrl,
@@ -299,6 +290,7 @@ int mhl_msc_send_set_int(struct mhl_tx_ctrl *mhl_ctrl,
 			 u8 offset, u8 mask, u8 prior)
 {
 	struct msc_command_struct req;
+
 	req.command = MHL_SET_INT;
 	req.offset = offset;
 	req.payload.data[0] = mask;
@@ -309,6 +301,7 @@ int mhl_msc_send_write_stat(struct mhl_tx_ctrl *mhl_ctrl,
 			    u8 offset, u8 value)
 {
 	struct msc_command_struct req;
+
 	req.command = MHL_WRITE_STAT;
 	req.offset = offset;
 	req.payload.data[0] = value;
@@ -319,6 +312,7 @@ static int mhl_msc_write_burst(struct mhl_tx_ctrl *mhl_ctrl,
 	u8 offset, u8 *data, u8 length)
 {
 	struct msc_command_struct req;
+
 	if (!mhl_ctrl)
 		return -EFAULT;
 
@@ -338,6 +332,7 @@ int mhl_msc_send_msc_msg(struct mhl_tx_ctrl *mhl_ctrl,
 			 u8 sub_cmd, u8 cmd_data)
 {
 	struct msc_command_struct req;
+
 	req.command = MHL_MSC_MSG;
 	req.payload.data[0] = sub_cmd;
 	req.payload.data[1] = cmd_data;
@@ -355,6 +350,7 @@ static int mhl_msc_send_prior_msc_msg(struct mhl_tx_ctrl *mhl_ctrl,
 				      u8 sub_cmd, u8 cmd_data)
 {
 	struct msc_command_struct req;
+
 	req.command = MHL_MSC_MSG;
 	req.payload.data[0] = sub_cmd;
 	req.payload.data[1] = cmd_data;
@@ -364,6 +360,7 @@ static int mhl_msc_send_prior_msc_msg(struct mhl_tx_ctrl *mhl_ctrl,
 int mhl_msc_read_devcap(struct mhl_tx_ctrl *mhl_ctrl, u8 offset)
 {
 	struct msc_command_struct req;
+
 	if (offset < 0 || offset > 15)
 		return -EFAULT;
 	req.command = MHL_READ_DEVCAP;
@@ -493,6 +490,7 @@ int mhl_msc_recv_msc_msg(struct mhl_tx_ctrl *mhl_ctrl,
 			 u8 sub_cmd, u8 cmd_data)
 {
 	int rc = 0;
+
 	switch (sub_cmd) {
 	case MHL_MSC_MSG_RCP:
 		pr_debug("MHL: receive RCP(0x%02x)\n", cmd_data);
@@ -521,6 +519,7 @@ int mhl_msc_recv_set_int(struct mhl_tx_ctrl *mhl_ctrl,
 			 u8 offset, u8 set_int)
 {
 	int prior;
+
 	if (offset >= 2)
 		return -EFAULT;
 
@@ -553,7 +552,7 @@ int mhl_msc_recv_set_int(struct mhl_tx_ctrl *mhl_ctrl,
 		}
 		if (set_int & MHL_INT_GRT_WRT) {
 			/* SET_INT: GRT_WRT */
-			pr_debug("%s: recvd req to permit/grant write",
+			pr_debug("%s: recvd req to permit/grant write\n",
 				 __func__);
 			complete_all(&mhl_ctrl->req_write_done);
 			mhl_msc_write_burst(

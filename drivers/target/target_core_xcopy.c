@@ -25,6 +25,7 @@
 #include <linux/spinlock.h>
 #include <linux/list.h>
 #include <linux/configfs.h>
+#include <linux/ratelimit.h>
 #include <scsi/scsi_proto.h>
 #include <asm/unaligned.h>
 
@@ -38,6 +39,8 @@
 #include "target_core_xcopy.h"
 
 static struct workqueue_struct *xcopy_wq = NULL;
+
+static sense_reason_t target_parse_xcopy_cmd(struct xcopy_op *xop);
 
 static int target_xcopy_gen_naa_ieee(struct se_device *dev, unsigned char *buf)
 {
@@ -232,11 +235,14 @@ static int target_xcopy_parse_target_descriptors(struct se_cmd *se_cmd,
 	if (offset != 0) {
 		pr_err("XCOPY target descriptor list length is not"
 			" multiple of %d\n", XCOPY_TARGET_DESC_LEN);
+		*sense_ret = TCM_UNSUPPORTED_TARGET_DESC_TYPE_CODE;
 		return -EINVAL;
 	}
-	if (tdll > 64) {
+	if (tdll > RCR_OP_MAX_TARGET_DESC_COUNT * XCOPY_TARGET_DESC_LEN) {
 		pr_err("XCOPY target descriptor supports a maximum"
 			" two src/dest descriptors, tdll: %hu too large..\n", tdll);
+		/* spc4r37 6.4.3.4 CSCD DESCRIPTOR LIST LENGTH field */
+		*sense_ret = TCM_TOO_MANY_TARGET_DESCS;
 		return -EINVAL;
 	}
 	/*
@@ -265,6 +271,7 @@ static int target_xcopy_parse_target_descriptors(struct se_cmd *se_cmd,
 		default:
 			pr_err("XCOPY unsupported descriptor type code:"
 					" 0x%02x\n", desc[0]);
+			*sense_ret = TCM_UNSUPPORTED_TARGET_DESC_TYPE_CODE;
 			goto out;
 		}
 	}
@@ -326,6 +333,14 @@ static int target_xcopy_parse_segdesc_02(struct se_cmd *se_cmd, struct xcopy_op 
 
 	xop->stdi = get_unaligned_be16(&desc[4]);
 	xop->dtdi = get_unaligned_be16(&desc[6]);
+
+	if (xop->stdi > XCOPY_CSCD_DESC_ID_LIST_OFF_MAX ||
+	    xop->dtdi > XCOPY_CSCD_DESC_ID_LIST_OFF_MAX) {
+		pr_err("XCOPY segment desc 0x02: unsupported CSCD ID > 0x%x; stdi: %hu dtdi: %hu\n",
+			XCOPY_CSCD_DESC_ID_LIST_OFF_MAX, xop->stdi, xop->dtdi);
+		return -EINVAL;
+	}
+
 	pr_debug("XCOPY seg desc 0x02: desc_len: %hu stdi: %hu dtdi: %hu, DC: %d\n",
 		desc_len, xop->stdi, xop->dtdi, dc);
 
@@ -337,9 +352,7 @@ static int target_xcopy_parse_segdesc_02(struct se_cmd *se_cmd, struct xcopy_op 
 		(unsigned long long)xop->dst_lba);
 
 	if (dc != 0) {
-		xop->dbl = (desc[29] & 0xff) << 16;
-		xop->dbl |= (desc[30] & 0xff) << 8;
-		xop->dbl |= desc[31] & 0xff;
+		xop->dbl = get_unaligned_be24(&desc[29]);
 
 		pr_debug("XCOPY seg desc 0x02: DC=1 w/ dbl: %u\n", xop->dbl);
 	}
@@ -359,6 +372,14 @@ static int target_xcopy_parse_segment_descriptors(struct se_cmd *se_cmd,
 	if (offset != 0) {
 		pr_err("XCOPY segment descriptor list length is not"
 			" multiple of %d\n", XCOPY_SEGMENT_DESC_LEN);
+		*sense_ret = TCM_UNSUPPORTED_SEGMENT_DESC_TYPE_CODE;
+		return -EINVAL;
+	}
+	if (sdll > RCR_OP_MAX_SG_DESC_COUNT * XCOPY_SEGMENT_DESC_LEN) {
+		pr_err("XCOPY supports %u segment descriptor(s), sdll: %u too"
+			" large..\n", RCR_OP_MAX_SG_DESC_COUNT, sdll);
+		/* spc4r37 6.4.3.5 SEGMENT DESCRIPTOR LIST LENGTH field */
+		*sense_ret = TCM_TOO_MANY_SEGMENT_DESCS;
 		return -EINVAL;
 	}
 	if (sdll > RCR_OP_MAX_SG_DESC_COUNT * XCOPY_SEGMENT_DESC_LEN) {
@@ -386,6 +407,7 @@ static int target_xcopy_parse_segment_descriptors(struct se_cmd *se_cmd,
 		default:
 			pr_err("XCOPY unsupported segment descriptor"
 				"type: 0x%02x\n", desc[0]);
+			*sense_ret = TCM_UNSUPPORTED_SEGMENT_DESC_TYPE_CODE;
 			goto out;
 		}
 	}
@@ -486,6 +508,8 @@ static const struct target_core_fabric_ops xcopy_pt_tfo = {
 
 int target_xcopy_setup_pt(void)
 {
+	int ret;
+
 	xcopy_wq = alloc_workqueue("xcopy_wq", WQ_MEM_RECLAIM, 0);
 	if (!xcopy_wq) {
 		pr_err("Unable to allocate xcopy_wq\n");
@@ -503,10 +527,9 @@ int target_xcopy_setup_pt(void)
 	INIT_LIST_HEAD(&xcopy_pt_nacl.acl_list);
 	INIT_LIST_HEAD(&xcopy_pt_nacl.acl_sess_list);
 	memset(&xcopy_pt_sess, 0, sizeof(struct se_session));
-	INIT_LIST_HEAD(&xcopy_pt_sess.sess_list);
-	INIT_LIST_HEAD(&xcopy_pt_sess.sess_acl_list);
-	INIT_LIST_HEAD(&xcopy_pt_sess.sess_cmd_list);
-	spin_lock_init(&xcopy_pt_sess.sess_cmd_lock);
+	ret = transport_init_session(&xcopy_pt_sess);
+	if (ret < 0)
+		return ret;
 
 	xcopy_pt_nacl.se_tpg = &xcopy_pt_tpg;
 	xcopy_pt_nacl.nacl_sess = &xcopy_pt_sess;
@@ -618,7 +641,7 @@ static int target_xcopy_setup_pt_cmd(
 
 	if (alloc_mem) {
 		rc = target_alloc_sgl(&cmd->t_data_sg, &cmd->t_data_nents,
-				      cmd->data_length, false);
+				      cmd->data_length, false, false);
 		if (rc < 0) {
 			ret = rc;
 			goto out;
@@ -799,13 +822,24 @@ static int target_xcopy_write_destination(
 static void target_xcopy_do_work(struct work_struct *work)
 {
 	struct xcopy_op *xop = container_of(work, struct xcopy_op, xop_work);
-	struct se_device *src_dev = xop->src_dev, *dst_dev = xop->dst_dev;
 	struct se_cmd *ec_cmd = xop->xop_se_cmd;
-	sector_t src_lba = xop->src_lba, dst_lba = xop->dst_lba, end_lba;
+	struct se_device *src_dev, *dst_dev;
+	sector_t src_lba, dst_lba, end_lba;
 	unsigned int max_sectors;
-	int rc;
-	unsigned short nolb = xop->nolb, cur_nolb, max_nolb, copied_nolb = 0;
+	int rc = 0;
+	unsigned short nolb, cur_nolb, max_nolb, copied_nolb = 0;
 
+	if (target_parse_xcopy_cmd(xop) != TCM_NO_SENSE)
+		goto err_free;
+
+	if (WARN_ON_ONCE(!xop->src_dev) || WARN_ON_ONCE(!xop->dst_dev))
+		goto err_free;
+
+	src_dev = xop->src_dev;
+	dst_dev = xop->dst_dev;
+	src_lba = xop->src_lba;
+	dst_lba = xop->dst_lba;
+	nolb = xop->nolb;
 	end_lba = src_lba + nolb;
 	/*
 	 * Break up XCOPY I/O into hw_max_sectors sized I/O based on the
@@ -873,6 +907,8 @@ static void target_xcopy_do_work(struct work_struct *work)
 
 out:
 	xcopy_pt_undepend_remotedev(xop);
+
+err_free:
 	kfree(xop);
 	/*
 	 * Don't override an error scsi status if it has already been set
@@ -885,38 +921,22 @@ out:
 	target_complete_cmd(ec_cmd, ec_cmd->scsi_status);
 }
 
-sense_reason_t target_do_xcopy(struct se_cmd *se_cmd)
+/*
+ * Returns TCM_NO_SENSE upon success or a sense code != TCM_NO_SENSE if parsing
+ * fails.
+ */
+static sense_reason_t target_parse_xcopy_cmd(struct xcopy_op *xop)
 {
-	struct se_device *dev = se_cmd->se_dev;
-	struct xcopy_op *xop = NULL;
+	struct se_cmd *se_cmd = xop->xop_se_cmd;
 	unsigned char *p = NULL, *seg_desc;
-	unsigned int list_id, list_id_usage, sdll, inline_dl, sa;
+	unsigned int list_id, list_id_usage, sdll, inline_dl;
 	sense_reason_t ret = TCM_INVALID_PARAMETER_LIST;
 	int rc;
 	unsigned short tdll;
 
-	if (!dev->dev_attrib.emulate_3pc) {
-		pr_err("EXTENDED_COPY operation explicitly disabled\n");
-		return TCM_UNSUPPORTED_SCSI_OPCODE;
-	}
-
-	sa = se_cmd->t_task_cdb[1] & 0x1f;
-	if (sa != 0x00) {
-		pr_err("EXTENDED_COPY(LID4) not supported\n");
-		return TCM_UNSUPPORTED_SCSI_OPCODE;
-	}
-
-	xop = kzalloc(sizeof(struct xcopy_op), GFP_KERNEL);
-	if (!xop) {
-		pr_err("Unable to allocate xcopy_op\n");
-		return TCM_OUT_OF_RESOURCES;
-	}
-	xop->xop_se_cmd = se_cmd;
-
 	p = transport_kmap_data_sg(se_cmd);
 	if (!p) {
 		pr_err("transport_kmap_data_sg() failed in target_do_xcopy\n");
-		kfree(xop);
 		return TCM_OUT_OF_RESOURCES;
 	}
 
@@ -928,10 +948,24 @@ sense_reason_t target_do_xcopy(struct se_cmd *se_cmd)
 	 */
 	tdll = get_unaligned_be16(&p[2]);
 	sdll = get_unaligned_be32(&p[8]);
+	if (tdll + sdll > RCR_OP_MAX_DESC_LIST_LEN) {
+		pr_err("XCOPY descriptor list length %u exceeds maximum %u\n",
+		       tdll + sdll, RCR_OP_MAX_DESC_LIST_LEN);
+		ret = TCM_PARAMETER_LIST_LENGTH_ERROR;
+		goto out;
+	}
 
 	inline_dl = get_unaligned_be32(&p[12]);
 	if (inline_dl != 0) {
 		pr_err("XCOPY with non zero inline data length\n");
+		goto out;
+	}
+
+	if (se_cmd->data_length < (XCOPY_HDR_LEN + tdll + sdll + inline_dl)) {
+		pr_err("XCOPY parameter truncation: data length %u too small "
+			"for tdll: %hu sdll: %u inline_dl: %u\n",
+			se_cmd->data_length, tdll, sdll, inline_dl);
+		ret = TCM_PARAMETER_LIST_LENGTH_ERROR;
 		goto out;
 	}
 
@@ -971,16 +1005,55 @@ sense_reason_t target_do_xcopy(struct se_cmd *se_cmd)
 	pr_debug("XCOPY: Processed %d target descriptors, length: %u\n", rc,
 				rc * XCOPY_TARGET_DESC_LEN);
 	transport_kunmap_data_sg(se_cmd);
-
-	INIT_WORK(&xop->xop_work, target_xcopy_do_work);
-	queue_work(xcopy_wq, &xop->xop_work);
 	return TCM_NO_SENSE;
 
 out:
 	if (p)
 		transport_kunmap_data_sg(se_cmd);
-	kfree(xop);
 	return ret;
+}
+
+sense_reason_t target_do_xcopy(struct se_cmd *se_cmd)
+{
+	struct se_device *dev = se_cmd->se_dev;
+	struct xcopy_op *xop;
+	unsigned int sa;
+
+	if (!dev->dev_attrib.emulate_3pc) {
+		pr_err("EXTENDED_COPY operation explicitly disabled\n");
+		return TCM_UNSUPPORTED_SCSI_OPCODE;
+	}
+
+	sa = se_cmd->t_task_cdb[1] & 0x1f;
+	if (sa != 0x00) {
+		pr_err("EXTENDED_COPY(LID4) not supported\n");
+		return TCM_UNSUPPORTED_SCSI_OPCODE;
+	}
+
+	if (se_cmd->data_length == 0) {
+		target_complete_cmd(se_cmd, SAM_STAT_GOOD);
+		return TCM_NO_SENSE;
+	}
+	if (se_cmd->data_length < XCOPY_HDR_LEN) {
+		pr_err("XCOPY parameter truncation: length %u < hdr_len %u\n",
+				se_cmd->data_length, XCOPY_HDR_LEN);
+		return TCM_PARAMETER_LIST_LENGTH_ERROR;
+	}
+
+	xop = kzalloc(sizeof(struct xcopy_op), GFP_KERNEL);
+	if (!xop)
+		goto err;
+	xop->xop_se_cmd = se_cmd;
+	INIT_WORK(&xop->xop_work, target_xcopy_do_work);
+	if (WARN_ON_ONCE(!queue_work(xcopy_wq, &xop->xop_work)))
+		goto free;
+	return TCM_NO_SENSE;
+
+free:
+	kfree(xop);
+
+err:
+	return TCM_OUT_OF_RESOURCES;
 }
 
 static sense_reason_t target_rcr_operating_parameters(struct se_cmd *se_cmd)

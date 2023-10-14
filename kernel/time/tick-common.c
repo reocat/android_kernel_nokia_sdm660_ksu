@@ -15,6 +15,7 @@
 #include <linux/err.h>
 #include <linux/hrtimer.h>
 #include <linux/interrupt.h>
+#include <linux/nmi.h>
 #include <linux/percpu.h>
 #include <linux/profile.h>
 #include <linux/sched.h>
@@ -178,8 +179,8 @@ static void tick_setup_device(struct tick_device *td,
 			      struct clock_event_device *newdev, int cpu,
 			      const struct cpumask *cpumask)
 {
-	ktime_t next_event;
 	void (*handler)(struct clock_event_device *) = NULL;
+	ktime_t next_event = 0;
 
 	/*
 	 * First device setup ?
@@ -195,7 +196,7 @@ static void tick_setup_device(struct tick_device *td,
 			else
 				tick_do_timer_cpu = TICK_DO_TIMER_NONE;
 			tick_next_period = ktime_get();
-			tick_period = ktime_set(0, NSEC_PER_SEC / HZ);
+			tick_period = NSEC_PER_SEC / HZ;
 		}
 
 		/*
@@ -490,6 +491,8 @@ void tick_freeze(void)
 	if (tick_freeze_depth == num_online_cpus()) {
 		trace_suspend_resume(TPS("timekeeping_freeze"),
 				     smp_processor_id(), true);
+		system_state = SYSTEM_SUSPEND;
+		sched_clock_suspend();
 		timekeeping_suspend();
 	} else {
 		tick_suspend_local();
@@ -513,9 +516,12 @@ void tick_unfreeze(void)
 
 	if (tick_freeze_depth == num_online_cpus()) {
 		timekeeping_resume();
+		sched_clock_resume();
+		system_state = SYSTEM_RUNNING;
 		trace_suspend_resume(TPS("timekeeping_freeze"),
 				     smp_processor_id(), false);
 	} else {
+		touch_softlockup_watchdog();
 		tick_resume_local();
 	}
 

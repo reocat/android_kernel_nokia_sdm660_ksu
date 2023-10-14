@@ -1,4 +1,5 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2016, 2018-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,8 +13,9 @@
 
 #define pr_fmt(fmt) "MSM-CPP-SOC %s:%d " fmt, __func__, __LINE__
 
-#include <linux/clk/msm-clk.h>
-#include <linux/clk/msm-clk-provider.h>
+#include <linux/clk.h>
+#include <linux/clk/qcom.h>
+//#include <linux/clk/msm-clk-provider.h>
 #include <linux/delay.h>
 #include <media/msmb_pproc.h>
 #include "msm_cpp.h"
@@ -101,12 +103,12 @@ static int cpp_get_clk_freq_tbl_dt(struct cpp_device *cpp_dev)
 	of_node = cpp_dev->pdev->dev.of_node;
 	min_clk_rate = cpp_dev->min_clk_rate;
 	hw_info = &cpp_dev->hw_info;
+	pr_debug("min_clk_rate=%d\n", min_clk_rate);
 
 	if ((hw_info == NULL) || (of_node == NULL)) {
 		pr_err("Invalid hw_info %pK or ofnode %pK\n", hw_info, of_node);
 		rc = -EINVAL;
 		goto err;
-
 	}
 	count = of_property_count_u32_elems(of_node, "qcom,src-clock-rates");
 	if ((count == 0) || (count > MAX_FREQ_TBL)) {
@@ -124,10 +126,8 @@ static int cpp_get_clk_freq_tbl_dt(struct cpp_device *cpp_dev)
 
 	rc = of_property_read_u32_array(of_node, "qcom,src-clock-rates",
 		rates, count);
-	if (rc) {
+	if (rc)
 		rc = -EINVAL;
-		goto mem_free;
-	}
 
 	for (i = 0; i < count; i++) {
 		pr_debug("entry=%d\n", rates[i]);
@@ -145,8 +145,6 @@ static int cpp_get_clk_freq_tbl_dt(struct cpp_device *cpp_dev)
 	pr_debug("%s: idx %d\n", __func__, idx);
 	hw_info->freq_tbl_count = idx;
 
-mem_free:
-	devm_kfree(&cpp_dev->pdev->dev, rates);
 err:
 	return rc;
 }
@@ -188,7 +186,7 @@ int msm_cpp_set_micro_clk(struct cpp_device *cpp_dev)
 
 int msm_update_freq_tbl(struct cpp_device *cpp_dev)
 {
-	uint32_t msm_cpp_core_clk_idx;
+	int msm_cpp_core_clk_idx;
 	int rc = 0;
 
 	msm_cpp_core_clk_idx = msm_cpp_get_clock_index(cpp_dev, "cpp_core_clk");

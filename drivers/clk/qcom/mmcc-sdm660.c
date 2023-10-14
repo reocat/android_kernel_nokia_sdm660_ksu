@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2018 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2016-2018, 2020 The Linux Foundation. All rights reserved.
  */
 
 #include <linux/kernel.h>
@@ -34,7 +26,6 @@
 #include "reset.h"
 #include "vdd-level-660.h"
 
-#define F(f, s, h, m, n) { (f), (s), (2 * (h) - 1), (m), (n) }
 #define F_SLEW(f, s, h, m, n, src_freq) { (f), (s), (2 * (h) - 1), (m), (n), \
 				(src_freq) }
 
@@ -61,9 +52,9 @@ static DEFINE_VDD_REGULATORS(vdd_mx, VDD_DIG_NUM, 1, vdd_corner);
 static DEFINE_VDD_REGULATORS(vdda, VDDA_NUM, 1, vdda_levels);
 
 enum {
+	P_CXO,
 	P_CORE_BI_PLL_TEST_SE,
 	P_CORE_PI_SLEEP_CLK,
-	P_CXO,
 	P_DP_PHY_PLL_LINK_CLK,
 	P_DP_PHY_PLL_VCO_DIV,
 	P_DSI0_PHY_PLL_OUT_BYTECLK,
@@ -113,8 +104,8 @@ static const struct parent_map mmcc_parent_map_1[] = {
 
 static const char * const mmcc_parent_names_1[] = {
 	"xo",
-	"dsi0pll_byte_clk_mux",
-	"dsi1pll_byte_clk_mux",
+	"dsi0_phy_pll_out_byteclk",
+	"dsi1_phy_pll_out_byteclk",
 	"core_bi_pll_test_se",
 };
 
@@ -207,8 +198,8 @@ static const struct parent_map mmcc_parent_map_6[] = {
 
 static const char * const mmcc_parent_names_6[] = {
 	"xo",
-	"dp_link_2x_clk_divsel_five",
-	"dp_vco_divided_clk_src_mux",
+	"dp_phy_pll_link_clk",
+	"dp_phy_pll_vco_div_clk",
 	"core_bi_pll_test_se",
 };
 
@@ -241,8 +232,8 @@ static const struct parent_map mmcc_parent_map_8[] = {
 
 static const char * const mmcc_parent_names_8[] = {
 	"xo",
-	"dsi0pll_pixel_clk_mux",
-	"dsi1pll_pixel_clk_mux",
+	"dsi0_phy_pll_out_dsiclk",
+	"dsi1_phy_pll_out_dsiclk",
 	"core_bi_pll_test_se",
 };
 
@@ -331,6 +322,7 @@ static const char * const mmcc_parent_names_12[] = {
 /* Voteable PLL */
 static struct clk_alpha_pll mmpll0_pll_out_main = {
 	.offset = 0xc000,
+	.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_DEFAULT],
 	.clkr = {
 		.enable_reg = 0x1f0,
 		.enable_mask = BIT(0),
@@ -347,6 +339,7 @@ static struct clk_alpha_pll mmpll0_pll_out_main = {
 
 static struct clk_alpha_pll mmpll6_pll_out_main =  {
 	.offset = 0xf0,
+	.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_DEFAULT],
 	.clkr = {
 		.enable_reg = 0x1f0,
 		.enable_mask = BIT(2),
@@ -369,7 +362,7 @@ static struct pll_vco vco[] = {
 	{ 250000000, 500000000, 3 },
 };
 
-static const struct pll_config mmpll10_config = {
+static const struct alpha_pll_config mmpll10_config = {
 	.l = 0x1e,
 	.config_ctl_val = 0x00004289,
 	.main_output_mask = 0x1,
@@ -377,6 +370,7 @@ static const struct pll_config mmpll10_config = {
 
 static struct clk_alpha_pll mmpll10_pll_out_main = {
 	.offset = 0x190,
+	.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_DEFAULT],
 	.clkr = {
 		.hw.init = &(struct clk_init_data){
 			.name = "mmpll10_pll_out_main",
@@ -392,7 +386,7 @@ static struct pll_vco mmpll3_vco[] = {
 	{ 750000000, 1500000000, 1 },
 };
 
-static const struct pll_config mmpll3_config = {
+static const struct alpha_pll_config mmpll3_config = {
 	.l = 0x2e,
 	.config_ctl_val = 0x4001055b,
 	.vco_val = 0x1 << 20,
@@ -404,6 +398,7 @@ static struct clk_alpha_pll mmpll3_pll_out_main = {
 	.offset = 0x0,
 	.vco_table = mmpll3_vco,
 	.num_vco = ARRAY_SIZE(mmpll3_vco),
+	.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_DEFAULT],
 	.clkr = {
 		.hw.init = &(struct clk_init_data){
 			.name = "mmpll3_pll_out_main",
@@ -416,7 +411,7 @@ static struct clk_alpha_pll mmpll3_pll_out_main = {
 	},
 };
 
-static const struct pll_config mmpll4_config = {
+static const struct alpha_pll_config mmpll4_config = {
 	.l = 0x28,
 	.config_ctl_val = 0x4001055b,
 	.vco_val = 0x2 << 20,
@@ -428,6 +423,7 @@ static struct clk_alpha_pll mmpll4_pll_out_main = {
 	.offset = 0x50,
 	.vco_table = vco,
 	.num_vco = ARRAY_SIZE(vco),
+	.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_DEFAULT],
 	.clkr = {
 		.hw.init = &(struct clk_init_data){
 			.name = "mmpll4_pll_out_main",
@@ -440,10 +436,10 @@ static struct clk_alpha_pll mmpll4_pll_out_main = {
 	},
 };
 
-static const struct pll_config mmpll5_config = {
+static const struct alpha_pll_config mmpll5_config = {
 	.l = 0x2a,
 	.config_ctl_val = 0x4001055b,
-	.alpha_u = 0xf8,
+	.alpha_hi = 0xf8,
 	.alpha_en_mask = BIT(24),
 	.vco_val = 0x2 << 20,
 	.vco_mask = 0x3 << 20,
@@ -454,6 +450,7 @@ static struct clk_alpha_pll mmpll5_pll_out_main = {
 	.offset = 0xa0,
 	.vco_table = vco,
 	.num_vco = ARRAY_SIZE(vco),
+	.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_DEFAULT],
 	.clkr = {
 		.hw.init = &(struct clk_init_data){
 			.name = "mmpll5_pll_out_main",
@@ -466,7 +463,7 @@ static struct clk_alpha_pll mmpll5_pll_out_main = {
 	},
 };
 
-static const struct pll_config mmpll7_config = {
+static const struct alpha_pll_config mmpll7_config = {
 	.l = 0x32,
 	.config_ctl_val = 0x4001055b,
 	.vco_val = 0x2 << 20,
@@ -478,6 +475,7 @@ static struct clk_alpha_pll mmpll7_pll_out_main = {
 	.offset = 0x140,
 	.vco_table = vco,
 	.num_vco = ARRAY_SIZE(vco),
+	.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_DEFAULT],
 	.clkr = {
 		.hw.init = &(struct clk_init_data){
 			.name = "mmpll7_pll_out_main",
@@ -490,9 +488,9 @@ static struct clk_alpha_pll mmpll7_pll_out_main = {
 	},
 };
 
-static const struct pll_config mmpll8_config = {
+static const struct alpha_pll_config mmpll8_config = {
 	.l = 0x30,
-	.alpha_u = 0x70,
+	.alpha_hi = 0x70,
 	.alpha_en_mask = BIT(24),
 	.config_ctl_val = 0x4001055b,
 	.vco_val = 0x2 << 20,
@@ -504,6 +502,7 @@ static struct clk_alpha_pll mmpll8_pll_out_main = {
 	.offset = 0x1c0,
 	.vco_table = vco,
 	.num_vco = ARRAY_SIZE(vco),
+	.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_DEFAULT],
 	.clkr = {
 		.hw.init = &(struct clk_init_data){
 			.name = "mmpll8_pll_out_main",
@@ -1039,10 +1038,7 @@ static const struct freq_tbl ftbl_mclk0_clk_src[] = {
 	F(9600000, P_CXO, 2, 0, 0),
 	F(16666667, P_GPLL0_OUT_MAIN_DIV, 2, 1, 9),
 	F(19200000, P_CXO, 1, 0, 0),
-	F(22000000, P_GPLL0_OUT_MAIN_DIV, 1, 11, 150), //ZZDC-keming: add for PL2 main camera desense.20170826
-	F(23076923, P_GPLL0_OUT_MAIN_DIV, 1, 2, 26),	//SW4-RL-Camera-front camera desence issue-00+_20170823
 	F(24000000, P_MMPLL10_PLL_OUT_MAIN, 1, 1, 24),
-	F(25000000, P_GPLL0_OUT_MAIN_DIV, 1, 1, 12),
 	F(33333333, P_GPLL0_OUT_MAIN_DIV, 1, 1, 9),
 	F(48000000, P_GPLL0_OUT_MAIN, 1, 2, 25),
 	F(66666667, P_GPLL0_OUT_MAIN, 1, 1, 9),
@@ -1284,7 +1280,7 @@ static struct clk_rcg2 video_core_clk_src = {
 	.hid_width = 5,
 	.parent_map = mmcc_parent_map_12,
 	.freq_tbl = ftbl_video_core_clk_src,
-	.flags = FORCE_ENABLE_RCGR,
+	.flags = FORCE_ENABLE_RCG,
 	.clkr.hw.init = &(struct clk_init_data){
 		.name = "video_core_clk_src",
 		.parent_names = mmcc_parent_names_12,
@@ -2802,7 +2798,7 @@ static struct clk_branch mmss_snoc_dvm_axi_clk = {
 
 static struct clk_branch mmss_video_ahb_clk = {
 	.halt_reg = 0x1030,
-	.halt_check = BRANCH_HALT,
+	.halt_check = BRANCH_HALT_VOTED,
 	.clkr = {
 		.enable_reg = 0x1030,
 		.enable_mask = BIT(0),
@@ -3054,7 +3050,7 @@ static int mmcc_660_probe(struct platform_device *pdev)
 {
 	int ret = 0;
 	struct regmap *regmap;
-	bool is_sdm630 = 0;
+	bool is_sdm630 = false;
 
 	regmap = qcom_cc_map(pdev, &mmcc_660_desc);
 	if (IS_ERR(regmap))
@@ -3113,7 +3109,7 @@ static int mmcc_660_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	dev_info(&pdev->dev, "Registered MMSS clocks\n");
+	dev_err(&pdev->dev, "Registered MMSS clocks\n");
 
 	return ret;
 }

@@ -1,24 +1,18 @@
-/* Copyright (c) 2010-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2010-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #ifndef __KGSL_PWRCTRL_H
 #define __KGSL_PWRCTRL_H
 
+#include <linux/clk.h>
 #include <linux/pm_qos.h>
 #include <soc/qcom/cx_ipeak.h>
 
 /*****************************************************************************
-** power flags
-*****************************************************************************/
+ * power flags
+ ****************************************************************************/
 #define KGSL_PWRFLAGS_ON   1
 #define KGSL_PWRFLAGS_OFF  0
 
@@ -26,7 +20,11 @@
 
 #define KGSL_PWR_ON	0xFFFF
 
-#define KGSL_MAX_CLKS 14
+#define KGSL_GPU_CFG_PATH_OFF	0
+#define KGSL_GPU_CFG_PATH_LOW	1
+#define KGSL_GPU_CFG_PATH_HIGH	2
+
+#define KGSL_MAX_CLKS 18
 #define KGSL_MAX_REGULATORS 2
 
 #define KGSL_MAX_PWRLEVELS 10
@@ -113,6 +111,7 @@ struct kgsl_pwrlevel {
 	unsigned int bus_freq;
 	unsigned int bus_min;
 	unsigned int bus_max;
+	unsigned int acd_level;
 };
 
 struct kgsl_regulator {
@@ -121,23 +120,36 @@ struct kgsl_regulator {
 };
 
 /**
+ * struct gpu_cx_ipeak_client - Struct holding CX Ipeak client info.
+ * @client:    Client handle used for CX Ipeak vote
+ * @freq:      GPU frequency threshold for which this client need to vote.
+ */
+struct gpu_cx_ipeak_client {
+	struct cx_ipeak_client *client;
+	unsigned int freq;
+};
+
+/**
  * struct kgsl_pwrctrl - Power control settings for a KGSL device
  * @interrupt_num - The interrupt number for the device
  * @grp_clks - Array of clocks structures that we control
  * @power_flags - Control flags for power
  * @pwrlevels - List of supported power levels
+ * @nb - Notifier block to receive GPU OPP change event
  * @active_pwrlevel - The currently active power level
  * @previous_pwrlevel - The power level before transition
  * @thermal_pwrlevel - maximum powerlevel constraint from thermal
+ * @thermal_pwrlevel_floor - minimum powerlevel constraint from thermal
  * @default_pwrlevel - device wake up power level
  * @max_pwrlevel - maximum allowable powerlevel per the user
  * @min_pwrlevel - minimum allowable powerlevel per the user
  * @num_pwrlevels - number of available power levels
+ * @throttle_mask - LM throttle mask
  * @interval_timeout - timeout in jiffies to be idle before a power event
  * @clock_times - Each GPU frequency's accumulated active time in us
  * @regulators - array of pointers to kgsl_regulator structs
  * @pcl - bus scale identifier
- * @ocmem - ocmem bus scale identifier
+ * @gpu_cfg - CPU to GPU AHB path bus scale identifier
  * @irq_name - resource name for the IRQ
  * @clk_stats - structure of clock statistics
  * @l2pc_cpus_mask - mask to avoid L2PC on masked CPUs
@@ -162,15 +174,15 @@ struct kgsl_regulator {
  * @thermal_timer - Timer for thermal cycling
  * @thermal_timeout - Cycling timeout for switching between frequencies
  * @thermal_cycle - Is thermal cycling enabled
- * @thermal_highlow - flag for swithcing between high and low frequency
+ * @thermal_highlow - flag for switching between high and low frequency
  * @limits - list head for limits
  * @limits_lock - spin lock to protect limits list
  * @sysfs_pwr_limit - pointer to the sysfs limits node
+ * @cx_ipeak_pwr_limit - pointer to the cx_ipeak limits node
+ * @cooling_pwr_limit - pointer to the cooling framework limits node
  * isense_clk_indx - index of isense clock, 0 if no isense
  * isense_clk_on_level - isense clock rate is XO rate below this level.
- * tsens_name - pointer to temperature sensor name of GPU temperature sensor
- * gpu_cx_ipeak - pointer to cx ipeak client used by GPU
- * gpu_cx_ipeak_clk - GPU threshold frequency to call cx ipeak driver API
+ * gpu_cx_ipeak_client - CX Ipeak clients used by GPU
  */
 
 struct kgsl_pwrctrl {
@@ -182,19 +194,22 @@ struct kgsl_pwrctrl {
 	unsigned long power_flags;
 	unsigned long ctrl_flags;
 	struct kgsl_pwrlevel pwrlevels[KGSL_MAX_PWRLEVELS];
+	struct notifier_block nb;
 	unsigned int active_pwrlevel;
 	unsigned int previous_pwrlevel;
 	unsigned int thermal_pwrlevel;
+	unsigned int thermal_pwrlevel_floor;
 	unsigned int default_pwrlevel;
 	unsigned int wakeup_maxpwrlevel;
 	unsigned int max_pwrlevel;
 	unsigned int min_pwrlevel;
 	unsigned int num_pwrlevels;
+	unsigned int throttle_mask;
 	unsigned long interval_timeout;
 	u64 clock_times[KGSL_MAX_PWRLEVELS];
 	struct kgsl_regulator regulators[KGSL_MAX_REGULATORS];
 	uint32_t pcl;
-	uint32_t ocmem_pcl;
+	uint32_t gpu_cfg;
 	const char *irq_name;
 	struct kgsl_clk_stats clk_stats;
 	unsigned int l2pc_cpus_mask;
@@ -223,16 +238,16 @@ struct kgsl_pwrctrl {
 	struct list_head limits;
 	spinlock_t limits_lock;
 	struct kgsl_pwr_limit *sysfs_pwr_limit;
+	struct kgsl_pwr_limit *cx_ipeak_pwr_limit;
+	struct kgsl_pwr_limit *cooling_pwr_limit;
 	unsigned int gpu_bimc_int_clk_freq;
 	bool gpu_bimc_interface_enabled;
-	const char *tsens_name;
-	struct cx_ipeak_client *gpu_cx_ipeak;
-	unsigned int gpu_cx_ipeak_clk;
+	struct gpu_cx_ipeak_client gpu_ipeak_client[2];
 };
 
 int kgsl_pwrctrl_init(struct kgsl_device *device);
 void kgsl_pwrctrl_close(struct kgsl_device *device);
-void kgsl_timer(unsigned long data);
+void kgsl_timer(struct timer_list *t);
 void kgsl_idle_check(struct work_struct *work);
 void kgsl_pre_hwaccess(struct kgsl_device *device);
 void kgsl_pwrctrl_pwrlevel_change(struct kgsl_device *device,
@@ -242,6 +257,12 @@ void kgsl_pwrctrl_buslevel_update(struct kgsl_device *device,
 int kgsl_pwrctrl_init_sysfs(struct kgsl_device *device);
 void kgsl_pwrctrl_uninit_sysfs(struct kgsl_device *device);
 int kgsl_pwrctrl_change_state(struct kgsl_device *device, int state);
+int kgsl_clk_set_rate(struct kgsl_device *device,
+	unsigned int pwrlevel);
+unsigned int kgsl_pwrctrl_adjust_pwrlevel(struct kgsl_device *device,
+	unsigned int new_level);
+void kgsl_pwrctrl_set_thermal_cycle(struct kgsl_device *device,
+	unsigned int new_level);
 
 static inline unsigned long kgsl_get_clkrate(struct clk *clk)
 {
@@ -268,4 +289,8 @@ void kgsl_pwrctrl_set_constraint(struct kgsl_device *device,
 			struct kgsl_pwr_constraint *pwrc, uint32_t id);
 void kgsl_pwrctrl_update_l2pc(struct kgsl_device *device,
 			unsigned long timeout_us);
+int kgsl_pwrctrl_set_default_gpu_pwrlevel(struct kgsl_device *device);
+void kgsl_pwrctrl_disable_unused_opp(struct kgsl_device *device,
+		struct device *dev);
+
 #endif /* __KGSL_PWRCTRL_H */

@@ -1,15 +1,5 @@
-/* Copyright (c) 2013-2018, 2020, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2013-2018, 2020-2021, The Linux Foundation. All rights reserved. */
 
 #include <linux/kernel.h>
 #include <linux/pm_runtime.h>
@@ -23,7 +13,7 @@
 #include "mdss_dsi_clk.h"
 #include <linux/interrupt.h>
 
-#define MAX_RECOVERY_TRIALS 3
+#define MAX_RECOVERY_TRIALS 10
 #define MAX_SESSIONS 2
 
 #define SPLIT_MIXER_OFFSET 0x800
@@ -33,9 +23,6 @@
 #define CMD_MODE_IDLE_TIMEOUT msecs_to_jiffies(16 * 4)
 #define INPUT_EVENT_HANDLER_DELAY_USECS (16000 * 4)
 #define AUTOREFRESH_MAX_FRAME_CNT 6
-
-//SW4-HL-Display-BBox-04+_20161227
-#define BBOX_LCM_WAIT4PINGPONG_TIMEOUT do {printk("BBox;%s: LCM wait4pingpong timeout\n", __func__); printk("BBox::UEC;0::4\n");} while (0);
 
 static DEFINE_MUTEX(cmd_clk_mtx);
 
@@ -471,23 +458,23 @@ static inline void __enable_rd_ptr_from_te(char __iomem *pingpong_base)
 }
 
 /*
-* __disable_autorefresh - disables autorefresh feature in the hw.
-*
-* To disable autorefresh, driver needs to make sure no transactions are
-* on-going; for ensuring this, driver must:
-*
-* 1. Disable listening to the external TE (this gives extra time before
-*     trigger next transaction).
-* 2. Wait for any on-going transaction (wait for ping pong done interrupt).
-* 3. Disable auto-refresh.
-* 4. Re-enable listening to the external panel TE.
-*
-* So it is responsability of the caller of this function to only call to disable
-* autorefresh if no hw transaction is on-going (wait for ping pong) and if
-* the listening for the external TE is disabled in the tear check logic (this
-* to prevent any race conditions with the hw), as mentioned in the above
-* steps.
-*/
+ * __disable_autorefresh - disables autorefresh feature in the hw.
+ *
+ * To disable autorefresh, driver needs to make sure no transactions are
+ * on-going; for ensuring this, driver must:
+ *
+ * 1. Disable listening to the external TE (this gives extra time before
+ *     trigger next transaction).
+ * 2. Wait for any on-going transaction (wait for ping pong done interrupt).
+ * 3. Disable auto-refresh.
+ * 4. Re-enable listening to the external panel TE.
+ *
+ * So it is responsability of the caller of this function to only call to
+ * disable autorefresh if no hw transaction is on-going (wait for ping pong)
+ * and if the listening for the external TE is disabled in the tear check logic
+ * (this to prevent any race conditions with the hw), as mentioned in the above
+ * steps.
+ */
 static inline void __disable_autorefresh(char __iomem *pingpong_base)
 {
 	mdss_mdp_pingpong_write(pingpong_base,
@@ -699,7 +686,7 @@ int mdss_mdp_get_split_display_ctls(struct mdss_mdp_ctl **ctl,
 				 */
 				pr_err("%s cannot find master ctl\n",
 					__func__);
-				BUG();
+				WARN_ON(!(*sctl));
 			}
 			/*
 			 * We have both controllers but sctl has the Master,
@@ -862,7 +849,7 @@ int mdss_mdp_resource_control(struct mdss_mdp_ctl *ctl, u32 sw_event)
 			/* we must be ON by the end of kickoff */
 			pr_err("%s unexpected power state during:%s\n",
 				__func__, get_sw_event_name(sw_event));
-			BUG();
+			WARN_ON(1);
 		}
 		mutex_unlock(&ctl->rsrc_lock);
 		break;
@@ -870,7 +857,7 @@ int mdss_mdp_resource_control(struct mdss_mdp_ctl *ctl, u32 sw_event)
 		if (mdp5_data->resources_state != MDP_RSRC_CTL_STATE_ON) {
 			pr_err("%s unexpected power state during:%s\n",
 				__func__, get_sw_event_name(sw_event));
-			BUG();
+			WARN_ON(1);
 		}
 
 		/* Check that no pending kickoff is on-going */
@@ -891,7 +878,7 @@ int mdss_mdp_resource_control(struct mdss_mdp_ctl *ctl, u32 sw_event)
 		 * 3. no autorefresh is enabled
 		 * 4. no commit is pending
 		 */
-		if ((PERF_STATUS_DONE == status) &&
+		if ((status == PERF_STATUS_DONE) &&
 			!ctx->intf_stopped &&
 			(ctx->autorefresh_state == MDP_AUTOREFRESH_OFF) &&
 			!ctl->mfd->atomic_commit_pending) {
@@ -907,7 +894,7 @@ int mdss_mdp_resource_control(struct mdss_mdp_ctl *ctl, u32 sw_event)
 				schedule_work(&ctx->gate_clk_work);
 
 			/* start work item to shut down after delay */
-			queue_delayed_work(system_power_efficient_wq,
+			schedule_delayed_work(
 					&ctx->delayed_off_clk_work,
 					CMD_MODE_IDLE_TIMEOUT);
 		}
@@ -1071,8 +1058,7 @@ int mdss_mdp_resource_control(struct mdss_mdp_ctl *ctl, u32 sw_event)
 			 * reached. This is to prevent the case where early wake
 			 * up is called but no frame update is sent.
 			 */
-			queue_delayed_work(system_power_efficient_wq,
-                                &ctx->delayed_off_clk_work,
+			schedule_delayed_work(&ctx->delayed_off_clk_work,
 				      CMD_MODE_IDLE_TIMEOUT);
 			pr_debug("off work scheduled\n");
 		}
@@ -1095,7 +1081,7 @@ static bool mdss_mdp_cmd_is_autorefresh_enabled(struct mdss_mdp_ctl *mctl)
 
 	/* check the ctl to make sure the lock was initialized */
 	if (!ctx || !ctx->ctl)
-		return 0;
+		return false;
 
 	mutex_lock(&ctx->autorefresh_lock);
 	if (ctx->autorefresh_state == MDP_AUTOREFRESH_ON)
@@ -1336,14 +1322,19 @@ static int mdss_mdp_cmd_intf_recovery(void *data, int event)
 		return -EINVAL;
 
 	/*
-	 * Currently, only intf_fifo_underflow is
+	 * Currently, intf_fifo_overflow is not
 	 * supported for recovery sequence for command
 	 * mode DSI interface
 	 */
-	if (event != MDP_INTF_DSI_CMD_FIFO_UNDERFLOW) {
+	if (event == MDP_INTF_DSI_VIDEO_FIFO_OVERFLOW) {
 		pr_warn("%s: unsupported recovery event:%d\n",
 					__func__, event);
 		return -EPERM;
+	}
+
+	if (event == MDP_INTF_DSI_PANEL_DEAD) {
+		mdss_fb_report_panel_dead(ctx->ctl->mfd);
+		return 0;
 	}
 
 	if (atomic_read(&ctx->koff_cnt)) {
@@ -2026,7 +2017,6 @@ int mdss_mdp_cmd_reconfigure_splash_done(struct mdss_mdp_ctl *ctl,
 	struct mdss_mdp_ctl *sctl = NULL;
 	struct mdss_mdp_cmd_ctx *sctx = NULL;
 	struct dsi_panel_clk_ctrl clk_ctrl;
-	int ret = 0;
 
 	/* Get both controllers in the correct order for dual displays */
 	mdss_mdp_get_split_display_ctls(&ctl, &sctl);
@@ -2062,7 +2052,7 @@ int mdss_mdp_cmd_reconfigure_splash_done(struct mdss_mdp_ctl *ctl,
 	else if (pdata->next && is_pingpong_split(ctl->mfd))
 		pdata->next->panel_info.cont_splash_enabled = 0;
 
-	return ret;
+	return 0;
 }
 
 static int __mdss_mdp_wait4pingpong(struct mdss_mdp_cmd_ctx *ctx)
@@ -2103,7 +2093,7 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 	struct mdss_mdp_cmd_ctx *ctx;
 	struct mdss_panel_data *pdata;
 	unsigned long flags;
-	int rc = 0;
+	int rc = 0, te_irq;
 
 	ctx = (struct mdss_mdp_cmd_ctx *) ctl->intf_ctx[MASTER_CTX];
 	if (!ctx) {
@@ -2126,6 +2116,7 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 
 	if (rc <= 0) {
 		u32 status, mask;
+
 		mask = mdss_mdp_get_irq_mask(MDSS_MDP_IRQ_TYPE_PING_PONG_COMP,
 				ctx->current_pp_num);
 		status = mask & readl_relaxed(ctl->mdata->mdp_base +
@@ -2159,7 +2150,8 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 				atomic_read(&ctx->koff_cnt));
 
 		/* enable TE irq to check if it is coming from the panel */
-		panel_update_te_irq(pdata, true);
+		te_irq = gpio_to_irq(pdata->panel_te_gpio);
+		enable_irq(te_irq);
 
 		/* wait for 20ms to ensure we are getting the next TE */
 		usleep_range(20000, 20010);
@@ -2168,7 +2160,6 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 		rc = wait_for_completion_timeout(&pdata->te_done, KOFF_TIMEOUT);
 
 		if (!rc) {
-			BBOX_LCM_WAIT4PINGPONG_TIMEOUT	//SW4-HL-Display-BBox-04+_20161227
 			MDSS_XLOG(0xbac);
 			mdss_fb_report_panel_dead(ctl->mfd);
 		} else if (ctx->pp_timeout_report_cnt == 0) {
@@ -2183,7 +2174,7 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 		}
 
 		/* disable te irq */
-		panel_update_te_irq(pdata, false);
+		disable_irq_nosync(te_irq);
 
 		ctx->pp_timeout_report_cnt++;
 		rc = -EPERM;
@@ -2253,9 +2244,9 @@ static void mdss_mdp_cmd_dsc_reconfig(struct mdss_mdp_ctl *ctl)
 	pinfo = &ctl->panel_data->panel_info;
 	if (pinfo->compression_mode != COMPRESSION_DSC) {
 		/*
-		* Check for a dynamic resolution switch from DSC On to
-		* DSC Off and call mdss_mdp_ctl_dsc_setup to disable DSC
-		*/
+		 * Check for a dynamic resolution switch from DSC On to
+		 * DSC Off and call mdss_mdp_ctl_dsc_setup to disable DSC
+		 */
 		if (ctl->pending_mode_switch == SWITCH_RESOLUTION) {
 			if (ctl->mixer_left && ctl->mixer_left->dsc_enabled)
 				changed = true;
@@ -3156,7 +3147,7 @@ static int mdss_mdp_cmd_kickoff(struct mdss_mdp_ctl *ctl, void *arg)
 	if (ctx->autorefresh_state == MDP_AUTOREFRESH_ON)
 		mdss_mdp_cmd_wait4_autorefresh_done(ctl);
 
-	mb();
+	mb(); /* make sure everything is written before enable */
 	mutex_unlock(&ctx->autorefresh_lock);
 
 	MDSS_XLOG(ctl->num, ctx->current_pp_num,
@@ -3454,7 +3445,7 @@ int mdss_mdp_cmd_stop(struct mdss_mdp_ctl *ctl, int panel_power_state)
 
 	pr_debug("%s: turn off interface clocks\n", __func__);
 	ret = mdss_mdp_cmd_stop_sub(ctl, panel_power_state);
-	if (IS_ERR_VALUE(ret)) {
+	if (IS_ERR_VALUE((unsigned long) ret)) {
 		pr_err("%s: unable to stop interface: %d\n",
 				__func__, ret);
 		goto end;
@@ -3462,7 +3453,7 @@ int mdss_mdp_cmd_stop(struct mdss_mdp_ctl *ctl, int panel_power_state)
 
 	if (sctl) {
 		mdss_mdp_cmd_stop_sub(sctl, panel_power_state);
-		if (IS_ERR_VALUE(ret)) {
+		if (IS_ERR_VALUE((unsigned long) ret)) {
 			pr_err("%s: unable to stop slave intf: %d\n",
 					__func__, ret);
 			goto end;
@@ -3474,12 +3465,12 @@ panel_events:
 	    (is_panel_split(ctl->mfd) && sctl)) && send_panel_events) {
 		pr_debug("%s: send panel events\n", __func__);
 		ret = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_BLANK,
-				(void *) (long int) panel_power_state,
+				(void *) (long) panel_power_state,
 				CTL_INTF_EVENT_FLAG_DEFAULT);
 		WARN(ret, "intf %d unblank error (%d)\n", ctl->intf_num, ret);
 
 		ret = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_PANEL_OFF,
-				(void *) (long int) panel_power_state,
+				(void *) (long) panel_power_state,
 				CTL_INTF_EVENT_FLAG_DEFAULT);
 		WARN(ret, "intf %d unblank error (%d)\n", ctl->intf_num, ret);
 	}
@@ -3506,7 +3497,7 @@ panel_events:
 	ctl->ops.wait_for_vsync_fnc = NULL;
 
 end:
-	if (!IS_ERR_VALUE(ret)) {
+	if (!IS_ERR_VALUE((unsigned long) ret)) {
 		struct mdss_mdp_cmd_ctx *sctx = NULL;
 
 		ctx->panel_power_state = panel_power_state;
@@ -3677,7 +3668,7 @@ static int mdss_mdp_cmd_intfs_setup(struct mdss_mdp_ctl *ctl,
 			 * panel always on state without MDSS every
 			 * power-collapsed (such as a case with any other
 			 * interfaces connected). In such cases, we need to
-			 * explictly call the restore function to enable
+			 * explicitly call the restore function to enable
 			 * tearcheck logic.
 			 */
 			mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
@@ -3686,10 +3677,9 @@ static int mdss_mdp_cmd_intfs_setup(struct mdss_mdp_ctl *ctl,
 
 			/* Turn on panel so that it can exit low power mode */
 			return mdss_mdp_cmd_panel_on(ctl, sctl);
-		} else {
-			pr_err("Intf %d already in use\n", session);
-			return -EBUSY;
 		}
+		pr_err("Intf %d already in use\n", session);
+		return -EBUSY;
 	}
 	ctx->ref_cnt++;
 	ctl->intf_ctx[MASTER_CTX] = ctx;
@@ -3762,10 +3752,9 @@ static int mdss_mdp_cmd_intfs_setup(struct mdss_mdp_ctl *ctl,
 				mdss_mdp_cmd_restore(ctl, false);
 				mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
 				return mdss_mdp_cmd_panel_on(ctl, sctl);
-			} else {
-				pr_err("Intf %d already in use\n", session);
-				return -EBUSY;
 			}
+			pr_err("Intf %d already in use\n", session);
+			return -EBUSY;
 		}
 		ctx->ref_cnt++;
 
@@ -3773,7 +3762,7 @@ static int mdss_mdp_cmd_intfs_setup(struct mdss_mdp_ctl *ctl,
 
 		ret = mdss_mdp_cmd_ctx_setup(ctl, ctx, session, session, true);
 		if (ret) {
-			pr_err("mdss_mdp_cmd_ctx_setup failed for slave ping pong block");
+			pr_err("mdss_mdp_cmd_ctx_setup failed for slave ping pong block\n");
 			ctx->ref_cnt--;
 			return -EPERM;
 		}
@@ -3805,7 +3794,7 @@ void mdss_mdp_switch_to_vid_mode(struct mdss_mdp_ctl *ctl, int prep)
 {
 	struct mdss_mdp_ctl *sctl = mdss_mdp_get_split_ctl(ctl);
 	struct dsi_panel_clk_ctrl clk_ctrl;
-	long int mode = MIPI_VIDEO_PANEL;
+	long mode = MIPI_VIDEO_PANEL;
 
 	pr_debug("%s start, prep = %d\n", __func__, prep);
 
@@ -3907,7 +3896,7 @@ int mdss_mdp_cmd_start(struct mdss_mdp_ctl *ctl)
 	/* Command mode is supported only starting at INTF1 */
 	session = ctl->intf_num - MDSS_MDP_INTF1;
 	ret = mdss_mdp_cmd_intfs_setup(ctl, session);
-	if (IS_ERR_VALUE(ret)) {
+	if (IS_ERR_VALUE((unsigned long) ret)) {
 		pr_err("unable to set cmd interface: %d\n", ret);
 		return ret;
 	}

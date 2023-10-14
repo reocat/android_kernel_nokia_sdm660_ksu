@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ALPHA_CMPXCHG_H
 #error Do not include xchg.h directly!
 #else
@@ -32,7 +33,6 @@ ____xchg(_u8, volatile char *m, unsigned long val)
 	"	or	%1,%2,%2\n"
 	"	stq_c	%2,0(%3)\n"
 	"	beq	%2,2f\n"
-		__ASM__MB
 	".subsection 2\n"
 	"2:	br	1b\n"
 	".previous"
@@ -57,7 +57,6 @@ ____xchg(_u16, volatile short *m, unsigned long val)
 	"	or	%1,%2,%2\n"
 	"	stq_c	%2,0(%3)\n"
 	"	beq	%2,2f\n"
-		__ASM__MB
 	".subsection 2\n"
 	"2:	br	1b\n"
 	".previous"
@@ -78,7 +77,6 @@ ____xchg(_u32, volatile int *m, unsigned long val)
 	"	bis $31,%3,%1\n"
 	"	stl_c %1,%2\n"
 	"	beq %1,2f\n"
-		__ASM__MB
 	".subsection 2\n"
 	"2:	br 1b\n"
 	".previous"
@@ -99,7 +97,6 @@ ____xchg(_u64, volatile long *m, unsigned long val)
 	"	bis $31,%3,%1\n"
 	"	stq_c %1,%2\n"
 	"	beq %1,2f\n"
-		__ASM__MB
 	".subsection 2\n"
 	"2:	br 1b\n"
 	".previous"
@@ -134,13 +131,6 @@ ____xchg(, volatile void *ptr, unsigned long x, int size)
  * Atomic compare and exchange.  Compare OLD with MEM, if identical,
  * store NEW in MEM.  Return the initial value in MEM.  Success is
  * indicated by comparing RETURN with OLD.
- *
- * The leading and the trailing memory barriers guarantee that these
- * operations are fully ordered.
- *
- * The trailing memory barrier is placed in SMP unconditionally, in
- * order to guarantee that dependency ordering is preserved when a
- * dependency is headed by an unsuccessful operation.
  */
 
 static inline unsigned long

@@ -1,15 +1,5 @@
-/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2015-2018, 2020, The Linux Foundation. All rights reserved. */
 
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -129,7 +119,6 @@ struct adv7533 {
 	bool hdcp_enabled;
 	bool cec_enabled;
 	bool is_power_on;
-	bool is_vreg_on;
 	void *edid_data;
 	u8 edid_buf[EDID_SEG_SIZE];
 	u8 audio_spkr_data[AUDIO_DATA_SIZE];
@@ -187,17 +176,6 @@ static struct adv7533_reg_cfg adv7533_video_en[] = {
 	{I2C_ADDR_CEC_DSI, 0x05, 0xC8, 0},
 	/* GC packet enable */
 	{I2C_ADDR_MAIN, 0x40, 0x80, 0},
-};
-
-static struct adv7533_reg_cfg adv7533_video_disable[] = {
-	/* Timing Generator Disable */
-	{I2C_ADDR_CEC_DSI, 0x27, 0x0B, 0},
-	/* SPDIF disable */
-	{I2C_ADDR_MAIN, 0x0B, 0x00, 0},
-	/* Gate CEC Clock */
-	{I2C_ADDR_CEC_DSI, 0x05, 0xF8, 0},
-	/* power down */
-	{I2C_ADDR_MAIN, 0x41, 0x50, 0},
 };
 
 static struct adv7533_reg_cfg adv7533_cec_en[] = {
@@ -398,7 +376,7 @@ static int adv7533_write_array(struct adv7533 *pdata,
 			break;
 		}
 		if (ret != 0) {
-			pr_err("%s: adv7533 reg writes failed. ", __func__);
+			pr_err("%s: adv7533 reg writes failed.\n", __func__);
 			pr_err("Last write %02X to %02X\n",
 				cfg[i].val, cfg[i].reg);
 			goto w_regs_fail;
@@ -550,18 +528,11 @@ static void adv7533_parse_vreg_dt(struct device *dev,
 			mp->vreg_config[i].post_on_sleep);
 	}
 
-	devm_kfree(dev, val_array);
 	return;
 
 end:
-	if (mp->vreg_config) {
-		devm_kfree(dev, mp->vreg_config);
-		mp->vreg_config = NULL;
-	}
 	mp->num_vreg = 0;
 
-	if (val_array)
-		devm_kfree(dev, val_array);
 }
 
 static int adv7533_parse_dt(struct device *dev,
@@ -712,15 +683,15 @@ static int adv7533_gpio_configure(struct adv7533 *pdata, bool on)
 		}
 
 		return 0;
-	} else {
-		if (gpio_is_valid(pdata->irq_gpio))
-			gpio_free(pdata->irq_gpio);
-		if (gpio_is_valid(pdata->hpd_irq_gpio))
-			gpio_free(pdata->hpd_irq_gpio);
-		if (gpio_is_valid(pdata->switch_gpio))
-			gpio_free(pdata->switch_gpio);
+	}
+	if (gpio_is_valid(pdata->irq_gpio))
+		gpio_free(pdata->irq_gpio);
+	if (gpio_is_valid(pdata->hpd_irq_gpio))
+		gpio_free(pdata->hpd_irq_gpio);
+	if (gpio_is_valid(pdata->switch_gpio))
+		gpio_free(pdata->switch_gpio);
 
-		return 0;
+	return 0;
 	}
 
 err_switch_gpio:
@@ -789,7 +760,7 @@ u32 adv7533_read_edid(struct adv7533 *pdata, u32 size, char *edid_buf)
 
 static int adv7533_cec_prepare_msg(struct adv7533 *pdata, u8 *msg, u32 size)
 {
-	int i, ret = -EINVAL;
+	int i;
 	int op_sz;
 
 	if (!pdata || !msg) {
@@ -820,12 +791,11 @@ static int adv7533_cec_prepare_msg(struct adv7533 *pdata, u8 *msg, u32 size)
 	adv7533_write(pdata, I2C_ADDR_CEC_DSI, 0x80, size);
 
 end:
-	return ret;
+	return -EINVAL;
 }
 
 static int adv7533_rd_cec_msg(struct adv7533 *pdata, u8 *cec_buf, int msg_num)
 {
-	int ret = -EINVAL;
 	u8 reg = 0;
 
 	if (!pdata || !cec_buf) {
@@ -847,7 +817,7 @@ static int adv7533_rd_cec_msg(struct adv7533 *pdata, u8 *cec_buf, int msg_num)
 
 	adv7533_read(pdata, I2C_ADDR_CEC_DSI, reg, cec_buf, CEC_MSG_SIZE);
 end:
-	return ret;
+	return -EINVAL;
 }
 
 static void adv7533_handle_hdcp_intr(struct adv7533 *pdata, u8 hdcp_status)
@@ -885,13 +855,9 @@ static void adv7533_handle_hdcp_intr(struct adv7533 *pdata, u8 hdcp_status)
 			break;
 		case 4:
 			pr_err("%s: DDC: I2C ERROR\n", __func__);
-			adv7533_notify_clients(&pdata->dev_info,
-					MSM_DBA_CB_DDC_I2C_ERROR);
 			break;
 		case 5:
 			pr_err("%s: DDC: TIMED OUT DS DONE\n", __func__);
-			adv7533_notify_clients(&pdata->dev_info,
-					MSM_DBA_CB_DDC_TIMEOUT);
 			break;
 		case 6:
 			pr_err("%s: DDC: MAX CAS EXC\n", __func__);
@@ -928,7 +894,7 @@ static void adv7533_handle_cec_intr(struct adv7533 *pdata, u8 cec_status)
 		pr_debug("%s: CEC TX Arbitration lost\n", __func__);
 
 	if (cec_status & BIT(3))
-		pr_debug("%s: CEC TX retry timout\n", __func__);
+		pr_debug("%s: CEC TX retry timeout\n", __func__);
 
 	if (!cec_rx_intr)
 		return;
@@ -994,8 +960,6 @@ end:
 
 static int adv7533_edid_read_init(struct adv7533 *pdata)
 {
-	int ret = -EINVAL;
-
 	if (!pdata) {
 		pr_err("%s: invalid pdata\n", __func__);
 		goto end;
@@ -1006,13 +970,13 @@ static int adv7533_edid_read_init(struct adv7533 *pdata)
 	adv7533_write(pdata, I2C_ADDR_MAIN, 0xC9, 0x13);
 
 end:
-	return ret;
+	return -EINVAL;
 }
 
 static void *adv7533_handle_hpd_intr(struct adv7533 *pdata)
 {
 	int ret = 0;
-	u8 hpd_state = 0;
+	u8 hpd_state;
 	u8 connected = 0, disconnected = 0;
 
 	if (!pdata) {
@@ -1043,9 +1007,7 @@ end:
 
 static int adv7533_enable_interrupts(struct adv7533 *pdata, int interrupts)
 {
-	int ret = 0;
-	u8 reg_val = 0;
-	u8 init_reg_val;
+	u8 reg_val, init_reg_val;
 
 	if (!pdata) {
 		pr_err("%s: invalid input\n", __func__);
@@ -1085,14 +1047,12 @@ static int adv7533_enable_interrupts(struct adv7533 *pdata, int interrupts)
 		adv7533_write(pdata, I2C_ADDR_MAIN, 0x95, reg_val);
 	}
 end:
-	return ret;
+	return 0;
 }
 
 static int adv7533_disable_interrupts(struct adv7533 *pdata, int interrupts)
 {
-	int ret = 0;
-	u8 reg_val = 0;
-	u8 init_reg_val;
+	u8 reg_val, init_reg_val;
 
 	if (!pdata) {
 		pr_err("%s: invalid input\n", __func__);
@@ -1132,7 +1092,7 @@ static int adv7533_disable_interrupts(struct adv7533 *pdata, int interrupts)
 		adv7533_write(pdata, I2C_ADDR_MAIN, 0x95, reg_val);
 	}
 end:
-	return ret;
+	return 0;
 }
 
 static void adv7533_intr_work(struct work_struct *work)
@@ -1382,85 +1342,6 @@ static int adv7533_check_hpd(void *client, u32 flags)
 	return connected;
 }
 
-static int adv7533_enable_vreg(struct adv7533 *pdata, int enable)
-{
-	int rc = 0;
-	struct dss_module_power *power_data = NULL;
-
-	if (!pdata) {
-		pr_err("invalid input\n");
-		rc = -EINVAL;
-		goto exit;
-	}
-
-	power_data = &pdata->power_data;
-	if (!power_data || !power_data->num_vreg) {
-		pr_warn("%s: Error: invalid power data\n", __func__);
-		return 0;
-	}
-
-	if (enable) {
-		rc = msm_dss_enable_vreg(power_data->vreg_config,
-					power_data->num_vreg, 1);
-		if (rc) {
-			pr_err("%s: Failed to enable vreg. Err=%d\n",
-				__func__, rc);
-			goto exit;
-		}
-		pdata->is_vreg_on = true;
-	} else {
-		rc = msm_dss_enable_vreg(power_data->vreg_config,
-					power_data->num_vreg, 0);
-		if (rc) {
-			pr_err("%s: Failed to disable vreg. Err=%d\n",
-				__func__, rc);
-			goto exit;
-		}
-		pdata->is_vreg_on = false;
-	}
-exit:
-	return rc;
-}
-
-static int adv7533_config_vreg(struct adv7533 *pdata, int enable)
-{
-	int rc = 0;
-	struct dss_module_power *power_data = NULL;
-
-	if (!pdata) {
-		pr_err("invalid input\n");
-		rc = -EINVAL;
-		goto exit;
-	}
-	power_data = &pdata->power_data;
-	if (!power_data || !power_data->num_vreg) {
-		pr_warn("%s: Error: invalid power data\n", __func__);
-		return 0;
-	}
-
-	if (enable) {
-		rc = msm_dss_config_vreg(&pdata->i2c_client->dev,
-					power_data->vreg_config,
-					power_data->num_vreg, 1);
-		if (rc) {
-			pr_err("%s: Failed to config vreg. Err=%d\n",
-				__func__, rc);
-			goto exit;
-		}
-	} else {
-		rc = msm_dss_config_vreg(&pdata->i2c_client->dev,
-					power_data->vreg_config,
-					power_data->num_vreg, 0);
-		if (rc) {
-			pr_err("%s: Failed to deconfig vreg. Err=%d\n",
-				__func__, rc);
-			goto exit;
-		}
-	}
-exit:
-	return rc;
-}
-
 /* Device Operations */
 static int adv7533_power_on(void *client, bool on, u32 flags)
 {
@@ -1476,22 +1357,6 @@ static int adv7533_power_on(void *client, bool on, u32 flags)
 	mutex_lock(&pdata->ops_mutex);
 
 	if (on && !pdata->is_power_on) {
-		if (!pdata->is_vreg_on) {
-			ret = adv7533_config_vreg(pdata, 1);
-			if (!ret) {
-				adv7533_enable_vreg(pdata, 1);
-			} else {
-				pr_err("%s: Failed to config vreg\n", __func__);
-				goto end;
-			}
-		}
-
-		if (gpio_is_valid(pdata->switch_gpio)) {
-			gpio_set_value(pdata->switch_gpio,
-				pdata->switch_flags);
-			msleep(ADV7533_RESET_DELAY);
-		}
-
 		adv7533_write_array(pdata, adv7533_init_setup,
 					sizeof(adv7533_init_setup));
 
@@ -1507,18 +1372,8 @@ static int adv7533_power_on(void *client, bool on, u32 flags)
 		adv7533_write(pdata, I2C_ADDR_MAIN, 0x41, 0x50);
 		pdata->is_power_on = false;
 
-		if (gpio_is_valid(pdata->switch_gpio)) {
-			gpio_set_value(pdata->switch_gpio,
-				!pdata->switch_flags);
-			msleep(ADV7533_RESET_DELAY);
-		}
-		ret = 0;
 		adv7533_notify_clients(&pdata->dev_info,
 			MSM_DBA_CB_HPD_DISCONNECT);
-		if (pdata->is_vreg_on) {
-			adv7533_enable_vreg(pdata, 0);
-			adv7533_config_vreg(pdata, 0);
-		}
 	}
 end:
 	mutex_unlock(&pdata->ops_mutex);
@@ -1530,7 +1385,6 @@ static void adv7533_video_setup(struct adv7533 *pdata,
 {
 	u32 h_total, hpw, hfp, hbp;
 	u32 v_total, vpw, vfp, vbp;
-	int dsi_pixel_clock_divider = 0x00;
 
 	if (!pdata || !cfg) {
 		pr_err("%s: invalid input\n", __func__);
@@ -1550,7 +1404,7 @@ static void adv7533_video_setup(struct adv7533 *pdata,
 	vfp = cfg->v_front_porch;
 	vbp = cfg->v_back_porch;
 
-	pr_debug("h_total 0x%x, h_active 0x%x, hfp 0x%d, hpw 0x%x, hbp 0x%x\n",
+	pr_debug("h_total 0x%x, h_active 0x%x, hfp 0x%x, hpw 0x%x, hbp 0x%x\n",
 		h_total, cfg->h_active, cfg->h_front_porch,
 		cfg->h_pulse_width, cfg->h_back_porch);
 
@@ -1558,26 +1412,6 @@ static void adv7533_video_setup(struct adv7533 *pdata,
 		v_total, cfg->v_active, cfg->v_front_porch,
 		cfg->v_pulse_width, cfg->v_back_porch);
 
-	/* 0x16: dsi pclk divider control.
-	 * bit2: 1 = manual dsi pclk divider control; 0 = automatic dsi
-	 *   pclk divider generation.
-	 * bit3-7: the signal sets the dsi pclk divider setting when bit2
-	 *   is enable.
-	 *
-	 * If bit2=0 means automatically select dsi pclk divider, so
-	 * other bits(divider factor) has no impact.
-	 *
-	 * If bit2=1, the divider factor should be related to lane num below
-	 * 4lanes : divide by 3; 3lanes : divide by 4; 2lanes : divide by 6
-	 * So the value of 0x16 can be set as follow:
-	 * 4 lanes : 0x1C(00011 100)
-	 * 3 lanes : 0x24(00100 100)
-	 * 2 lanes : 0x34(00110 100)
-	 *
-	 * Here, use automatic dsi pclk divider generation, so set 0x00
-	 * to cec 0x16 register for all lanes numbers.
-	 */
-	adv7533_write(pdata, I2C_ADDR_CEC_DSI, 0x16, dsi_pixel_clock_divider);
 
 	/* h_width */
 	adv7533_write(pdata, I2C_ADDR_CEC_DSI, 0x28, ((h_total & 0xFF0) >> 4));
@@ -1612,6 +1446,86 @@ static void adv7533_video_setup(struct adv7533 *pdata,
 	adv7533_write(pdata, I2C_ADDR_CEC_DSI, 0x37, ((vbp & 0xF) << 4));
 }
 
+static int adv7533_config_vreg(struct adv7533 *pdata, int enable)
+{
+	int rc = 0;
+	struct dss_module_power *power_data = NULL;
+
+	if (!pdata) {
+		pr_err("invalid input\n");
+		rc = -EINVAL;
+		goto exit;
+	}
+
+	power_data = &pdata->power_data;
+	if (!power_data || !power_data->num_vreg) {
+		pr_warn("%s: Error: invalid power data\n", __func__);
+		return 0;
+	}
+
+	if (enable) {
+		rc = msm_dss_config_vreg(&pdata->i2c_client->dev,
+					power_data->vreg_config,
+					power_data->num_vreg, 1);
+		if (rc) {
+			pr_err("%s: Failed to config vreg. Err=%d\n",
+				__func__, rc);
+			goto exit;
+		}
+	} else {
+		rc = msm_dss_config_vreg(&pdata->i2c_client->dev,
+					power_data->vreg_config,
+					power_data->num_vreg, 0);
+		if (rc) {
+			pr_err("%s: Failed to deconfig vreg. Err=%d\n",
+				__func__, rc);
+			goto exit;
+		}
+	}
+exit:
+	return rc;
+
+}
+
+static int adv7533_enable_vreg(struct adv7533 *pdata, int enable)
+{
+	int rc = 0;
+	struct dss_module_power *power_data = NULL;
+
+	if (!pdata) {
+		pr_err("invalid input\n");
+		rc = -EINVAL;
+		goto exit;
+	}
+
+	power_data = &pdata->power_data;
+	if (!power_data || !power_data->num_vreg) {
+		pr_warn("%s: Error: invalid power data\n", __func__);
+		return 0;
+	}
+
+	if (enable) {
+		rc = msm_dss_enable_vreg(power_data->vreg_config,
+					power_data->num_vreg, 1);
+		if (rc) {
+			pr_err("%s: Failed to enable vreg. Err=%d\n",
+				__func__, rc);
+			goto exit;
+		}
+	} else {
+		rc = msm_dss_enable_vreg(power_data->vreg_config,
+					power_data->num_vreg, 0);
+		if (rc) {
+			pr_err("%s: Failed to disable vreg. Err=%d\n",
+				__func__, rc);
+			goto exit;
+		}
+	}
+exit:
+	return rc;
+
+}
+
 static int adv7533_video_on(void *client, bool on,
 	struct msm_dba_video_cfg *cfg, u32 flags)
 {
@@ -1620,56 +1534,48 @@ static int adv7533_video_on(void *client, bool on,
 	u8 reg_val = 0;
 	struct adv7533 *pdata = adv7533_get_platform_data(client);
 
-	if (!pdata) {
+	if (!pdata || !cfg) {
 		pr_err("%s: invalid platform data\n", __func__);
-		return -EINVAL;
-	} else if (on && !cfg) {
-		pr_err("%s: invalid cfg data for power on\n", __func__);
 		return -EINVAL;
 	}
 
 	mutex_lock(&pdata->ops_mutex);
 
-	if (on) {
-		/* DSI lane configuration */
-		lanes = (cfg->num_of_input_lanes << 4);
-		adv7533_write(pdata, I2C_ADDR_CEC_DSI, 0x1C, lanes);
+	/* DSI lane configuration */
+	lanes = (cfg->num_of_input_lanes << 4);
+	adv7533_write(pdata, I2C_ADDR_CEC_DSI, 0x1C, lanes);
 
-		adv7533_video_setup(pdata, cfg);
+	adv7533_video_setup(pdata, cfg);
 
-		/* hdmi/dvi mode */
-		if (cfg->hdmi_mode)
-			adv7533_write(pdata, I2C_ADDR_MAIN, 0xAF, 0x06);
-		else
-			adv7533_write(pdata, I2C_ADDR_MAIN, 0xAF, 0x04);
+	/* hdmi/dvi mode */
+	if (cfg->hdmi_mode)
+		adv7533_write(pdata, I2C_ADDR_MAIN, 0xAF, 0x06);
+	else
+		adv7533_write(pdata, I2C_ADDR_MAIN, 0xAF, 0x04);
 
-		/* set scan info for AVI Infoframe*/
-		if (cfg->scaninfo) {
-			adv7533_read(pdata, I2C_ADDR_MAIN, 0x55, &reg_val, 1);
-			reg_val |= cfg->scaninfo & (BIT(1) | BIT(0));
-			adv7533_write(pdata, I2C_ADDR_MAIN, 0x55, reg_val);
-		}
-
-		/*
-		 * aspect ratio and sync polarity set up.
-		 * Currently adv only supports 16:9 or 4:3 aspect ratio
-		 * configuration.
-		 */
-		if (cfg->h_active * 3 - cfg->v_active * 4) {
-			adv7533_write(pdata, I2C_ADDR_MAIN, 0x17, 0x02);
-			adv7533_write(pdata, I2C_ADDR_MAIN, 0x56, 0x28);
-		} else {
-			/* 4:3 aspect ratio */
-			adv7533_write(pdata, I2C_ADDR_MAIN, 0x17, 0x00);
-			adv7533_write(pdata, I2C_ADDR_MAIN, 0x56, 0x18);
-		}
-
-		adv7533_write_array(pdata, adv7533_video_en,
-					sizeof(adv7533_video_en));
-	} else {
-		adv7533_write_array(pdata, adv7533_video_disable,
-				sizeof(adv7533_video_disable));
+	/* set scan info for AVI Infoframe*/
+	if (cfg->scaninfo) {
+		adv7533_read(pdata, I2C_ADDR_MAIN, 0x55, &reg_val, 1);
+		reg_val |= cfg->scaninfo & (BIT(1) | BIT(0));
+		adv7533_write(pdata, I2C_ADDR_MAIN, 0x55, reg_val);
 	}
+
+	/*
+	 * aspect ratio and sync polarity set up.
+	 * Currently adv only supports 16:9 or 4:3 aspect ratio
+	 * configuration.
+	 */
+	if (cfg->h_active * 3 - cfg->v_active * 4) {
+		adv7533_write(pdata, I2C_ADDR_MAIN, 0x17, 0x02);
+		adv7533_write(pdata, I2C_ADDR_MAIN, 0x56, 0x28);
+	} else {
+		/* 4:3 aspect ratio */
+		adv7533_write(pdata, I2C_ADDR_MAIN, 0x17, 0x00);
+		adv7533_write(pdata, I2C_ADDR_MAIN, 0x56, 0x18);
+	}
+
+	adv7533_write_array(pdata, adv7533_video_en,
+				sizeof(adv7533_video_en));
 
 	mutex_unlock(&pdata->ops_mutex);
 	return ret;
@@ -1678,8 +1584,7 @@ static int adv7533_video_on(void *client, bool on,
 static int adv7533_hdcp_enable(void *client, bool hdcp_on,
 	bool enc_on, u32 flags)
 {
-	int ret = -EINVAL;
-	u8 reg_val = 0;
+	u8 reg_val;
 	struct adv7533 *pdata =
 		adv7533_get_platform_data(client);
 
@@ -1712,13 +1617,12 @@ static int adv7533_hdcp_enable(void *client, bool hdcp_on,
 		adv7533_disable_interrupts(pdata, CFG_HDCP_INTERRUPTS);
 
 	mutex_unlock(&pdata->ops_mutex);
-	return ret;
+	return -EINVAL;
 }
 
 static int adv7533_configure_audio(void *client,
 	struct msm_dba_audio_cfg *cfg, u32 flags)
 {
-	int ret = -EINVAL;
 	int sampling_rate = 0;
 	struct adv7533 *pdata =
 		adv7533_get_platform_data(client);
@@ -1829,7 +1733,7 @@ static int adv7533_configure_audio(void *client,
 	adv7533_write_array(pdata, reg_cfg, sizeof(reg_cfg));
 
 	mutex_unlock(&pdata->ops_mutex);
-	return ret;
+	return -EINVAL;
 }
 
 static int adv7533_hdmi_cec_write(void *client, u32 size,
@@ -1942,7 +1846,6 @@ static int adv7533_write_reg(struct msm_dba_device_info *dev,
 		u32 reg, u32 val)
 {
 	struct adv7533 *pdata;
-	int ret = -EINVAL;
 	u8 i2ca = 0;
 
 	if (!dev)
@@ -1956,13 +1859,12 @@ static int adv7533_write_reg(struct msm_dba_device_info *dev,
 
 	adv7533_write(pdata, i2ca, (u8)(reg & 0xFF), (u8)(val & 0xFF));
 end:
-	return ret;
+	return -EINVAL;
 }
 
 static int adv7533_read_reg(struct msm_dba_device_info *dev,
 		u32 reg, u32 *val)
 {
-	int ret = 0;
 	u8 byte_val = 0;
 	u8 i2ca = 0;
 	struct adv7533 *pdata;
@@ -1981,7 +1883,7 @@ static int adv7533_read_reg(struct msm_dba_device_info *dev,
 	*val = (u32)byte_val;
 
 end:
-	return ret;
+	return 0;
 }
 
 static int adv7533_register_dba(struct adv7533 *pdata)
@@ -2052,7 +1954,6 @@ static int adv7533_probe(struct i2c_client *client,
 		pr_err("%s: Failed to parse DT\n", __func__);
 		goto err_dt_parse;
 	}
-
 	pdata->i2c_client = client;
 
 	ret = adv7533_config_vreg(pdata, 1);
@@ -2151,7 +2052,6 @@ err_i2c_prog:
 	adv7533_enable_vreg(pdata, 0);
 	adv7533_config_vreg(pdata, 0);
 err_dt_parse:
-	devm_kfree(&client->dev, pdata);
 	return ret;
 }
 
@@ -2181,8 +2081,6 @@ static int adv7533_remove(struct i2c_client *client)
 
 	mutex_destroy(&pdata->ops_mutex);
 
-	devm_kfree(&client->dev, pdata);
-
 end:
 	return ret;
 }
@@ -2190,7 +2088,6 @@ end:
 static struct i2c_driver adv7533_driver = {
 	.driver = {
 		.name = "adv7533",
-		.owner = THIS_MODULE,
 	},
 	.probe = adv7533_probe,
 	.remove = adv7533_remove,
@@ -2207,7 +2104,7 @@ static void __exit adv7533_exit(void)
 	i2c_del_driver(&adv7533_driver);
 }
 
-module_param_string(panel, mdss_mdp_panel, MDSS_MAX_PANEL_LEN, 0);
+module_param_string(panel, mdss_mdp_panel, MDSS_MAX_PANEL_LEN, 0000);
 
 module_init(adv7533_init);
 module_exit(adv7533_exit);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * f_qc_rndis.c -- RNDIS link function driver
  *
@@ -6,7 +7,7 @@
  * Copyright (C) 2008 Nokia Corporation
  * Copyright (C) 2009 Samsung Electronics
  *			Author: Michal Nazarewicz (mina86@mina86.com)
- * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2
@@ -15,10 +16,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 /* #define VERBOSE_DEBUG */
@@ -37,10 +34,14 @@
 #include <linux/rndis_ipa.h>
 #include "configfs.h"
 
-unsigned int rndis_dl_max_xfer_size = 9216;
-module_param(rndis_dl_max_xfer_size, uint, S_IRUGO | S_IWUSR);
+static unsigned int rndis_dl_max_xfer_size = 9216;
+module_param(rndis_dl_max_xfer_size, uint, 0644);
 MODULE_PARM_DESC(rndis_dl_max_xfer_size,
 		"Max size of bus transfer to host");
+
+static struct class *rndis_class;
+static dev_t rndis_dev;
+static DEFINE_IDA(chardev_ida);
 
 /*
  * This function is an RNDIS Ethernet port -- a Microsoft protocol that's
@@ -102,11 +103,12 @@ struct f_rndis_qc {
 	struct usb_ep			*notify;
 	struct usb_request		*notify_req;
 	atomic_t			notify_count;
-	struct gadget_ipa_port		bam_port;
+	struct data_port		bam_port;
+	struct cdev			cdev;
+	struct device			*dev;
 	u8				port_num;
 	u16				cdc_filter;
 	bool				net_ready_trigger;
-	bool				use_wceis;
 };
 
 static struct ipa_usb_init_params rndis_ipa_params;
@@ -162,9 +164,9 @@ static struct usb_interface_descriptor rndis_qc_control_intf = {
 	/* .bInterfaceNumber = DYNAMIC */
 	/* status endpoint is optional; this could be patched later */
 	.bNumEndpoints =	1,
-	.bInterfaceClass =	USB_CLASS_MISC,
-	.bInterfaceSubClass =   0x04,
-	.bInterfaceProtocol =   0x01, /* RNDIS over ethernet */
+	.bInterfaceClass =	USB_CLASS_WIRELESS_CONTROLLER,
+	.bInterfaceSubClass =   0x01,
+	.bInterfaceProtocol =   0x03,
 	/* .iInterface = DYNAMIC */
 };
 
@@ -223,9 +225,9 @@ rndis_qc_iad_descriptor = {
 	.bDescriptorType =	USB_DT_INTERFACE_ASSOCIATION,
 	.bFirstInterface =	0, /* XXX, hardcoded */
 	.bInterfaceCount =	2, /* control + data */
-	.bFunctionClass =	USB_CLASS_MISC,
-	.bFunctionSubClass =	0x04,
-	.bFunctionProtocol =	0x01, /* RNDIS over ethernet */
+	.bFunctionClass =	USB_CLASS_WIRELESS_CONTROLLER,
+	.bFunctionSubClass =	0x01,
+	.bFunctionProtocol =	0x03,
 	/* .iFunction = DYNAMIC */
 };
 
@@ -407,7 +409,7 @@ static struct usb_gadget_strings *rndis_qc_strings[] = {
 	NULL,
 };
 
-struct f_rndis_qc *_rndis_qc;
+static struct f_rndis_qc *_rndis_qc;
 
 static inline int rndis_qc_lock(atomic_t *excl)
 {
@@ -548,7 +550,7 @@ static void rndis_qc_command_complete(struct usb_ep *ep,
 
 	buf = (rndis_init_msg_type *)req->buf;
 
-	if (buf->MessageType == RNDIS_MSG_INIT) {
+	if (le32_to_cpu(buf->MessageType) == RNDIS_MSG_INIT) {
 		ul_max_xfer_size = rndis_get_ul_max_xfer_size(rndis->params);
 		ipa_data_set_ul_max_xfer_size(ul_max_xfer_size);
 		/*
@@ -645,7 +647,7 @@ invalid:
 	return value;
 }
 
-struct net_device *rndis_qc_get_net(const char *netname)
+static struct net_device *rndis_qc_get_net(const char *netname)
 {
 	struct net_device *net_dev;
 
@@ -661,13 +663,14 @@ struct net_device *rndis_qc_get_net(const char *netname)
 	return net_dev;
 }
 
-static int rndis_qc_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
+static int rndis_qc_set_alt(struct usb_function *f, unsigned int intf,
+			unsigned int alt)
 {
 	struct f_rndis_qc	 *rndis = func_to_rndis_qc(f);
 	struct f_rndis_qc_opts *opts;
 	struct usb_composite_dev *cdev = f->config->cdev;
-	u8 src_connection_idx;
-	u8 dst_connection_idx;
+	int src_connection_idx;
+	int dst_connection_idx;
 	enum usb_ctrl usb_bam_type;
 	int ret;
 
@@ -733,11 +736,9 @@ static int rndis_qc_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 		usb_bam_type = usb_bam_get_bam_type(cdev->gadget->name);
 
 		src_connection_idx = usb_bam_get_connection_idx(usb_bam_type,
-			IPA_P_BAM, USB_TO_PEER_PERIPHERAL, USB_BAM_DEVICE,
-			rndis->port_num);
+			IPA_P_BAM, USB_TO_PEER_PERIPHERAL, rndis->port_num);
 		dst_connection_idx = usb_bam_get_connection_idx(usb_bam_type,
-			IPA_P_BAM, PEER_PERIPHERAL_TO_USB, USB_BAM_DEVICE,
-			rndis->port_num);
+			IPA_P_BAM, PEER_PERIPHERAL_TO_USB, rndis->port_num);
 		if (src_connection_idx < 0 || dst_connection_idx < 0) {
 			pr_err("%s: usb_bam_get_connection_idx failed\n",
 				__func__);
@@ -796,7 +797,7 @@ static void rndis_qc_suspend(struct usb_function *f)
 	else
 		remote_wakeup_allowed = f->config->cdev->gadget->remote_wakeup;
 
-	pr_info("%s(): start rndis suspend: remote_wakeup_allowed:%d\n:",
+	pr_info("%s(): start rndis suspend: remote_wakeup_allowed:%d\n",
 					__func__, remote_wakeup_allowed);
 
 	if (!remote_wakeup_allowed) {
@@ -871,7 +872,8 @@ static void rndis_qc_open(struct f_rndis_qc *rndis)
 	rndis_signal_connect(rndis->params);
 }
 
-void ipa_data_flow_control_enable(bool enable, struct rndis_params *param)
+static void ipa_data_flow_control_enable(bool enable,
+	struct rndis_params *param)
 {
 	if (enable)
 		ipa_data_stop_rndis_ipa(USB_IPA_FUNC_RNDIS);
@@ -905,7 +907,7 @@ rndis_qc_bind(struct usb_configuration *c, struct usb_function *f)
 		/* control interface label */
 		status = usb_string_id(c->cdev);
 		if (status < 0)
-		return status;
+			return status;
 		rndis_qc_string_defs[0].id = status;
 		rndis_qc_control_intf.iInterface = status;
 
@@ -922,17 +924,6 @@ rndis_qc_bind(struct usb_configuration *c, struct usb_function *f)
 			return status;
 		rndis_qc_string_defs[2].id = status;
 		rndis_qc_iad_descriptor.iFunction = status;
-	}
-
-	if (rndis->use_wceis) {
-		rndis_qc_iad_descriptor.bFunctionClass =
-				USB_CLASS_WIRELESS_CONTROLLER;
-		rndis_qc_iad_descriptor.bFunctionSubClass = 0x01;
-		rndis_qc_iad_descriptor.bFunctionProtocol = 0x03;
-		rndis_qc_control_intf.bInterfaceClass =
-				USB_CLASS_WIRELESS_CONTROLLER;
-		rndis_qc_control_intf.bInterfaceSubClass = 0x1;
-		rndis_qc_control_intf.bInterfaceProtocol = 0x03;
 	}
 
 	/* allocate instance-specific interface IDs */
@@ -1031,10 +1022,10 @@ rndis_qc_bind(struct usb_configuration *c, struct usb_function *f)
 
 	params = rndis_register(rndis_qc_response_available, rndis,
 			ipa_data_flow_control_enable);
-	if (params < 0)
+	if (IS_ERR(params))
 		goto fail;
-	rndis->params = params;
 
+	rndis->params = params;
 	rndis_set_param_medium(rndis->params, RNDIS_MEDIUM_802_3, 0);
 	rndis_set_host_mac(rndis->params, rndis->ethaddr);
 
@@ -1060,6 +1051,7 @@ rndis_qc_bind(struct usb_configuration *c, struct usb_function *f)
 	 * until we're activated via set_alt().
 	 */
 
+	c->cdev->gadget->bam2bam_func_enabled = true;
 	DBG(cdev, "RNDIS: %s speed IN/%s OUT/%s NOTIFY/%s\n",
 			gadget_is_superspeed(c->cdev->gadget) ? "super" :
 			gadget_is_dualspeed(c->cdev->gadget) ? "dual" : "full",
@@ -1106,13 +1098,14 @@ rndis_qc_unbind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct f_rndis_qc		*rndis = func_to_rndis_qc(f);
 
-	pr_debug("rndis_qc_unbind: free\n");
+	pr_debug("func %s: free\n", __func__);
 	rndis_deregister(rndis->params);
 
 	if (gadget_is_dualspeed(c->cdev->gadget))
 		usb_free_descriptors(f->hs_descriptors);
 	usb_free_descriptors(f->fs_descriptors);
 
+	c->cdev->gadget->bam2bam_func_enabled = false;
 	kfree(rndis->notify_req->buf);
 	usb_ep_free_request(rndis->notify, rndis->notify_req);
 
@@ -1135,7 +1128,7 @@ void rndis_ipa_reset_trigger(void)
 
 	rndis = _rndis_qc;
 	if (!rndis) {
-		pr_err("%s: No RNDIS instance", __func__);
+		pr_err("%s: No RNDIS instance\n", __func__);
 		return;
 	}
 
@@ -1146,7 +1139,7 @@ void rndis_ipa_reset_trigger(void)
  * Callback let RNDIS_IPA trigger us when network interface is up
  * and userspace is ready to answer DHCP requests
  */
-void rndis_net_ready_notify(void)
+static void rndis_net_ready_notify(void)
 {
 	struct f_rndis_qc *rndis;
 	unsigned long flags;
@@ -1154,17 +1147,17 @@ void rndis_net_ready_notify(void)
 	spin_lock_irqsave(&rndis_lock, flags);
 	rndis = _rndis_qc;
 	if (!rndis) {
-		pr_err("%s: No RNDIS instance", __func__);
+		pr_err("%s: No RNDIS instance\n", __func__);
 		spin_unlock_irqrestore(&rndis_lock, flags);
 		return;
 	}
 	if (rndis->net_ready_trigger) {
-		pr_err("%s: Already triggered", __func__);
+		pr_err("%s: Already triggered\n", __func__);
 		spin_unlock_irqrestore(&rndis_lock, flags);
 		return;
 	}
 
-	pr_debug("%s: Set net_ready_trigger", __func__);
+	pr_debug("%s: Set net_ready_trigger\n", __func__);
 	rndis->net_ready_trigger = true;
 	spin_unlock_irqrestore(&rndis_lock, flags);
 	ipa_data_start_rx_tx(USB_IPA_FUNC_RNDIS);
@@ -1261,6 +1254,7 @@ static int rndis_qc_open_dev(struct inode *ip, struct file *fp)
 {
 	int ret = 0;
 	unsigned long flags;
+
 	pr_info("Open rndis QC driver\n");
 
 	spin_lock_irqsave(&rndis_lock, flags);
@@ -1289,6 +1283,7 @@ fail:
 static int rndis_qc_release_dev(struct inode *ip, struct file *fp)
 {
 	unsigned long flags;
+
 	pr_info("Close rndis QC file\n");
 
 	spin_lock_irqsave(&rndis_lock, flags);
@@ -1303,7 +1298,7 @@ static int rndis_qc_release_dev(struct inode *ip, struct file *fp)
 	return 0;
 }
 
-static long rndis_qc_ioctl(struct file *fp, unsigned cmd, unsigned long arg)
+static long rndis_qc_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 {
 	u8 qc_max_pkt_per_xfer = 0;
 	u32 qc_max_pkt_size = 0;
@@ -1379,19 +1374,18 @@ static const struct file_operations rndis_qc_fops = {
 	.unlocked_ioctl	= rndis_qc_ioctl,
 };
 
-static struct miscdevice rndis_qc_device = {
-	.minor = MISC_DYNAMIC_MINOR,
-	.name = "android_rndis_qc",
-	.fops = &rndis_qc_fops,
-};
-
 static void qcrndis_free_inst(struct usb_function_instance *f)
 {
 	struct f_rndis_qc_opts	*opts = container_of(f,
 				struct f_rndis_qc_opts, func_inst);
+	int minor = MINOR(opts->rndis->cdev.dev);
 	unsigned long flags;
 
-	misc_deregister(&rndis_qc_device);
+	device_destroy(rndis_class, MKDEV(MAJOR(rndis_dev), minor));
+	class_destroy(rndis_class);
+	cdev_del(&opts->rndis->cdev);
+	ida_simple_remove(&chardev_ida, minor);
+	unregister_chrdev_region(rndis_dev, 1);
 
 	ipa_data_free(USB_IPA_FUNC_RNDIS);
 	spin_lock_irqsave(&rndis_lock, flags);
@@ -1408,7 +1402,7 @@ static int qcrndis_set_inst_name(struct usb_function_instance *fi,
 				struct f_rndis_qc_opts, func_inst);
 	struct f_rndis_qc	*rndis;
 	int name_len;
-	int ret;
+	int ret, minor;
 
 	name_len = strlen(name) + 1;
 	if (name_len > MAX_INST_NAME_LEN)
@@ -1424,18 +1418,58 @@ static int qcrndis_set_inst_name(struct usb_function_instance *fi,
 
 	spin_lock_init(&rndis_lock);
 	opts->rndis = rndis;
-	ret = misc_register(&rndis_qc_device);
+	rndis_class = class_create(THIS_MODULE, "usbrndis");
+	ret = alloc_chrdev_region(&rndis_dev, 0, 1, "usb_rndis");
+	if (ret < 0) {
+		pr_err("Fail to allocate usb rndis char dev region\n");
+		return ret;
+	}
+
+	/* get a minor number */
+	minor = ida_simple_get(&chardev_ida, 0, 0, GFP_KERNEL);
+	if (minor < 0) {
+		pr_err("%s: No more minor numbers left! rc:%d\n", __func__,
+			minor);
+		ret = -ENODEV;
+		goto fail_out_of_minors;
+	}
+	rndis->dev = device_create(rndis_class, NULL,
+			MKDEV(MAJOR(rndis_dev), minor),
+			rndis, "android_rndis_qc");
+	if (IS_ERR(rndis->dev)) {
+		ret = PTR_ERR(rndis->dev);
+		pr_err("%s: device_create failed for (%d)\n", __func__, ret);
+		goto fail_return_minor;
+	}
+	cdev_init(&rndis->cdev, &rndis_qc_fops);
+	ret = cdev_add(&rndis->cdev, MKDEV(MAJOR(rndis_dev), minor), 1);
+	if (ret < 0) {
+		pr_err("%s: cdev_add failed for %s (%d)\n", __func__,
+			name, ret);
+		goto fail_cdev_add;
+	}
+
 	if (ret)
 		pr_err("rndis QC driver failed to register\n");
 
 	ret = ipa_data_setup(USB_IPA_FUNC_RNDIS);
 	if (ret) {
 		pr_err("bam_data_setup failed err: %d\n", ret);
-		kfree(rndis);
-		return ret;
+		goto fail_data_setup;
 	}
 
 	return 0;
+fail_data_setup:
+	cdev_del(&rndis->cdev);
+fail_cdev_add:
+	device_destroy(rndis_class, MKDEV(MAJOR(rndis_dev), minor));
+fail_return_minor:
+	ida_simple_remove(&chardev_ida, minor);
+fail_out_of_minors:
+	unregister_chrdev_region(rndis_dev, 1);
+	class_destroy(rndis_class);
+	kfree(rndis);
+	return ret;
 }
 
 static inline
@@ -1456,38 +1490,8 @@ static struct configfs_item_operations qcrndis_item_ops = {
 	.release        = qcrndis_attr_release,
 };
 
-
-static ssize_t qcrndis_wceis_show(struct config_item *item, char *page)
-{
-	struct f_rndis_qc	*rndis = to_f_qc_rndis_opts(item)->rndis;
-
-	return snprintf(page, PAGE_SIZE, "%d\n", rndis->use_wceis);
-}
-
-static ssize_t qcrndis_wceis_store(struct config_item *item,
-			const char *page, size_t len)
-{
-	struct f_rndis_qc	*rndis = to_f_qc_rndis_opts(item)->rndis;
-	bool val;
-
-	if (kstrtobool(page, &val))
-		return -EINVAL;
-
-	rndis->use_wceis = val;
-
-	return len;
-}
-
-CONFIGFS_ATTR(qcrndis_, wceis);
-
-static struct configfs_attribute *qcrndis_attrs[] = {
-	&qcrndis_attr_wceis,
-	NULL,
-};
-
 static struct config_item_type qcrndis_func_type = {
 	.ct_item_ops    = &qcrndis_item_ops,
-	.ct_attrs	= qcrndis_attrs,
 	.ct_owner       = THIS_MODULE,
 };
 

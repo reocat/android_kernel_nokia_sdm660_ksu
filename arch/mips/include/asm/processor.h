@@ -13,6 +13,7 @@
 
 #include <linux/atomic.h>
 #include <linux/cpumask.h>
+#include <linux/sizes.h>
 #include <linux/threads.h>
 
 #include <asm/cachectl.h>
@@ -21,6 +22,7 @@
 #include <asm/dsemul.h>
 #include <asm/mipsregs.h>
 #include <asm/prefetch.h>
+#include <asm/vdso/processor.h>
 
 /*
  * Return current * instruction pointer ("program counter").
@@ -65,7 +67,11 @@ extern unsigned int vced_count, vcei_count;
  * 8192EB ...
  */
 #define TASK_SIZE32	0x7fff8000UL
-#define TASK_SIZE64	0x10000000000UL
+#ifdef CONFIG_MIPS_VA_BITS_48
+#define TASK_SIZE64     (0x1UL << ((cpu_data[0].vmbits>48)?48:cpu_data[0].vmbits))
+#else
+#define TASK_SIZE64     0x10000000000UL
+#endif
 #define TASK_SIZE (test_thread_flag(TIF_32BIT_ADDR) ? TASK_SIZE32 : TASK_SIZE64)
 #define STACK_TOP_MAX	TASK_SIZE64
 
@@ -76,11 +82,10 @@ extern unsigned int vced_count, vcei_count;
 
 #endif
 
-/*
- * One page above the stack is used for branch delay slot "emulation".
- * See dsemul.c for details.
- */
-#define STACK_TOP	((TASK_SIZE & PAGE_MASK) - PAGE_SIZE)
+#define VDSO_RANDOMIZE_SIZE	(TASK_IS_32BIT_ADDR ? SZ_1M : SZ_64M)
+
+extern unsigned long mips_stack_top(void);
+#define STACK_TOP		mips_stack_top()
 
 /*
  * This decides where the kernel will search for a free chunk of vm
@@ -364,8 +369,6 @@ struct task_struct;
 /* Free all resources held by a thread. */
 #define release_thread(thread) do { } while(0)
 
-extern unsigned long thread_saved_pc(struct task_struct *tsk);
-
 /*
  * Do necessary setup to start up a newly executed thread.
  */
@@ -383,9 +386,6 @@ unsigned long get_wchan(struct task_struct *p);
 #define KSTK_EIP(tsk) (task_pt_regs(tsk)->cp0_epc)
 #define KSTK_ESP(tsk) (task_pt_regs(tsk)->regs[29])
 #define KSTK_STATUS(tsk) (task_pt_regs(tsk)->cp0_status)
-
-#define cpu_relax()	barrier()
-#define cpu_relax_lowlatency() cpu_relax()
 
 /*
  * Return_address is a replacement for __builtin_return_address(count)

@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2014-2017,2019 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -16,18 +8,23 @@
 #include <linux/err.h>
 #include <linux/slab.h>
 #include <linux/clk.h>
-#include <linux/clk/msm-clk.h>
 #include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/of.h>
+#include <linux/extcon.h>
+#include <linux/extcon-provider.h>
+#include <linux/debugfs.h>
+#include <linux/gpio/consumer.h>
+#include <linux/of_gpio.h>
+#include <linux/of_irq.h>
 #include <linux/platform_device.h>
 #include <linux/power_supply.h>
 #include <linux/regulator/consumer.h>
 #include <linux/regulator/driver.h>
 #include <linux/regulator/machine.h>
 #include <linux/usb/phy.h>
-#include <linux/usb/msm_hsusb.h>
 #include <linux/reset.h>
+#include <linux/power_supply.h>
 
 #define QUSB2PHY_PLL_PWR_CTL		0x18
 #define REF_BUF_EN			BIT(0)
@@ -45,7 +42,6 @@
 
 #define QUSB2PHY_PORT_QC1	0x70
 #define VDM_SRC_EN		BIT(4)
-#define IDP_SRC_EN		BIT(3)
 #define VDP_SRC_EN		BIT(2)
 
 #define QUSB2PHY_PORT_QC2	0x74
@@ -78,6 +74,9 @@
 #define UTMI_ULPI_SEL			BIT(7)
 #define UTMI_TEST_MUX_SEL		BIT(6)
 
+#define QUSB2PHY_PLL_AUTOPGM_CTL1	0x1C
+#define QUSB2PHY_PLL_PWR_CTL		0x18
+
 #define QUSB2PHY_PLL_TEST		0x04
 #define CLK_REF_SEL			BIT(7)
 
@@ -97,7 +96,9 @@
 #define DPSE_INTR_HIGH_SEL              BIT(1)
 #define DPSE_INTR_EN                    BIT(0)
 
-#define QUSB2PHY_PORT_INT_STATUS	0xF0
+#define QUSB2PHY_PORT_INTR_STATUS	0xF0
+#define DPSE_INTR_HIGH			BIT(0)
+
 #define QUSB2PHY_PORT_UTMI_STATUS	0xF4
 #define LINESTATE_DP			BIT(0)
 #define LINESTATE_DM			BIT(1)
@@ -111,28 +112,27 @@
 #define QUSB2PHY_3P3_VOL_MAX		3200000 /* uV */
 #define QUSB2PHY_3P3_HPM_LOAD		30000	/* uA */
 
+#define SOC_THRESHOLD_LEVEL		45
 #define QUSB2PHY_REFCLK_ENABLE		BIT(0)
 
-unsigned int tune1;
-module_param(tune1, uint, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(tune1, "QUSB PHY TUNE1");
+#define HSTX_TRIMSIZE			4
 
-unsigned int tune2;
-module_param(tune2, uint, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(tune2, "QUSB PHY TUNE2");
+enum port_state {
+	PORT_UNKNOWN,
+	PORT_DISCONNECTED,
+	PORT_DCD_IN_PROGRESS,
+	PORT_PRIMARY_IN_PROGRESS,
+	PORT_SECONDARY_IN_PROGRESS,
+	PORT_CHG_DET_DONE,
+	PORT_HOST_MODE,
+};
 
-unsigned int tune3;
-module_param(tune3, uint, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(tune3, "QUSB PHY TUNE3");
-
-unsigned int tune4;
-module_param(tune4, uint, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(tune4, "QUSB PHY TUNE4");
-
-unsigned int tune5;
-module_param(tune5, uint, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(tune5, "QUSB PHY TUNE5");
-
+enum chg_det_state {
+	STATE_UNKNOWN,
+	STATE_DCD,
+	STATE_PRIMARY,
+	STATE_SECONDARY,
+};
 
 struct qusb_phy {
 	struct usb_phy		phy;
@@ -140,79 +140,120 @@ struct qusb_phy {
 	void __iomem		*tune2_efuse_reg;
 	void __iomem		*ref_clk_base;
 	void __iomem		*tcsr_clamp_dig_n;
+	void __iomem		*tcsr_conn_box_spare;
+	void __iomem		*eud_enable_reg;
 
 	struct clk		*ref_clk_src;
 	struct clk		*ref_clk;
 	struct clk		*cfg_ahb_clk;
 	struct reset_control	*phy_reset;
+	struct clk		*iface_clk;
+	struct clk		*core_clk;
 
+	struct regulator	*gdsc;
 	struct regulator	*vdd;
 	struct regulator	*vdda33;
 	struct regulator	*vdda18;
 	int			vdd_levels[3]; /* none, low, high */
+	int			vdda33_levels[3]; /* low, min, max */
 	int			init_seq_len;
 	int			*qusb_phy_init_seq;
 	u32			major_rev;
+	u32			usb_hs_ac_bitmask;
+	u32			usb_hs_ac_value;
 
 	u32			tune2_val;
 	int			tune2_efuse_bit_pos;
 	int			tune2_efuse_num_of_bits;
 	int			tune2_efuse_correction;
 
-	bool			power_enabled;
-	bool			clocks_enabled;
 	bool			cable_connected;
 	bool			suspended;
 	bool			ulpi_mode;
-	bool			rm_pulldown;
+	bool			dpdm_enable;
 	bool			is_se_clk;
+	bool			low_soc;
 
+	struct notifier_block	psy_nb;
+	struct work_struct	soc_eval_work;
 	struct regulator_desc	dpdm_rdesc;
 	struct regulator_dev	*dpdm_rdev;
 
-	bool				dpdm_pulsing_enabled;
-	struct power_supply		*dpdm_psy;
-	struct power_supply_desc	dpdm_psy_desc;
-
-	/* emulation targets specific */
-	void __iomem		*emu_phy_base;
-	bool			emulation;
-	int			*emu_init_seq;
-	int			emu_init_seq_len;
-	int			*phy_pll_reset_seq;
-	int			phy_pll_reset_seq_len;
-	int			*emu_dcm_reset_seq;
-	int			emu_dcm_reset_seq_len;
 	bool			put_into_high_z_state;
 	struct mutex		phy_lock;
-	spinlock_t		pulse_lock;
-};
 
-static enum power_supply_property dpdm_props[] = {
-	POWER_SUPPLY_PROP_DP_DM,
+	struct extcon_dev	*usb_extcon;
+	bool			vbus_active;
+	bool			id_state;
+	struct power_supply	*usb_psy;
+	struct power_supply	*batt_psy;
+	struct delayed_work	port_det_w;
+	enum port_state		port_state;
+	unsigned int		dcd_timeout;
+
+	int			notifier_gpio;
+	bool			is_gpio_active_low;
+	int			notifier_irq;
+	bool			is_port_valid;
+	bool			dcp_charger;
+
+	/* debugfs entries */
+	struct dentry		*root;
+	u8			tune1;
+	u8			tune2;
+	u8			tune3;
+	u8			tune4;
+	u8			tune5;
 };
 
 static void qusb_phy_enable_clocks(struct qusb_phy *qphy, bool on)
 {
-	dev_dbg(qphy->phy.dev, "%s(): clocks_enabled:%d on:%d\n",
-			__func__, qphy->clocks_enabled, on);
+	dev_dbg(qphy->phy.dev, "%s(): on:%d\n", __func__, on);
 
-	if (!qphy->clocks_enabled && on) {
+	if (on) {
 		clk_prepare_enable(qphy->ref_clk_src);
 		clk_prepare_enable(qphy->ref_clk);
+		clk_prepare_enable(qphy->iface_clk);
+		clk_prepare_enable(qphy->core_clk);
 		clk_prepare_enable(qphy->cfg_ahb_clk);
-		qphy->clocks_enabled = true;
-	}
-
-	if (qphy->clocks_enabled && !on) {
+	} else {
+		clk_disable_unprepare(qphy->cfg_ahb_clk);
+		/*
+		 * FSM depedency beween iface_clk and core_clk.
+		 * Hence turned off core_clk before iface_clk.
+		 */
+		clk_disable_unprepare(qphy->core_clk);
+		clk_disable_unprepare(qphy->iface_clk);
 		clk_disable_unprepare(qphy->ref_clk);
 		clk_disable_unprepare(qphy->ref_clk_src);
-		clk_disable_unprepare(qphy->cfg_ahb_clk);
-		qphy->clocks_enabled = false;
 	}
 
-	dev_dbg(qphy->phy.dev, "%s(): clocks_enabled:%d\n", __func__,
-						qphy->clocks_enabled);
+}
+
+static int qusb_phy_gdsc(struct qusb_phy *qphy, bool on)
+{
+	int ret;
+
+	if (IS_ERR_OR_NULL(qphy->gdsc))
+		return -EPERM;
+
+	if (on) {
+		dev_dbg(qphy->phy.dev, "TURNING ON GDSC\n");
+		ret = regulator_enable(qphy->gdsc);
+		if (ret) {
+			dev_err(qphy->phy.dev, "unable to enable gdsc\n");
+			return ret;
+		}
+	} else {
+		dev_dbg(qphy->phy.dev, "TURNING OFF GDSC\n");
+		ret = regulator_disable(qphy->gdsc);
+		if (ret) {
+			dev_err(qphy->phy.dev, "unable to disable gdsc\n");
+			return ret;
+		}
+	}
+
+	return ret;
 }
 
 static int qusb_phy_config_vdd(struct qusb_phy *qphy, int high)
@@ -232,17 +273,40 @@ static int qusb_phy_config_vdd(struct qusb_phy *qphy, int high)
 	return ret;
 }
 
+static int qusb_read_battery_soc(struct qusb_phy *qphy, int *soc_val)
+{
+	union power_supply_propval val = {0,};
+	int ret = 0;
+
+	if (!qphy->batt_psy) {
+		qphy->batt_psy = power_supply_get_by_name("battery");
+		if (!qphy->batt_psy) {
+			dev_err(qphy->phy.dev, "Could not get battery psy\n");
+			return -ENODEV;
+		}
+	}
+
+	if (qphy->batt_psy) {
+		ret = power_supply_get_property(qphy->batt_psy,
+				POWER_SUPPLY_PROP_CAPACITY, &val);
+		if (ret) {
+			dev_err(qphy->phy.dev,
+					"battery SoC read error\n");
+			return ret;
+		}
+	*soc_val = val.intval;
+	}
+
+	dev_dbg(qphy->phy.dev, "soc:%d\n", *soc_val);
+	return ret;
+}
+
 static int qusb_phy_enable_power(struct qusb_phy *qphy, bool on)
 {
 	int ret = 0;
 
-	dev_dbg(qphy->phy.dev, "%s turn %s regulators. power_enabled:%d\n",
-			__func__, on ? "on" : "off", qphy->power_enabled);
-
-	if (qphy->power_enabled == on) {
-		dev_dbg(qphy->phy.dev, "PHYs' regulators are already ON.\n");
-		return 0;
-	}
+	dev_dbg(qphy->phy.dev, "%s turn %s regulators\n",
+			__func__, on ? "on" : "off");
 
 	if (!on)
 		goto disable_vdda33;
@@ -286,8 +350,9 @@ static int qusb_phy_enable_power(struct qusb_phy *qphy, bool on)
 		goto disable_vdda18;
 	}
 
-	ret = regulator_set_voltage(qphy->vdda33, QUSB2PHY_3P3_VOL_MIN,
-						QUSB2PHY_3P3_VOL_MAX);
+	ret = regulator_set_voltage(qphy->vdda33, qphy->vdda33_levels[1],
+						qphy->vdda33_levels[2]);
+
 	if (ret) {
 		dev_err(qphy->phy.dev,
 				"Unable to set voltage for vdda33:%d\n", ret);
@@ -299,8 +364,6 @@ static int qusb_phy_enable_power(struct qusb_phy *qphy, bool on)
 		dev_err(qphy->phy.dev, "Unable to enable vdda33:%d\n", ret);
 		goto unset_vdd33;
 	}
-
-	qphy->power_enabled = true;
 
 	pr_debug("%s(): QUSB PHY's regulators are turned ON.\n", __func__);
 	return ret;
@@ -349,300 +412,13 @@ unconfig_vdd:
 		dev_err(qphy->phy.dev, "Unable unconfig VDD:%d\n",
 								ret);
 err_vdd:
-	qphy->power_enabled = false;
 	dev_dbg(qphy->phy.dev, "QUSB PHY's regulators are turned OFF.\n");
+
 	return ret;
-}
-
-#define PHY_PULSE_TIME_USEC		250
-static int qusb_phy_update_dpdm(struct usb_phy *phy, int value)
-{
-	struct qusb_phy *qphy = container_of(phy, struct qusb_phy, phy);
-	int ret = 0;
-	unsigned long flags;
-	u32 reg;
-
-	dev_dbg(phy->dev, "%s value:%d rm_pulldown:%d\n",
-				__func__, value, qphy->rm_pulldown);
-
-	switch (value) {
-	case POWER_SUPPLY_DP_DM_DPF_DMF:
-		dev_dbg(phy->dev, "POWER_SUPPLY_DP_DM_DPF_DMF\n");
-		mutex_lock(&qphy->phy_lock);
-		if (!qphy->rm_pulldown) {
-			ret = qusb_phy_enable_power(qphy, true);
-			if (ret >= 0) {
-				qphy->rm_pulldown = true;
-				dev_dbg(phy->dev, "DP_DM_F: rm_pulldown:%d\n",
-						qphy->rm_pulldown);
-			}
-
-			if (qphy->put_into_high_z_state) {
-				if (qphy->tcsr_clamp_dig_n)
-					writel_relaxed(0x1,
-					       qphy->tcsr_clamp_dig_n);
-
-				qusb_phy_enable_clocks(qphy, true);
-
-				dev_dbg(phy->dev, "RESET QUSB PHY\n");
-				ret = reset_control_assert(qphy->phy_reset);
-				if (ret)
-					dev_err(phy->dev, "phyassert failed\n");
-				usleep_range(100, 150);
-				ret = reset_control_deassert(qphy->phy_reset);
-				if (ret)
-					dev_err(phy->dev, "deassert failed\n");
-
-				/*
-				 * Phy in non-driving mode leaves Dp and Dm
-				 * lines in high-Z state. Controller power
-				 * collapse is not switching phy to non-driving
-				 * mode causing charger detection failure. Bring
-				 * phy to non-driving mode by overriding
-				 * controller output via UTMI interface.
-				 */
-				writel_relaxed(TERM_SELECT | XCVR_SELECT_FS |
-					OP_MODE_NON_DRIVE,
-					qphy->base + QUSB2PHY_PORT_UTMI_CTRL1);
-				writel_relaxed(UTMI_ULPI_SEL |
-					UTMI_TEST_MUX_SEL,
-					qphy->base + QUSB2PHY_PORT_UTMI_CTRL2);
-
-				/* Disable PHY */
-				writel_relaxed(CLAMP_N_EN | FREEZIO_N |
-					POWER_DOWN,
-					qphy->base + QUSB2PHY_PORT_POWERDOWN);
-				/* Make sure that above write is completed */
-				wmb();
-
-				if (qphy->suspended)
-					qusb_phy_enable_clocks(qphy, false);
-			}
-		}
-
-		/* Clear QC1 and QC2 registers when rm_pulldown = 1 */
-		if (qphy->dpdm_pulsing_enabled && qphy->rm_pulldown) {
-			dev_dbg(phy->dev, "clearing qc1 and qc2 registers.\n");
-			ret = clk_prepare_enable(qphy->cfg_ahb_clk);
-			if (ret)
-				goto clk_error;
-
-			/* Clear qc1 and qc2 registers */
-			writel_relaxed(0x00, qphy->base + QUSB2PHY_PORT_QC1);
-			writel_relaxed(0x00, qphy->base + QUSB2PHY_PORT_QC2);
-			/* to make sure above write goes through */
-			mb();
-			clk_disable_unprepare(qphy->cfg_ahb_clk);
-		}
-		mutex_unlock(&qphy->phy_lock);
-
-		break;
-
-	case POWER_SUPPLY_DP_DM_DPR_DMR:
-		dev_dbg(phy->dev, "POWER_SUPPLY_DP_DM_DPR_DMR\n");
-		mutex_lock(&qphy->phy_lock);
-		if (qphy->rm_pulldown) {
-			dev_dbg(phy->dev, "clearing qc1 and qc2 registers.\n");
-			if (qphy->dpdm_pulsing_enabled) {
-				ret = clk_prepare_enable(qphy->cfg_ahb_clk);
-				if (ret)
-					goto clk_error;
-
-				/* Clear qc1 and qc2 registers */
-				writel_relaxed(0x00,
-						qphy->base + QUSB2PHY_PORT_QC1);
-				writel_relaxed(0x00,
-						qphy->base + QUSB2PHY_PORT_QC2);
-				/* to make sure above write goes through */
-				mb();
-				clk_disable_unprepare(qphy->cfg_ahb_clk);
-			}
-
-			if (!qphy->cable_connected) {
-				if (qphy->tcsr_clamp_dig_n)
-					writel_relaxed(0x0,
-					       qphy->tcsr_clamp_dig_n);
-				dev_dbg(phy->dev, "turn off for HVDCP case\n");
-				ret = qusb_phy_enable_power(qphy, false);
-			}
-			if (ret >= 0) {
-				qphy->rm_pulldown = false;
-				dev_dbg(phy->dev, "DP_DM_R: rm_pulldown:%d\n",
-						qphy->rm_pulldown);
-			}
-		}
-		mutex_unlock(&qphy->phy_lock);
-		break;
-
-	case POWER_SUPPLY_DP_DM_DP0P6_DMF:
-		if (!qphy->dpdm_pulsing_enabled)
-			break;
-
-		dev_dbg(phy->dev, "POWER_SUPPLY_DP_DM_DP0P6_DMF\n");
-		ret = clk_prepare_enable(qphy->cfg_ahb_clk);
-		if (ret)
-			goto clk_error;
-
-		/* Set DP to 0.6v and DM to High Z state */
-		writel_relaxed(VDP_SRC_EN, qphy->base + QUSB2PHY_PORT_QC1);
-		/* complete above write */
-		mb();
-		clk_disable_unprepare(qphy->cfg_ahb_clk);
-		break;
-
-	case POWER_SUPPLY_DP_DM_DP0P6_DM3P3:
-		if (!qphy->dpdm_pulsing_enabled)
-			break;
-
-		dev_dbg(phy->dev, "POWER_SUPPLY_DP_DM_DP0PHVDCP_36_DM3P3\n");
-		ret = clk_prepare_enable(qphy->cfg_ahb_clk);
-		if (ret)
-			goto clk_error;
-
-		/* Set DP to 0.6v */
-		writel_relaxed(VDP_SRC_EN, qphy->base + QUSB2PHY_PORT_QC1);
-		/* Set DM to 3.075v */
-		writel_relaxed(RPUM_LOW_EN | RDM_UP_EN,
-				qphy->base + QUSB2PHY_PORT_QC2);
-		/* complete above write */
-		mb();
-		clk_disable_unprepare(qphy->cfg_ahb_clk);
-		break;
-
-	case POWER_SUPPLY_DP_DM_DP_PULSE:
-		if (!qphy->dpdm_pulsing_enabled)
-			break;
-
-		dev_dbg(phy->dev, "POWER_SUPPLY_DP_DM_DP_PULSE\n");
-		ret = clk_prepare_enable(qphy->cfg_ahb_clk);
-		if (ret)
-			goto clk_error;
-
-		spin_lock_irqsave(&qphy->pulse_lock, flags);
-		/*Set DP to 3.075v, sleep for .25 ms */
-		reg = readl_relaxed(qphy->base + QUSB2PHY_PORT_QC2);
-		reg |= (RDP_UP_EN | RPUP_LOW_EN);
-		writel_relaxed(reg, qphy->base + QUSB2PHY_PORT_QC2);
-
-		/* complete above write */
-		mb();
-
-		/*
-		 * It is recommended to wait here to get voltage change on
-		 * DP/DM line.
-		 */
-		udelay(PHY_PULSE_TIME_USEC);
-
-		 /* Set DP to 0.6v, sleep 2-3ms */
-		reg = readl_relaxed(qphy->base + QUSB2PHY_PORT_QC1);
-		reg |= VDP_SRC_EN;
-		writel_relaxed(reg, qphy->base + QUSB2PHY_PORT_QC1);
-
-		reg = readl_relaxed(qphy->base + QUSB2PHY_PORT_QC2);
-		reg &= ~(RDP_UP_EN | RPUP_LOW_EN);
-		writel_relaxed(reg, qphy->base + QUSB2PHY_PORT_QC2);
-		/* complete above write */
-		mb();
-		spin_unlock_irqrestore(&qphy->pulse_lock, flags);
-		/*
-		 * It is recommended to wait here to get voltage change on
-		 * DP/DM line.
-		 */
-		usleep_range(2000, 3000);
-		clk_disable_unprepare(qphy->cfg_ahb_clk);
-		break;
-
-	case POWER_SUPPLY_DP_DM_DM_PULSE:
-		if (!qphy->dpdm_pulsing_enabled)
-			break;
-
-		dev_dbg(phy->dev, "POWER_SUPPLY_DP_DM_DM_PULSE\n");
-		ret = clk_prepare_enable(qphy->cfg_ahb_clk);
-		if (ret)
-			goto clk_error;
-
-		spin_lock_irqsave(&qphy->pulse_lock, flags);
-		/* Set DM to 0.6v, sleep .25 ms */
-		reg = readl_relaxed(qphy->base + QUSB2PHY_PORT_QC1);
-		reg |= VDM_SRC_EN;
-		writel_relaxed(reg, qphy->base + QUSB2PHY_PORT_QC1);
-
-		reg = readl_relaxed(qphy->base + QUSB2PHY_PORT_QC2);
-		reg &= ~(RDM_UP_EN | RPUM_LOW_EN);
-		writel_relaxed(reg, qphy->base + QUSB2PHY_PORT_QC2);
-
-		/* complete above write */
-		mb();
-
-		/*
-		 * It is recommended to wait here to get voltage change on
-		 * DP/DM line.
-		 */
-		udelay(PHY_PULSE_TIME_USEC);
-
-		/* DM to 3.075v, sleep 2-3ms */
-		reg = readl_relaxed(qphy->base + QUSB2PHY_PORT_QC2);
-		reg |= (RPUM_LOW_EN | RDM_UP_EN);
-		writel_relaxed(reg, qphy->base + QUSB2PHY_PORT_QC2);
-
-		reg = readl_relaxed(qphy->base + QUSB2PHY_PORT_QC1);
-		reg &= ~VDM_SRC_EN;
-		writel_relaxed(reg, qphy->base + QUSB2PHY_PORT_QC1);
-
-		/* complete above write */
-		mb();
-		spin_unlock_irqrestore(&qphy->pulse_lock, flags);
-
-		/*
-		 * It is recommended to wait here to get voltage change on
-		 * DP/DM line.
-		 */
-		usleep_range(2000, 3000);
-		clk_disable_unprepare(qphy->cfg_ahb_clk);
-		break;
-	default:
-		ret = -EINVAL;
-		dev_err(phy->dev, "Invalid power supply property(%d)\n", value);
-		break;
-	}
-
-clk_error:
-	return ret;
-}
-
-static int qusb_phy_get_property_usb(struct power_supply *psy,
-				enum power_supply_property psp,
-				union power_supply_propval *val)
-{
-	return -EINVAL;
-}
-
-static int qusb_phy_set_property_usb(struct power_supply *psy,
-				enum power_supply_property prop,
-				const union power_supply_propval *val)
-{
-	struct qusb_phy *qphy = power_supply_get_drvdata(psy);
-	int ret = 0;
-
-	switch (prop) {
-	case POWER_SUPPLY_PROP_DP_DM:
-		ret = qusb_phy_update_dpdm(&qphy->phy, val->intval);
-		if (ret) {
-			dev_dbg(qphy->phy.dev, "error in dpdm update: %d\n",
-								ret);
-			return ret;
-		}
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	return 0;
 }
 
 static void qusb_phy_get_tune2_param(struct qusb_phy *qphy)
 {
-	u8 num_of_bits;
 	u32 bit_mask = 1;
 	u8 reg_val;
 
@@ -651,22 +427,30 @@ static void qusb_phy_get_tune2_param(struct qusb_phy *qphy)
 				qphy->tune2_efuse_bit_pos);
 
 	/* get bit mask based on number of bits to use with efuse reg */
-	if (qphy->tune2_efuse_num_of_bits) {
-		num_of_bits = qphy->tune2_efuse_num_of_bits;
-		bit_mask = (bit_mask << num_of_bits) - 1;
-	}
+	bit_mask = (bit_mask << qphy->tune2_efuse_num_of_bits) - 1;
 
 	/*
 	 * Read EFUSE register having TUNE2 parameter's high nibble.
 	 * If efuse register shows value as 0x0, then use previous value
 	 * as it is. Otherwise use efuse register based value for this purpose.
 	 */
-	qphy->tune2_val = readl_relaxed(qphy->tune2_efuse_reg);
-	pr_debug("%s(): bit_mask:%d efuse based tune2 value:%d\n",
-				__func__, bit_mask, qphy->tune2_val);
+	if (qphy->tune2_efuse_num_of_bits < HSTX_TRIMSIZE) {
+		qphy->tune2_val =
+		     TUNE2_HIGH_NIBBLE_VAL(readl_relaxed(qphy->tune2_efuse_reg),
+		     qphy->tune2_efuse_bit_pos, bit_mask);
+		bit_mask =
+		     (1 << (HSTX_TRIMSIZE - qphy->tune2_efuse_num_of_bits)) - 1;
+		qphy->tune2_val |=
+		 TUNE2_HIGH_NIBBLE_VAL(readl_relaxed(qphy->tune2_efuse_reg + 4),
+				0, bit_mask) << qphy->tune2_efuse_num_of_bits;
+	} else {
+		qphy->tune2_val = readl_relaxed(qphy->tune2_efuse_reg);
+		qphy->tune2_val = TUNE2_HIGH_NIBBLE_VAL(qphy->tune2_val,
+					qphy->tune2_efuse_bit_pos, bit_mask);
+	}
 
-	qphy->tune2_val = TUNE2_HIGH_NIBBLE_VAL(qphy->tune2_val,
-				qphy->tune2_efuse_bit_pos, bit_mask);
+	pr_debug("%s(): efuse based tune2 value:%d\n",
+				__func__, qphy->tune2_val);
 
 	/* Update higher nibble of TUNE2 value for better rise/fall times */
 	if (qphy->tune2_efuse_correction && qphy->tune2_val) {
@@ -688,6 +472,26 @@ static void qusb_phy_get_tune2_param(struct qusb_phy *qphy)
 	qphy->tune2_val = reg_val;
 }
 
+static void qusb_phy_set_tcsr_clamp(struct qusb_phy *qphy)
+{
+	if (!qphy->tcsr_clamp_dig_n)
+		return;
+
+	writel_relaxed(0x1, qphy->tcsr_clamp_dig_n);
+
+}
+
+static void qusb_phy_clear_tcsr_clamp(struct qusb_phy *qphy,
+						bool check_eud_state)
+{
+	if (!qphy->tcsr_clamp_dig_n)
+		return;
+
+	if (!check_eud_state || !(qphy->eud_enable_reg
+			&& readl_relaxed(qphy->eud_enable_reg)))
+		writel_relaxed(0x0, qphy->tcsr_clamp_dig_n);
+}
+
 static void qusb_phy_write_seq(void __iomem *base, u32 *seq, int cnt,
 		unsigned long delay)
 {
@@ -702,20 +506,34 @@ static void qusb_phy_write_seq(void __iomem *base, u32 *seq, int cnt,
 	}
 }
 
+static void qusb_phy_reset(struct qusb_phy *qphy)
+{
+	int ret = 0;
+
+	ret = reset_control_assert(qphy->phy_reset);
+	if (ret)
+		dev_err(qphy->phy.dev, "%s: phy_reset assert failed\n",
+				__func__);
+	usleep_range(100, 150);
+	ret = reset_control_deassert(qphy->phy_reset);
+	if (ret)
+		dev_err(qphy->phy.dev, "%s: phy_reset deassert failed\n",
+				__func__);
+}
+
 static int qusb_phy_init(struct usb_phy *phy)
 {
 	struct qusb_phy *qphy = container_of(phy, struct qusb_phy, phy);
-	int ret, reset_val = 0;
+	int reset_val = 0;
 	u8 reg;
 	bool pll_lock_fail = false;
 
 	dev_dbg(phy->dev, "%s\n", __func__);
 
-	ret = qusb_phy_enable_power(qphy, true);
-	if (ret)
-		return ret;
-
-	qusb_phy_enable_clocks(qphy, true);
+	if (qphy->eud_enable_reg && readl_relaxed(qphy->eud_enable_reg)) {
+		dev_err(qphy->phy.dev, "eud is enabled\n");
+		return 0;
+	}
 
 	/*
 	 * ref clock is enabled by default after power on reset. Linux clock
@@ -735,37 +553,7 @@ static int qusb_phy_init(struct usb_phy *phy)
 	}
 
 	/* Perform phy reset */
-	ret = reset_control_assert(qphy->phy_reset);
-	if (ret)
-		dev_err(phy->dev, "%s: phy_reset assert failed\n", __func__);
-	usleep_range(100, 150);
-	ret = reset_control_deassert(qphy->phy_reset);
-	if (ret)
-		dev_err(phy->dev, "%s: phy_reset deassert failed\n", __func__);
-
-	if (qphy->emulation) {
-		if (qphy->emu_init_seq)
-			qusb_phy_write_seq(qphy->emu_phy_base,
-				qphy->emu_init_seq, qphy->emu_init_seq_len, 0);
-
-		if (qphy->qusb_phy_init_seq)
-			qusb_phy_write_seq(qphy->base, qphy->qusb_phy_init_seq,
-					qphy->init_seq_len, 0);
-
-		/* Wait for 5ms as per QUSB2 RUMI sequence */
-		usleep_range(5000, 7000);
-
-		if (qphy->phy_pll_reset_seq)
-			qusb_phy_write_seq(qphy->base, qphy->phy_pll_reset_seq,
-					qphy->phy_pll_reset_seq_len, 10000);
-
-		if (qphy->emu_dcm_reset_seq)
-			qusb_phy_write_seq(qphy->emu_phy_base,
-					qphy->emu_dcm_reset_seq,
-					qphy->emu_dcm_reset_seq_len, 10000);
-
-		return 0;
-	}
+	qusb_phy_reset(qphy);
 
 	/* Disable the PHY */
 	if (qphy->major_rev < 2)
@@ -793,7 +581,7 @@ static int qusb_phy_init(struct usb_phy *phy)
 	 * and try to read EFUSE value only once i.e. not every USB
 	 * cable connect case.
 	 */
-	if (qphy->tune2_efuse_reg && !tune2) {
+	if (qphy->tune2_efuse_reg && !qphy->tune2) {
 		if (!qphy->tune2_val)
 			qusb_phy_get_tune2_param(qphy);
 
@@ -804,28 +592,30 @@ static int qusb_phy_init(struct usb_phy *phy)
 	}
 
 	/* If tune modparam set, override tune value */
-
-	pr_debug("%s():userspecified modparams TUNEX val:0x%x %x %x %x %x\n",
-				__func__, tune1, tune2, tune3, tune4, tune5);
-	if (tune1)
-		writel_relaxed(tune1,
+	if (qphy->tune1) {
+		writel_relaxed(qphy->tune1,
 				qphy->base + QUSB2PHY_PORT_TUNE1);
+	}
 
-	if (tune2)
-		writel_relaxed(tune2,
+	if (qphy->tune2) {
+		writel_relaxed(qphy->tune2,
 				qphy->base + QUSB2PHY_PORT_TUNE2);
+	}
 
-	if (tune3)
-		writel_relaxed(tune3,
+	if (qphy->tune3) {
+		writel_relaxed(qphy->tune3,
 				qphy->base + QUSB2PHY_PORT_TUNE3);
+	}
 
-	if (tune4)
-		writel_relaxed(tune4,
+	if (qphy->tune4) {
+		writel_relaxed(qphy->tune4,
 				qphy->base + QUSB2PHY_PORT_TUNE4);
+	}
 
-	if (tune5)
-		writel_relaxed(tune5,
+	if (qphy->tune5) {
+		writel_relaxed(qphy->tune5,
 				qphy->base + QUSB2PHY_PORT_TUNE5);
+	}
 
 	/* ensure above writes are completed before re-enabling PHY */
 	wmb();
@@ -862,7 +652,7 @@ static int qusb_phy_init(struct usb_phy *phy)
 		wmb();
 
 		/* Required to get PHY PLL lock successfully */
-		usleep_range(50000, 51000);
+		usleep_range(100, 110);
 	}
 
 	if (qphy->major_rev < 2) {
@@ -878,13 +668,61 @@ static int qusb_phy_init(struct usb_phy *phy)
 			pll_lock_fail = true;
 	}
 
-	if (pll_lock_fail) {
+	if (pll_lock_fail)
 		dev_err(phy->dev, "QUSB PHY PLL LOCK fails:%x\n", reg);
-		WARN_ON(1);
-		return -ETIMEDOUT;
-	}
 
 	return 0;
+}
+
+static int qusb_phy_battery_supply_cb(struct notifier_block *nb,
+					unsigned long event, void *data)
+{
+	struct qusb_phy *qphy = container_of(nb, struct qusb_phy, psy_nb);
+	int soc_val = 0;
+
+	if (event != PSY_EVENT_PROP_CHANGED)
+		return NOTIFY_OK;
+
+	if (qusb_read_battery_soc(qphy, &soc_val) < 0) {
+		dev_err(qphy->phy.dev, "%s unable to read battery SoC\n",
+				__func__);
+		return NOTIFY_OK;
+	}
+
+	if (soc_val < SOC_THRESHOLD_LEVEL && !qphy->low_soc) {
+		/* Reduce voltage to be set to 2.9V for low SoC */
+		qphy->vdda33_levels[1] = qphy->vdda33_levels[0];
+		qphy->vdda33_levels[2] = qphy->vdda33_levels[0];
+		qphy->low_soc = true;
+		queue_work(system_freezable_wq, &qphy->soc_eval_work);
+		return NOTIFY_OK;
+	}
+
+	if (soc_val > SOC_THRESHOLD_LEVEL && qphy->low_soc) {
+		/* Reset voltage to be set to default for normal SoC */
+		qphy->vdda33_levels[1] = QUSB2PHY_3P3_VOL_MIN;
+		qphy->vdda33_levels[2] = QUSB2PHY_3P3_VOL_MAX;
+		qphy->low_soc = false;
+		queue_work(system_freezable_wq, &qphy->soc_eval_work);
+	}
+	return NOTIFY_OK;
+}
+
+static void qusb_phy_evaluate_soc(struct work_struct *work)
+{
+	struct qusb_phy *qphy =
+			container_of(work, struct qusb_phy, soc_eval_work);
+	int ret = 0;
+
+	dev_dbg(qphy->phy.dev, "%s setting min voltage for vdda33 as %d\n",
+				__func__, qphy->vdda33_levels[1]);
+	ret = regulator_set_voltage(qphy->vdda33, qphy->vdda33_levels[1],
+						  qphy->vdda33_levels[2]);
+	if (ret) {
+		dev_err(qphy->phy.dev,
+			"%s unable to set voltage for vdda33, ret = %d\n",
+			__func__, ret);
+	}
 }
 
 static void qusb_phy_shutdown(struct usb_phy *phy)
@@ -892,6 +730,11 @@ static void qusb_phy_shutdown(struct usb_phy *phy)
 	struct qusb_phy *qphy = container_of(phy, struct qusb_phy, phy);
 
 	dev_dbg(phy->dev, "%s\n", __func__);
+
+	if (qphy->eud_enable_reg && readl_relaxed(qphy->eud_enable_reg)) {
+		dev_err(qphy->phy.dev, "eud is enabled\n");
+		return;
+	}
 
 	qusb_phy_enable_clocks(qphy, true);
 
@@ -903,87 +746,12 @@ static void qusb_phy_shutdown(struct usb_phy *phy)
 		writel_relaxed(readl_relaxed(qphy->base + QUSB2PHY_PWR_CTRL1) |
 				PWR_CTRL1_POWR_DOWN,
 				qphy->base + QUSB2PHY_PWR_CTRL1);
+
+	/* Make sure above write complete before turning off clocks */
 	wmb();
 
 	qusb_phy_enable_clocks(qphy, false);
 }
-
-/**
- * Returns DP/DM linestate with Idp_src enabled to detect if lines are floating
- *
- * @uphy - usb phy pointer.
- *
- */
-static int qusb_phy_linestate_with_idp_src(struct usb_phy *phy)
-{
-	struct qusb_phy *qphy = container_of(phy, struct qusb_phy, phy);
-	u8 int_status, ret;
-
-	/* Disable/powerdown the PHY */
-	writel_relaxed(CLAMP_N_EN | FREEZIO_N | POWER_DOWN,
-			qphy->base + QUSB2PHY_PORT_POWERDOWN);
-
-	/* Put PHY in non-driving mode */
-	writel_relaxed(TERM_SELECT | XCVR_SELECT_FS | OP_MODE_NON_DRIVE |
-			SUSPEND_N, qphy->base + QUSB2PHY_PORT_UTMI_CTRL1);
-
-	/* Switch PHY to utmi register mode */
-	writel_relaxed(UTMI_ULPI_SEL | UTMI_TEST_MUX_SEL,
-			qphy->base + QUSB2PHY_PORT_UTMI_CTRL2);
-
-	writel_relaxed(PLL_RESET_N_CNT_5,
-			qphy->base + QUSB2PHY_PLL_AUTOPGM_CTL1);
-
-	/* Enable PHY */
-	writel_relaxed(CLAMP_N_EN | FREEZIO_N,
-			qphy->base + QUSB2PHY_PORT_POWERDOWN);
-
-	writel_relaxed(REF_BUF_EN | REXT_EN | PLL_BYPASSNL | REXT_TRIM_0,
-			qphy->base + QUSB2PHY_PLL_PWR_CTL);
-
-	usleep_range(5, 1000);
-
-	writel_relaxed(PLL_RESET_N | PLL_RESET_N_CNT_5,
-			qphy->base + QUSB2PHY_PLL_AUTOPGM_CTL1);
-	usleep_range(50, 1000);
-
-	writel_relaxed(0x00, qphy->base + QUSB2PHY_PORT_QC1);
-	writel_relaxed(0x00, qphy->base + QUSB2PHY_PORT_QC2);
-
-	/* Enable all chg_det events from PHY */
-	writel_relaxed(0x1F, qphy->base + QUSB2PHY_PORT_INTR_CTRL);
-	/* Enable Idp_src */
-	writel_relaxed(IDP_SRC_EN, qphy->base + QUSB2PHY_PORT_QC1);
-
-	usleep_range(1000, 2000);
-	int_status = readl_relaxed(qphy->base + QUSB2PHY_PORT_INT_STATUS);
-
-	/* Exit chg_det mode, set PHY regs to default values */
-	writel_relaxed(CLAMP_N_EN | FREEZIO_N | POWER_DOWN,
-			qphy->base + QUSB2PHY_PORT_POWERDOWN);  /* 23 */
-
-	writel_relaxed(PLL_AUTOPGM_EN | PLL_RESET_N | PLL_RESET_N_CNT_5,
-			qphy->base + QUSB2PHY_PLL_AUTOPGM_CTL1);
-
-	writel_relaxed(UTMI_ULPI_SEL, qphy->base + QUSB2PHY_PORT_UTMI_CTRL2);
-
-	writel_relaxed(TERM_SELECT, qphy->base + QUSB2PHY_PORT_UTMI_CTRL1);
-
-	writel_relaxed(CLAMP_N_EN | FREEZIO_N,
-			qphy->base + QUSB2PHY_PORT_POWERDOWN);
-
-	int_status = int_status & 0x5;
-
-	/*
-	 * int_status's Bit(0) is DP and Bit(2) is DM.
-	 * Caller expects bit(1) as DP and bit(0) DM i.e. usual linestate format
-	 */
-	ret = (int_status >> 2) | ((int_status & 0x1) << 1);
-	pr_debug("%s: int_status:%x, dpdm:%x\n", __func__, int_status, ret);
-
-	return ret;
-}
-
 /**
  * Performs QUSB2 PHY suspend/resume functionality.
  *
@@ -996,16 +764,26 @@ static int qusb_phy_set_suspend(struct usb_phy *phy, int suspend)
 	struct qusb_phy *qphy = container_of(phy, struct qusb_phy, phy);
 	u32 linestate = 0, intr_mask = 0;
 
-	if (qphy->suspended && suspend) {
+	if (qphy->suspended == suspend) {
+		/*
+		 * PHY_SUS_OVERRIDE is set when there is a cable
+		 * disconnect and the previous suspend call was because
+		 * of EUD spoof disconnect. Override this check and
+		 * ensure that the PHY is properly put in low power
+		 * mode.
+		 */
+		if (qphy->phy.flags & PHY_SUS_OVERRIDE)
+			goto suspend;
+
 		dev_dbg(phy->dev, "%s: USB PHY is already suspended\n",
 			__func__);
 		return 0;
 	}
 
+suspend:
 	if (suspend) {
 		/* Bus suspend case */
-		if (qphy->cable_connected ||
-			(qphy->phy.flags & PHY_HOST_MODE)) {
+		if (qphy->cable_connected) {
 			/* Clear all interrupts */
 			writel_relaxed(0x00,
 				qphy->base + QUSB2PHY_PORT_INTR_CTRL);
@@ -1031,18 +809,15 @@ static int qusb_phy_set_suspend(struct usb_phy *phy, int suspend)
 			writel_relaxed(intr_mask,
 				qphy->base + QUSB2PHY_PORT_INTR_CTRL);
 
-				/* enable phy auto-resume */
-			// add for QC case 03049110 {{
-			// Enable autoresume only when device is connected
 			if (linestate & (LINESTATE_DP | LINESTATE_DM)) {
+				/* enable phy auto-resume */
 				writel_relaxed(0x0C,
-						qphy->base + QUSB2PHY_PORT_TEST_CTRL);
+					qphy->base + QUSB2PHY_PORT_TEST_CTRL);
 				/* flush the previous write before next write */
 				wmb();
 				writel_relaxed(0x04,
 					qphy->base + QUSB2PHY_PORT_TEST_CTRL);
 			}
-			// add for QC case 03049110}}
 
 
 			dev_dbg(phy->dev, "%s: intr_mask = %x\n",
@@ -1058,21 +833,21 @@ static int qusb_phy_set_suspend(struct usb_phy *phy, int suspend)
 			writel_relaxed(0x00,
 				qphy->base + QUSB2PHY_PORT_INTR_CTRL);
 
-			/* Disable PHY */
-			writel_relaxed(POWER_DOWN,
-				qphy->base + QUSB2PHY_PORT_POWERDOWN);
-			/* Make sure that above write is completed */
-			wmb();
+			if (!(qphy->phy.flags & EUD_SPOOF_DISCONNECT)) {
+				/* Disable PHY */
+				writel_relaxed(POWER_DOWN |
+					readl_relaxed(qphy->base +
+					QUSB2PHY_PORT_POWERDOWN),
+					qphy->base + QUSB2PHY_PORT_POWERDOWN);
+				/* Make sure that above write is completed */
+				wmb();
 
-			qusb_phy_enable_clocks(qphy, false);
-			if (qphy->tcsr_clamp_dig_n)
-				writel_relaxed(0x0,
-					qphy->tcsr_clamp_dig_n);
-			/* Do not disable power rails if there is vote for it */
-			if (!qphy->rm_pulldown)
+				qusb_phy_clear_tcsr_clamp(qphy, false);
+
+				qusb_phy_enable_clocks(qphy, false);
 				qusb_phy_enable_power(qphy, false);
-			else
-				dev_dbg(phy->dev, "race with rm_pulldown. Keep ldo ON\n");
+			}
+
 			mutex_unlock(&qphy->phy_lock);
 
 			/*
@@ -1087,17 +862,14 @@ static int qusb_phy_set_suspend(struct usb_phy *phy, int suspend)
 		qphy->suspended = true;
 	} else {
 		/* Bus suspend case */
-		if (qphy->cable_connected ||
-			(qphy->phy.flags & PHY_HOST_MODE)) {
+		if (qphy->cable_connected) {
 			qusb_phy_enable_clocks(qphy, true);
 			/* Clear all interrupts on resume */
 			writel_relaxed(0x00,
 				qphy->base + QUSB2PHY_PORT_INTR_CTRL);
 		} else {
 			qusb_phy_enable_power(qphy, true);
-			if (qphy->tcsr_clamp_dig_n)
-				writel_relaxed(0x1,
-					qphy->tcsr_clamp_dig_n);
+			qusb_phy_set_tcsr_clamp(qphy);
 			qusb_phy_enable_clocks(qphy, true);
 		}
 		qphy->suspended = false;
@@ -1130,29 +902,184 @@ static int qusb_phy_notify_disconnect(struct usb_phy *phy,
 	return 0;
 }
 
+static int qusb_phy_drive_dp_pulse(struct usb_phy *phy,
+						unsigned int pulse_width)
+{
+	struct qusb_phy *qphy = container_of(phy, struct qusb_phy, phy);
+	int ret;
+
+	dev_dbg(qphy->phy.dev, "connected to a CDP, drive DP up\n");
+	ret = qusb_phy_enable_power(qphy, true);
+	if (ret < 0) {
+		dev_dbg(qphy->phy.dev,
+			"dpdm regulator enable failed:%d\n", ret);
+		return ret;
+	}
+	qusb_phy_gdsc(qphy, true);
+	qusb_phy_enable_clocks(qphy, true);
+	qusb_phy_reset(qphy);
+	/* Configure PHY to enable control on DP/DM lines */
+	writel_relaxed(CLAMP_N_EN | FREEZIO_N | POWER_DOWN,
+				qphy->base + QUSB2PHY_PORT_POWERDOWN);
+
+	writel_relaxed(TERM_SELECT | XCVR_SELECT_FS | OP_MODE_NON_DRIVE |
+			SUSPEND_N, qphy->base + QUSB2PHY_PORT_UTMI_CTRL1);
+
+	writel_relaxed(UTMI_ULPI_SEL | UTMI_TEST_MUX_SEL,
+				qphy->base + QUSB2PHY_PORT_UTMI_CTRL2);
+
+	writel_relaxed(PLL_RESET_N_CNT_5,
+			qphy->base + QUSB2PHY_PLL_AUTOPGM_CTL1);
+
+	writel_relaxed(CLAMP_N_EN | FREEZIO_N,
+			qphy->base + QUSB2PHY_PORT_POWERDOWN);
+
+	writel_relaxed(REF_BUF_EN | REXT_EN | PLL_BYPASSNL | REXT_TRIM_0,
+			qphy->base + QUSB2PHY_PLL_PWR_CTL);
+
+	usleep_range(5, 10);
+
+	writel_relaxed(0x15, qphy->base + QUSB2PHY_PLL_AUTOPGM_CTL1);
+	writel_relaxed(PLL_RESET_N | PLL_RESET_N_CNT_5,
+			qphy->base + QUSB2PHY_PLL_AUTOPGM_CTL1);
+
+	writel_relaxed(0x00, qphy->base + QUSB2PHY_PORT_QC1);
+	writel_relaxed(0x00, qphy->base + QUSB2PHY_PORT_QC2);
+
+	usleep_range(50, 60);
+	/* Enable Rdp_en to pull DP up to 3V */
+	writel_relaxed(RDP_UP_EN, qphy->base + QUSB2PHY_PORT_QC2);
+	msleep(pulse_width);
+
+	/* Put the PHY and DP back to normal state */
+	writel_relaxed(CLAMP_N_EN | FREEZIO_N | POWER_DOWN,
+			qphy->base + QUSB2PHY_PORT_POWERDOWN);  /* 23 */
+
+	writel_relaxed(PLL_AUTOPGM_EN | PLL_RESET_N | PLL_RESET_N_CNT_5,
+			qphy->base + QUSB2PHY_PLL_AUTOPGM_CTL1);
+
+	writel_relaxed(UTMI_ULPI_SEL, qphy->base + QUSB2PHY_PORT_UTMI_CTRL2);
+
+	writel_relaxed(TERM_SELECT, qphy->base + QUSB2PHY_PORT_UTMI_CTRL1);
+
+	qusb_phy_enable_clocks(qphy, false);
+	qusb_phy_gdsc(qphy, false);
+
+	ret = qusb_phy_enable_power(qphy, false);
+	if (ret < 0) {
+		dev_dbg(qphy->phy.dev,
+			"dpdm regulator disable failed:%d\n", ret);
+		return ret;
+	}
+	return 0;
+}
+
 static int qusb_phy_dpdm_regulator_enable(struct regulator_dev *rdev)
 {
+	int ret = 0;
 	struct qusb_phy *qphy = rdev_get_drvdata(rdev);
 
-	dev_dbg(qphy->phy.dev, "%s\n", __func__);
-	return qusb_phy_update_dpdm(&qphy->phy, POWER_SUPPLY_DP_DM_DPF_DMF);
+	dev_dbg(qphy->phy.dev, "%s dpdm_enable:%d\n",
+				__func__, qphy->dpdm_enable);
+
+	if (qphy->eud_enable_reg && readl_relaxed(qphy->eud_enable_reg)) {
+		dev_err(qphy->phy.dev, "eud is enabled\n");
+		return 0;
+	}
+
+	mutex_lock(&qphy->phy_lock);
+	if (!qphy->dpdm_enable) {
+		ret = qusb_phy_enable_power(qphy, true);
+		if (ret < 0) {
+			dev_dbg(qphy->phy.dev,
+				"dpdm regulator enable failed:%d\n", ret);
+			mutex_unlock(&qphy->phy_lock);
+			return ret;
+		}
+		qphy->dpdm_enable = true;
+		if (qphy->put_into_high_z_state) {
+			qusb_phy_set_tcsr_clamp(qphy);
+
+			qusb_phy_gdsc(qphy, true);
+			qusb_phy_enable_clocks(qphy, true);
+
+			dev_dbg(qphy->phy.dev, "RESET QUSB PHY\n");
+			qusb_phy_reset(qphy);
+
+			/*
+			 * Phy in non-driving mode leaves Dp and Dm
+			 * lines in high-Z state. Controller power
+			 * collapse is not switching phy to non-driving
+			 * mode causing charger detection failure. Bring
+			 * phy to non-driving mode by overriding
+			 * controller output via UTMI interface.
+			 */
+			writel_relaxed(TERM_SELECT | XCVR_SELECT_FS |
+				OP_MODE_NON_DRIVE,
+				qphy->base + QUSB2PHY_PORT_UTMI_CTRL1);
+			writel_relaxed(UTMI_ULPI_SEL |
+				UTMI_TEST_MUX_SEL,
+				qphy->base + QUSB2PHY_PORT_UTMI_CTRL2);
+
+
+			/* Disable PHY */
+			writel_relaxed(CLAMP_N_EN | FREEZIO_N |
+					POWER_DOWN,
+					qphy->base + QUSB2PHY_PORT_POWERDOWN);
+			/* Make sure that above write is completed */
+			wmb();
+
+			qusb_phy_enable_clocks(qphy, false);
+			qusb_phy_gdsc(qphy, false);
+		}
+	}
+	mutex_unlock(&qphy->phy_lock);
+
+	return ret;
 }
 
 static int qusb_phy_dpdm_regulator_disable(struct regulator_dev *rdev)
 {
+	int ret = 0;
 	struct qusb_phy *qphy = rdev_get_drvdata(rdev);
 
-	dev_dbg(qphy->phy.dev, "%s\n", __func__);
-	return qusb_phy_update_dpdm(&qphy->phy, POWER_SUPPLY_DP_DM_DPR_DMR);
+	dev_dbg(qphy->phy.dev, "%s dpdm_enable:%d\n",
+				__func__, qphy->dpdm_enable);
+
+	mutex_lock(&qphy->phy_lock);
+	if (qphy->dpdm_enable) {
+		/* If usb core is active, rely on set_suspend to clamp phy */
+		if (!qphy->cable_connected)
+			qusb_phy_clear_tcsr_clamp(qphy, false);
+
+		/*
+		 * Phy reset is needed in case multiple instances
+		 * of HSPHY exists with shared power supplies. This
+		 * reset is to bring out the PHY from high-Z state
+		 * and avoid extra current consumption.
+		 */
+		qusb_phy_reset(qphy);
+		ret = qusb_phy_enable_power(qphy, false);
+		if (ret < 0) {
+			dev_dbg(qphy->phy.dev,
+				"dpdm regulator disable failed:%d\n", ret);
+			mutex_unlock(&qphy->phy_lock);
+			return ret;
+		}
+		qphy->dpdm_enable = false;
+	}
+	mutex_unlock(&qphy->phy_lock);
+
+	return ret;
 }
 
 static int qusb_phy_dpdm_regulator_is_enabled(struct regulator_dev *rdev)
 {
 	struct qusb_phy *qphy = rdev_get_drvdata(rdev);
 
-	dev_dbg(qphy->phy.dev, "%s qphy->rm_pulldown = %d\n", __func__,
-					qphy->rm_pulldown);
-	return qphy->rm_pulldown;
+	dev_dbg(qphy->phy.dev, "%s qphy->dpdm_enable = %d\n", __func__,
+					qphy->dpdm_enable);
+	return qphy->dpdm_enable;
 }
 
 static struct regulator_ops qusb_phy_dpdm_regulator_ops = {
@@ -1183,9 +1110,484 @@ static int qusb_phy_regulator_init(struct qusb_phy *qphy)
 	cfg.of_node = dev->of_node;
 
 	qphy->dpdm_rdev = devm_regulator_register(dev, &qphy->dpdm_rdesc, &cfg);
-	if (IS_ERR(qphy->dpdm_rdev))
-		return PTR_ERR(qphy->dpdm_rdev);
+	return PTR_ERR_OR_ZERO(qphy->dpdm_rdev);
 
+}
+
+static void qusb_phy_create_debugfs(struct qusb_phy *qphy)
+{
+	qphy->root = debugfs_create_dir(dev_name(qphy->phy.dev), NULL);
+	debugfs_create_x8("tune1", 0644, qphy->root, &qphy->tune1);
+	debugfs_create_x8("tune2", 0644, qphy->root, &qphy->tune2);
+	debugfs_create_x8("tune3", 0644, qphy->root, &qphy->tune3);
+	debugfs_create_x8("tune4", 0644, qphy->root, &qphy->tune4);
+	debugfs_create_x8("tune5", 0644, qphy->root, &qphy->tune5);
+}
+
+int qphy_get_notifier_gpio_state(struct qusb_phy *qphy)
+{
+	int value;
+
+	if (gpio_is_valid(qphy->notifier_gpio)) {
+		value = gpio_get_value(qphy->notifier_gpio);
+		return qphy->is_gpio_active_low ? !value : value;
+	}
+
+	return 1;
+}
+
+static irqreturn_t qphy_notifier_irq_handler(int irq, void *_qphy)
+{
+	struct qusb_phy *qphy = (struct qusb_phy *)_qphy;
+
+	if (gpio_is_valid(qphy->notifier_gpio)) {
+		qphy->is_port_valid = qphy_get_notifier_gpio_state(qphy);
+
+		dev_dbg(qphy->phy.dev, "Got notification: %d\n",
+							qphy->is_port_valid);
+		queue_delayed_work(system_freezable_wq,
+						&qphy->port_det_w, 0);
+	}
+
+	return IRQ_HANDLED;
+}
+
+static int qphy_register_notifier_interrupt(struct qusb_phy *qphy,
+						struct platform_device *pdev)
+{
+	int ret = 0;
+
+	qphy->notifier_irq = platform_get_irq_byname(pdev, "notifier_irq");
+	if (qphy->notifier_irq < 0) {
+		dev_err(qphy->phy.dev, "failed to get notifier irq\n");
+		return qphy->notifier_irq;
+	}
+
+	ret = devm_request_threaded_irq(qphy->phy.dev, qphy->notifier_irq, NULL,
+					qphy_notifier_irq_handler,
+					IRQF_TRIGGER_RISING |
+					IRQF_TRIGGER_FALLING | IRQF_ONESHOT |
+					IRQF_SHARED,
+					pdev->name, qphy);
+	if (ret < 0) {
+		dev_err(qphy->phy.dev, "failed to request handler for irq\n");
+		return ret;
+	}
+
+	qphy->is_port_valid = qphy_get_notifier_gpio_state(qphy);
+
+	return ret;
+}
+
+static int qusb_phy_vbus_notifier(struct notifier_block *nb,
+		unsigned long event, void *data)
+{
+	struct usb_phy *phy = container_of(nb, struct usb_phy, vbus_nb);
+	struct qusb_phy *qphy = container_of(phy, struct qusb_phy, phy);
+
+	if (!qphy || !data) {
+		pr_err("Failed to get PHY for vbus_notifier\n");
+		return NOTIFY_DONE;
+	}
+
+	qphy->vbus_active = !!event;
+	dev_dbg(qphy->phy.dev, "Got VBUS notification: %u\n", event);
+	queue_delayed_work(system_freezable_wq, &qphy->port_det_w, 0);
+
+	return NOTIFY_DONE;
+}
+
+static int qusb_phy_id_notifier(struct notifier_block *nb,
+		unsigned long event, void *data)
+{
+	struct usb_phy *phy = container_of(nb, struct usb_phy, id_nb);
+	struct qusb_phy *qphy = container_of(phy, struct qusb_phy, phy);
+
+	if (!qphy || !data) {
+		pr_err("Failed to get PHY for vbus_notifier\n");
+		return NOTIFY_DONE;
+	}
+
+	qphy->id_state = !event;
+	dev_dbg(qphy->phy.dev, "Got id notification: %u\n", event);
+	queue_delayed_work(system_freezable_wq, &qphy->port_det_w, 0);
+
+	return NOTIFY_DONE;
+}
+
+static const unsigned int qusb_phy_extcon_cable[] = {
+	EXTCON_USB,
+	EXTCON_USB_HOST,
+	EXTCON_NONE,
+};
+
+static int qusb_phy_notify_charger(struct qusb_phy *qphy,
+					enum power_supply_type charger_type)
+{
+	union power_supply_propval pval = {0};
+
+	dev_dbg(qphy->phy.dev, "Notify charger type: %d\n", charger_type);
+
+	if (!qphy->usb_psy) {
+		qphy->usb_psy = power_supply_get_by_name("usb");
+		if (!qphy->usb_psy) {
+			dev_err(qphy->phy.dev, "Could not get usb psy\n");
+			return -ENODEV;
+		}
+	}
+
+	pval.intval = charger_type;
+	power_supply_set_property(qphy->usb_psy, POWER_SUPPLY_PROP_REAL_TYPE,
+									&pval);
+	return 0;
+}
+
+static void qusb_phy_notify_extcon(struct qusb_phy *qphy,
+						int extcon_id, int event)
+{
+	struct extcon_dev *edev = qphy->phy.edev;
+	union extcon_property_value val;
+	int ret;
+
+	dev_dbg(qphy->phy.dev, "Notify event: %d for extcon_id: %d\n",
+					event, extcon_id);
+
+	if (event) {
+		ret = extcon_get_property(edev, extcon_id,
+					EXTCON_PROP_USB_TYPEC_POLARITY, &val);
+		if (ret)
+			dev_err(qphy->phy.dev, "Failed to get TYPEC POLARITY\n");
+
+		extcon_set_property(qphy->usb_extcon, extcon_id,
+					EXTCON_PROP_USB_TYPEC_POLARITY, val);
+
+		ret = extcon_get_property(edev, extcon_id,
+						EXTCON_PROP_USB_SS, &val);
+		if (ret)
+			dev_err(qphy->phy.dev, "Failed to get USB_SS property\n");
+
+		extcon_set_property(qphy->usb_extcon, extcon_id,
+						EXTCON_PROP_USB_SS, val);
+	}
+
+	extcon_set_state_sync(qphy->usb_extcon, extcon_id, event);
+}
+
+static bool qusb_phy_chg_det_status(struct qusb_phy *qphy,
+						enum chg_det_state state)
+{
+	u32 reg, status;
+
+	reg = readl_relaxed(qphy->base + QUSB2PHY_PORT_INTR_STATUS);
+	dev_dbg(qphy->phy.dev, "state: %d reg: 0x%x\n", state, reg);
+
+	status = reg & 0xff;
+
+	switch (state) {
+	case STATE_DCD:
+		return (status != DPSE_INTR_HIGH);
+	case STATE_PRIMARY:
+		return (status && (status != DPSE_INTR_HIGH));
+	case STATE_SECONDARY:
+		return status;
+	case STATE_UNKNOWN:
+	default:
+		break;
+	}
+
+	return false;
+}
+
+/*
+ * Different circuit blocks are enabled on DP and DM lines as part
+ * of different phases of charger detection. Then the state of
+ * DP and DM lines are monitored to identify different type of
+ * chargers.
+ * These circuit blocks can be enabled with the configuration of
+ * the QUICKCHARGE1 and QUICKCHARGE2 registers and the DP/DM lines
+ * can be monitored with the status of the INTR_STATUS register.
+ */
+static void qusb_phy_chg_det_enable_seq(struct qusb_phy *qphy, int state)
+{
+	dev_dbg(qphy->phy.dev, "state: %d\n", state);
+	/* Power down the PHY*/
+	writel_relaxed(0x23, qphy->base + QUSB2PHY_PORT_POWERDOWN);
+
+	/* Put the PHY in non driving mode */
+	writel_relaxed(0x35, qphy->base + QUSB2PHY_PORT_UTMI_CTRL1);
+
+	/* Set the PHY to register mode */
+	writel_relaxed(0xC0, qphy->base + QUSB2PHY_PORT_UTMI_CTRL2);
+
+	/* Keep PLL in reset */
+	writel_relaxed(0x05, qphy->base + QUSB2PHY_PLL_AUTOPGM_CTL1);
+
+	/* Enable  PHY */
+	writel_relaxed(0x22, qphy->base + QUSB2PHY_PORT_POWERDOWN);
+
+	writel_relaxed(0x17, qphy->base + QUSB2PHY_PLL_PWR_CTL);
+
+	usleep_range(5, 10);
+
+	writel_relaxed(0x15, qphy->base + QUSB2PHY_PLL_AUTOPGM_CTL1);
+
+	writel_relaxed(0x00, qphy->base + QUSB2PHY_PORT_QC1);
+	writel_relaxed(0x00, qphy->base + QUSB2PHY_PORT_QC2);
+
+	usleep_range(50, 60);
+
+	switch (state) {
+	case STATE_DCD:
+		/* Enable IDP_SRC */
+		writel_relaxed(0x08, qphy->base + QUSB2PHY_PORT_QC1);
+		/* Enable RDM_UP */
+		writel_relaxed(0x01, qphy->base + QUSB2PHY_PORT_QC2);
+
+		writel_relaxed(0x1F, qphy->base + QUSB2PHY_PORT_INTR_CTRL);
+		break;
+	case STATE_PRIMARY:
+		/* Enable VDAT_REF_DM, VDP_SRC and IDM_SINK */
+		writel_relaxed(0x25, qphy->base + QUSB2PHY_PORT_QC1);
+		writel_relaxed(0x00, qphy->base + QUSB2PHY_PORT_QC2);
+
+		writel_relaxed(0x1F, qphy->base + QUSB2PHY_PORT_INTR_CTRL);
+		break;
+	case STATE_SECONDARY:
+		/* Enable VDAT_REF_DP, VDAT_REF_DM, VDP_SRC and IDM_SINK */
+		writel_relaxed(0x72, qphy->base + QUSB2PHY_PORT_QC1);
+		writel_relaxed(0x00, qphy->base + QUSB2PHY_PORT_QC2);
+
+		writel_relaxed(0x1F, qphy->base + QUSB2PHY_PORT_INTR_CTRL);
+		break;
+	case STATE_UNKNOWN:
+	default:
+		break;
+	}
+}
+
+#define CHG_DCD_TIMEOUT_MSEC		750
+#define CHG_DCD_POLL_TIME_MSEC		50
+#define CHG_PRIMARY_DET_TIME_MSEC	100
+#define CHG_SECONDARY_DET_TIME_MSEC	100
+
+static int qusb_phy_prepare_chg_det(struct qusb_phy *qphy)
+{
+	int ret;
+
+	/*
+	 * Set dpdm_enable to indicate charger detection
+	 * is in progress. This also prevents the core
+	 * driver from doing the set_suspend and init
+	 * calls of the PHY which inteferes with the charger
+	 * detection during bootup.
+	 */
+	qphy->dpdm_enable = true;
+	ret = qusb_phy_enable_power(qphy, true);
+	if (ret)
+		return ret;
+
+	qusb_phy_set_tcsr_clamp(qphy);
+	qusb_phy_enable_clocks(qphy, true);
+
+	return 0;
+}
+
+static void qusb_phy_unprepare_chg_det(struct qusb_phy *qphy)
+{
+	qusb_phy_reset(qphy);
+	qusb_phy_enable_clocks(qphy, false);
+	qusb_phy_clear_tcsr_clamp(qphy, false);
+	qusb_phy_enable_power(qphy, false);
+
+	qphy->dpdm_enable = false;
+	regulator_notifier_call_chain(qphy->dpdm_rdev,
+					REGULATOR_EVENT_DISABLE, NULL);
+}
+
+static void qusb_phy_port_state_work(struct work_struct *w)
+{
+	struct qusb_phy *qphy = container_of(w, struct qusb_phy,
+							port_det_w.work);
+	unsigned long delay = 0;
+	int status, ret;
+	bool vbus_active, id_state;
+
+	dev_dbg(qphy->phy.dev, "state: %d\n", qphy->port_state);
+
+	/*
+	 * The events for cable connect should be ignored if
+	 * the is_port_valid set to false to prevent the USB
+	 * stack being brought up and voting for the regulators.
+	 */
+	qphy->is_port_valid = qphy_get_notifier_gpio_state(qphy);
+	if (!qphy->is_port_valid) {
+		dev_err(qphy->phy.dev, "Port not valid, notify disconnect\n");
+		vbus_active = false;
+		id_state = true;
+	} else {
+		vbus_active = qphy->vbus_active;
+		id_state = qphy->id_state;
+	}
+
+	switch (qphy->port_state) {
+	case PORT_UNKNOWN:
+		if (!id_state) {
+			qphy->port_state = PORT_HOST_MODE;
+			qusb_phy_notify_extcon(qphy, EXTCON_USB_HOST, 1);
+			return;
+		}
+
+		if (vbus_active) {
+			if (qphy->eud_enable_reg &&
+					readl_relaxed(qphy->eud_enable_reg)) {
+				pr_err("qusb: EUD is enabled, no charger detection\n");
+				qusb_phy_notify_charger(qphy,
+							POWER_SUPPLY_TYPE_USB);
+				qusb_phy_notify_extcon(qphy, EXTCON_USB, 1);
+				qphy->port_state = PORT_CHG_DET_DONE;
+				return;
+			}
+
+			/* Enable DCD sequence */
+			ret = qusb_phy_prepare_chg_det(qphy);
+			if (ret)
+				return;
+
+			qusb_phy_chg_det_enable_seq(qphy, STATE_DCD);
+			qphy->port_state = PORT_DCD_IN_PROGRESS;
+			qphy->dcd_timeout = 0;
+			delay = CHG_DCD_POLL_TIME_MSEC;
+			break;
+		}
+		return;
+	case PORT_DISCONNECTED:
+		qusb_phy_unprepare_chg_det(qphy);
+		qphy->port_state = PORT_UNKNOWN;
+		break;
+	case PORT_DCD_IN_PROGRESS:
+		if (!vbus_active) {
+			/* Disable PHY sequence */
+			qphy->port_state = PORT_DISCONNECTED;
+			break;
+		}
+
+		status = qusb_phy_chg_det_status(qphy, STATE_DCD);
+		if (!status && qphy->dcd_timeout < CHG_DCD_TIMEOUT_MSEC) {
+			delay = CHG_DCD_POLL_TIME_MSEC;
+			qphy->dcd_timeout += delay;
+		} else if (status) {
+			qusb_phy_chg_det_enable_seq(qphy, STATE_PRIMARY);
+			qphy->port_state = PORT_PRIMARY_IN_PROGRESS;
+			delay = CHG_PRIMARY_DET_TIME_MSEC;
+		} else if (qphy->dcd_timeout >= CHG_DCD_TIMEOUT_MSEC) {
+			qusb_phy_notify_charger(qphy,
+						POWER_SUPPLY_TYPE_USB_DCP);
+			qusb_phy_unprepare_chg_det(qphy);
+			qphy->port_state = PORT_CHG_DET_DONE;
+		}
+		break;
+	case PORT_PRIMARY_IN_PROGRESS:
+		if (!vbus_active) {
+			qphy->port_state = PORT_DISCONNECTED;
+			break;
+		}
+
+		status = qusb_phy_chg_det_status(qphy, STATE_PRIMARY);
+		if (status) {
+			qusb_phy_chg_det_enable_seq(qphy, STATE_SECONDARY);
+			qphy->port_state = PORT_SECONDARY_IN_PROGRESS;
+			delay = CHG_SECONDARY_DET_TIME_MSEC;
+
+		} else {
+			qusb_phy_unprepare_chg_det(qphy);
+			qusb_phy_notify_charger(qphy, POWER_SUPPLY_TYPE_USB);
+			qusb_phy_notify_extcon(qphy, EXTCON_USB, 1);
+			qphy->port_state = PORT_CHG_DET_DONE;
+		}
+		break;
+	case PORT_SECONDARY_IN_PROGRESS:
+		if (!vbus_active) {
+			qphy->port_state = PORT_DISCONNECTED;
+			break;
+		}
+
+		status = qusb_phy_chg_det_status(qphy, STATE_SECONDARY);
+		if (status) {
+			qusb_phy_notify_charger(qphy,
+						POWER_SUPPLY_TYPE_USB_DCP);
+			qphy->dcp_charger = true;
+		} else {
+			qusb_phy_notify_charger(qphy,
+						POWER_SUPPLY_TYPE_USB_CDP);
+			qusb_phy_unprepare_chg_det(qphy);
+			qusb_phy_notify_extcon(qphy, EXTCON_USB, 1);
+		}
+
+		qphy->port_state = PORT_CHG_DET_DONE;
+		/*
+		 * Fall through to check if cable got disconnected
+		 * during detection.
+		 */
+	case PORT_CHG_DET_DONE:
+		if (!vbus_active) {
+			if (qphy->dcp_charger) {
+				qphy->dcp_charger = false;
+				qusb_phy_unprepare_chg_det(qphy);
+			}
+			qphy->port_state = PORT_UNKNOWN;
+			qusb_phy_notify_extcon(qphy, EXTCON_USB, 0);
+		}
+
+		return;
+	case PORT_HOST_MODE:
+		if (id_state) {
+			qphy->port_state = PORT_UNKNOWN;
+			qusb_phy_notify_extcon(qphy, EXTCON_USB_HOST, 0);
+		}
+
+		if (!qphy->vbus_active)
+			return;
+
+		break;
+	default:
+		return;
+	}
+
+	queue_delayed_work(system_freezable_wq,
+			&qphy->port_det_w, msecs_to_jiffies(delay));
+}
+
+static int qusb_phy_extcon_register(struct qusb_phy *qphy)
+{
+	int ret;
+
+	/* Register extcon for notifications from charger driver */
+	qphy->phy.vbus_nb.notifier_call = qusb_phy_vbus_notifier;
+
+	qphy->phy.id_nb.notifier_call = qusb_phy_id_notifier;
+
+	/* Register extcon to notify USB driver */
+	qphy->usb_extcon = devm_extcon_dev_allocate(qphy->phy.dev,
+						qusb_phy_extcon_cable);
+	if (IS_ERR(qphy->usb_extcon)) {
+		dev_err(qphy->phy.dev, "failed to allocate extcon device\n");
+		return PTR_ERR(qphy->usb_extcon);
+	}
+
+	ret = devm_extcon_dev_register(qphy->phy.dev, qphy->usb_extcon);
+	if (ret) {
+		dev_err(qphy->phy.dev, "failed to register extcon device\n");
+		return ret;
+	}
+
+	extcon_set_property_capability(qphy->usb_extcon, EXTCON_USB,
+			EXTCON_PROP_USB_TYPEC_POLARITY);
+	extcon_set_property_capability(qphy->usb_extcon, EXTCON_USB,
+			EXTCON_PROP_USB_SS);
+	extcon_set_property_capability(qphy->usb_extcon, EXTCON_USB_HOST,
+			EXTCON_PROP_USB_TYPEC_POLARITY);
+	extcon_set_property_capability(qphy->usb_extcon, EXTCON_USB_HOST,
+			EXTCON_PROP_USB_SS);
 	return 0;
 }
 
@@ -1197,7 +1599,8 @@ static int qusb_phy_probe(struct platform_device *pdev)
 	int ret = 0, size = 0;
 	const char *phy_type;
 	bool hold_phy_reset;
-	struct power_supply_config dpdm_cfg = {};
+	u32 temp;
+	enum of_gpio_flags flags;
 
 	qphy = devm_kzalloc(dev, sizeof(*qphy), GFP_KERNEL);
 	if (!qphy)
@@ -1209,16 +1612,6 @@ static int qusb_phy_probe(struct platform_device *pdev)
 	qphy->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(qphy->base))
 		return PTR_ERR(qphy->base);
-
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
-							"emu_phy_base");
-	if (res) {
-		qphy->emu_phy_base = devm_ioremap_resource(dev, res);
-		if (IS_ERR(qphy->emu_phy_base)) {
-			dev_dbg(dev, "couldn't ioremap emu_phy_base\n");
-			qphy->emu_phy_base = NULL;
-		}
-	}
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 							"tune2_efuse_addr");
@@ -1242,6 +1635,16 @@ static int qusb_phy_probe(struct platform_device *pdev)
 				dev_err(dev, "DT Value for tune2 efuse is invalid.\n");
 				return -EINVAL;
 			}
+		}
+	}
+
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+							"eud_enable_reg");
+	if (res) {
+		qphy->eud_enable_reg = devm_ioremap_resource(dev, res);
+		if (IS_ERR(qphy->eud_enable_reg)) {
+			dev_err(dev, "err getting eud_enable_reg address\n");
+			return PTR_ERR(qphy->eud_enable_reg);
 		}
 	}
 
@@ -1283,16 +1686,50 @@ static int qusb_phy_probe(struct platform_device *pdev)
 		}
 	}
 
+	ret = of_property_read_u32(dev->of_node, "qcom,usb-hs-ac-bitmask",
+					&qphy->usb_hs_ac_bitmask);
+	if (!ret) {
+		ret = of_property_read_u32(dev->of_node, "qcom,usb-hs-ac-value",
+						&qphy->usb_hs_ac_value);
+		if (ret) {
+			dev_err(dev, "usb_hs_ac_value not passed\n", __func__);
+			return ret;
+		}
+
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+						"tcsr_conn_box_spare_0");
+		if (!res) {
+			dev_err(dev, "tcsr_conn_box_spare_0 not passed\n",
+								__func__);
+			return -ENOENT;
+		}
+
+		qphy->tcsr_conn_box_spare = devm_ioremap_nocache(dev,
+						res->start, resource_size(res));
+		if (IS_ERR(qphy->tcsr_conn_box_spare)) {
+			dev_err(dev, "err reading tcsr_conn_box_spare\n");
+			return PTR_ERR(qphy->tcsr_conn_box_spare);
+		}
+	}
 
 	qphy->ref_clk_src = devm_clk_get(dev, "ref_clk_src");
 	if (IS_ERR(qphy->ref_clk_src))
 		dev_dbg(dev, "clk get failed for ref_clk_src\n");
 
-	qphy->ref_clk = devm_clk_get(dev, "ref_clk");
-	if (IS_ERR(qphy->ref_clk))
-		dev_dbg(dev, "clk get failed for ref_clk\n");
-	else
+	/* ref_clk is needed only for DIFF_CLK case, hence make it optional. */
+	if (of_property_match_string(pdev->dev.of_node,
+				"clock-names", "ref_clk") >= 0) {
+		qphy->ref_clk = devm_clk_get(dev, "ref_clk");
+		if (IS_ERR(qphy->ref_clk)) {
+			ret = PTR_ERR(qphy->ref_clk);
+			if (ret != -EPROBE_DEFER)
+				dev_dbg(dev,
+					"clk get failed for ref_clk\n");
+			return ret;
+		}
+
 		clk_set_rate(qphy->ref_clk, 19200000);
+	}
 
 	qphy->cfg_ahb_clk = devm_clk_get(dev, "cfg_ahb_clk");
 	if (IS_ERR(qphy->cfg_ahb_clk))
@@ -1302,73 +1739,33 @@ static int qusb_phy_probe(struct platform_device *pdev)
 	if (IS_ERR(qphy->phy_reset))
 		return PTR_ERR(qphy->phy_reset);
 
-	qphy->emulation = of_property_read_bool(dev->of_node,
-					"qcom,emulation");
-
-	of_get_property(dev->of_node, "qcom,emu-init-seq", &size);
-	if (size) {
-		qphy->emu_init_seq = devm_kzalloc(dev,
-						size, GFP_KERNEL);
-		if (qphy->emu_init_seq) {
-			qphy->emu_init_seq_len =
-				(size / sizeof(*qphy->emu_init_seq));
-			if (qphy->emu_init_seq_len % 2) {
-				dev_err(dev, "invalid emu_init_seq_len\n");
-				return -EINVAL;
-			}
-
-			of_property_read_u32_array(dev->of_node,
-				"qcom,emu-init-seq",
-				qphy->emu_init_seq,
-				qphy->emu_init_seq_len);
-		} else {
-			dev_dbg(dev, "error allocating memory for emu_init_seq\n");
+	if (of_property_match_string(dev->of_node,
+		"clock-names", "iface_clk") >= 0) {
+		qphy->iface_clk = devm_clk_get(dev, "iface_clk");
+		if (IS_ERR(qphy->iface_clk)) {
+			ret = PTR_ERR(qphy->iface_clk);
+			qphy->iface_clk = NULL;
+		if (ret == -EPROBE_DEFER)
+			return ret;
+			dev_err(dev, "couldn't get iface_clk(%d)\n", ret);
 		}
 	}
 
-	size = 0;
-	of_get_property(dev->of_node, "qcom,phy-pll-reset-seq", &size);
-	if (size) {
-		qphy->phy_pll_reset_seq = devm_kzalloc(dev,
-						size, GFP_KERNEL);
-		if (qphy->phy_pll_reset_seq) {
-			qphy->phy_pll_reset_seq_len =
-				(size / sizeof(*qphy->phy_pll_reset_seq));
-			if (qphy->phy_pll_reset_seq_len % 2) {
-				dev_err(dev, "invalid phy_pll_reset_seq_len\n");
-				return -EINVAL;
-			}
-
-			of_property_read_u32_array(dev->of_node,
-				"qcom,phy-pll-reset-seq",
-				qphy->phy_pll_reset_seq,
-				qphy->phy_pll_reset_seq_len);
-		} else {
-			dev_dbg(dev, "error allocating memory for phy_pll_reset_seq\n");
+	if (of_property_match_string(dev->of_node,
+		"clock-names", "core_clk") >= 0) {
+		qphy->core_clk = devm_clk_get(dev, "core_clk");
+		if (IS_ERR(qphy->core_clk)) {
+			ret = PTR_ERR(qphy->core_clk);
+			qphy->core_clk = NULL;
+			if (ret == -EPROBE_DEFER)
+				return ret;
+			dev_err(dev, "couldn't get core_clk(%d)\n", ret);
 		}
 	}
 
-	size = 0;
-	of_get_property(dev->of_node, "qcom,emu-dcm-reset-seq", &size);
-	if (size) {
-		qphy->emu_dcm_reset_seq = devm_kzalloc(dev,
-						size, GFP_KERNEL);
-		if (qphy->emu_dcm_reset_seq) {
-			qphy->emu_dcm_reset_seq_len =
-				(size / sizeof(*qphy->emu_dcm_reset_seq));
-			if (qphy->emu_dcm_reset_seq_len % 2) {
-				dev_err(dev, "invalid emu_dcm_reset_seq_len\n");
-				return -EINVAL;
-			}
-
-			of_property_read_u32_array(dev->of_node,
-				"qcom,emu-dcm-reset-seq",
-				qphy->emu_dcm_reset_seq,
-				qphy->emu_dcm_reset_seq_len);
-		} else {
-			dev_dbg(dev, "error allocating memory for emu_dcm_reset_seq\n");
-		}
-	}
+	qphy->gdsc = devm_regulator_get(dev, "USB3_GDSC");
+	if (IS_ERR(qphy->gdsc))
+		qphy->gdsc = NULL;
 
 	size = 0;
 	of_get_property(dev->of_node, "qcom,qusb-phy-init-seq", &size);
@@ -1437,7 +1834,6 @@ static int qusb_phy_probe(struct platform_device *pdev)
 	}
 
 	mutex_init(&qphy->phy_lock);
-	spin_lock_init(&qphy->pulse_lock);
 	platform_set_drvdata(pdev, qphy);
 
 	qphy->phy.label			= "msm-qusb-phy";
@@ -1447,7 +1843,7 @@ static int qusb_phy_probe(struct platform_device *pdev)
 	qphy->phy.type			= USB_PHY_TYPE_USB2;
 	qphy->phy.notify_connect        = qusb_phy_notify_connect;
 	qphy->phy.notify_disconnect     = qusb_phy_notify_disconnect;
-	qphy->phy.dpdm_with_idp_src	= qusb_phy_linestate_with_idp_src;
+	qphy->phy.drive_dp_pulse	= qusb_phy_drive_dp_pulse;
 
 	/*
 	 * On some platforms multiple QUSB PHYs are available. If QUSB PHY is
@@ -1460,48 +1856,101 @@ static int qusb_phy_probe(struct platform_device *pdev)
 			dev_err(dev, "%s:phy_reset assert failed\n", __func__);
 	}
 
-	qphy->dpdm_pulsing_enabled = of_property_read_bool(dev->of_node,
-						"qcom,enable-dpdm-pulsing");
+	if (of_property_read_bool(dev->of_node, "extcon")) {
+		INIT_DELAYED_WORK(&qphy->port_det_w, qusb_phy_port_state_work);
 
-	if (qphy->dpdm_pulsing_enabled) {
-		qphy->dpdm_psy_desc.name = "dpdm";
-		qphy->dpdm_psy_desc.type = POWER_SUPPLY_TYPE_USB;
-		qphy->dpdm_psy_desc.properties = dpdm_props;
-		qphy->dpdm_psy_desc.num_properties = ARRAY_SIZE(dpdm_props);
-		qphy->dpdm_psy_desc.set_property = qusb_phy_set_property_usb;
-		qphy->dpdm_psy_desc.get_property = qusb_phy_get_property_usb;
+		ret = qusb_phy_extcon_register(qphy);
+		if (ret)
+			return ret;
 
-		dpdm_cfg.drv_data = qphy;
-		dpdm_cfg.of_node = dev->of_node;
-		qphy->dpdm_psy = power_supply_register(&pdev->dev,
-					&qphy->dpdm_psy_desc, &dpdm_cfg);
-		if (IS_ERR(qphy->dpdm_psy)) {
-			dev_err(&pdev->dev, "%s:dpdm power_supply_register failed\n",
-							__func__);
-			return PTR_ERR(qphy->dpdm_psy);
-		}
+	}
+
+	qphy->notifier_gpio = of_get_named_gpio_flags(dev->of_node,
+							"notifier", 0, &flags);
+	if (gpio_is_valid(qphy->notifier_gpio)) {
+		qphy->is_gpio_active_low = flags & OF_GPIO_ACTIVE_LOW;
+		ret = qphy_register_notifier_interrupt(qphy, pdev);
+		if (ret)
+			return ret;
+	} else {
+		qphy->is_port_valid = true;
 	}
 
 	ret = usb_add_phy_dev(&qphy->phy);
 	if (ret)
-		goto unregister_psy;
+		return ret;
+
+	qphy->vdda33_levels[1] = QUSB2PHY_3P3_VOL_MIN;
+	qphy->vdda33_levels[2] = QUSB2PHY_3P3_VOL_MAX;
+	ret = of_property_read_u32(dev->of_node,
+			"qcom,vdda33-voltage-level",
+			(u32 *)&qphy->vdda33_levels[0]);
+	if (!ret) {
+		INIT_WORK(&qphy->soc_eval_work, qusb_phy_evaluate_soc);
+		/* Register notifier to change gain based on state of charge */
+		qphy->psy_nb.notifier_call = qusb_phy_battery_supply_cb;
+		ret = power_supply_reg_notifier(&qphy->psy_nb);
+		if (ret) {
+			dev_dbg(qphy->phy.dev,
+					"%s: could not register pwr supply notifier\n",
+					__func__);
+			goto remove_phy;
+		}
+		qphy->low_soc = false;
+		qusb_phy_battery_supply_cb(&qphy->psy_nb,
+				PSY_EVENT_PROP_CHANGED, NULL);
+	}
 
 	ret = qusb_phy_regulator_init(qphy);
 	if (ret)
-		goto remove_phy;
+		goto unreg_notifier_and_put_batt_psy;
 
 	/* de-assert clamp dig n to reduce leakage on 1p8 upon boot up */
-	if (qphy->tcsr_clamp_dig_n)
-		writel_relaxed(0x0, qphy->tcsr_clamp_dig_n);
+	qusb_phy_clear_tcsr_clamp(qphy, true);
 
-	return ret;
+	/*
+	 * Write the usb_hs_ac_value to usb_hs_ac_bitmask of tcsr_conn_box_spare
+	 * reg to enable AC/DC coupling
+	 */
+	if (qphy->tcsr_conn_box_spare) {
+		temp = readl_relaxed(qphy->tcsr_conn_box_spare) &
+						~qphy->usb_hs_ac_bitmask;
+		writel_relaxed(temp | qphy->usb_hs_ac_value,
+						qphy->tcsr_conn_box_spare);
+	}
 
+	qphy->suspended = true;
+
+	/*
+	 * EUD may be enable in boot loader and to keep EUD session alive across
+	 * kernel boot till USB phy driver is initialized based on cable status,
+	 * keep LDOs on here.
+	 */
+	if (qphy->eud_enable_reg && readl_relaxed(qphy->eud_enable_reg))
+		qusb_phy_enable_power(qphy, true);
+
+	if (of_property_read_bool(dev->of_node, "extcon")) {
+		qphy->id_state = true;
+		qphy->vbus_active = false;
+
+		if (extcon_get_state(qphy->phy.edev, EXTCON_USB_HOST)) {
+			qusb_phy_id_notifier(&qphy->phy.id_nb,
+							1, qphy->phy.edev);
+		} else if (extcon_get_state(qphy->phy.edev, EXTCON_USB)) {
+			qusb_phy_vbus_notifier(&qphy->phy.vbus_nb,
+							1, qphy->phy.edev);
+		}
+	}
+
+	qusb_phy_create_debugfs(qphy);
+	return 0;
+
+unreg_notifier_and_put_batt_psy:
+	power_supply_unreg_notifier(&qphy->psy_nb);
+	if (qphy->batt_psy)
+		power_supply_put(qphy->batt_psy);
 remove_phy:
 	usb_remove_phy(&qphy->phy);
-unregister_psy:
-	if (qphy->dpdm_psy)
-		power_supply_unregister(qphy->dpdm_psy);
-
 	return ret;
 }
 
@@ -1509,21 +1958,38 @@ static int qusb_phy_remove(struct platform_device *pdev)
 {
 	struct qusb_phy *qphy = platform_get_drvdata(pdev);
 
-	if (qphy->dpdm_psy)
-		power_supply_unregister(qphy->dpdm_psy);
+	power_supply_unreg_notifier(&qphy->psy_nb);
+	if (qphy->batt_psy)
+		power_supply_put(qphy->batt_psy);
+	if (qphy->usb_psy)
+		power_supply_put(qphy->usb_psy);
+	debugfs_remove_recursive(qphy->root);
 	usb_remove_phy(&qphy->phy);
-
-	if (qphy->clocks_enabled) {
-		clk_disable_unprepare(qphy->cfg_ahb_clk);
-		clk_disable_unprepare(qphy->ref_clk);
-		clk_disable_unprepare(qphy->ref_clk_src);
-		qphy->clocks_enabled = false;
-	}
-
-	qusb_phy_enable_power(qphy, false);
+	qphy->cable_connected = false;
+	qusb_phy_set_suspend(&qphy->phy, true);
 
 	return 0;
 }
+
+#ifdef CONFIG_PM_SLEEP
+static int qusb_phy_pm_resume(struct device *dev)
+{
+	struct qusb_phy *qphy = dev_get_drvdata(dev);
+
+	/*
+	 * The notifier is not wakeup capable, so get the state of the GPIO
+	 * once the system wakes up.
+	 */
+	if (gpio_is_valid(qphy->notifier_gpio))
+		queue_delayed_work(system_freezable_wq, &qphy->port_det_w, 0);
+
+	return 0;
+}
+#endif
+
+static const struct dev_pm_ops qusb_phy_dev_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(NULL, qusb_phy_pm_resume)
+};
 
 static const struct of_device_id qusb_phy_id_table[] = {
 	{ .compatible = "qcom,qusb2phy", },
@@ -1536,6 +2002,7 @@ static struct platform_driver qusb_phy_driver = {
 	.remove		= qusb_phy_remove,
 	.driver = {
 		.name	= "msm-qusb-phy",
+		.pm	= &qusb_phy_dev_pm_ops,
 		.of_match_table = of_match_ptr(qusb_phy_id_table),
 	},
 };

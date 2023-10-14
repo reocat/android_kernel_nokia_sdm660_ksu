@@ -319,6 +319,7 @@ static int __init mic_init(void)
 		goto done;
 	}
 
+	request_module("mic_x100_dma");
 	mic_init_card_debugfs();
 
 	mic_platform_dev = platform_device_register_simple(mic_driver_name,

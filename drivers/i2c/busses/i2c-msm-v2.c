@@ -1,15 +1,8 @@
-/* Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2014-2019, 2020, The Linux Foundation. All rights reserved.
  */
+
 /*
  * I2C controller driver for Qualcomm Technologies Inc platforms
  */
@@ -37,7 +30,7 @@
 #include <linux/msm-sps.h>
 #include <linux/msm-bus.h>
 #include <linux/msm-bus-board.h>
-#include <linux/i2c/i2c-msm-v2.h>
+#include <linux/i2c-msm-v2.h>
 
 #ifdef DEBUG
 static const enum msm_i2_debug_level DEFAULT_DBG_LVL = MSM_DBG;
@@ -63,7 +56,7 @@ const char * const i2c_msm_mode_str_tbl[] = {
 	"FIFO", "BLOCK", "DMA", "None",
 };
 
-static const u32 i2c_msm_fifo_block_sz_tbl[] = {16, 16 , 32, 0};
+static const u32 i2c_msm_fifo_block_sz_tbl[] = {16, 16, 32, 0};
 
 /* from enum i2c_msm_xfer_mode_id to qup_io_modes register values */
 static const u32 i2c_msm_mode_to_reg_tbl[] = {
@@ -91,6 +84,7 @@ static void i2c_msm_dbg_dump_diag(struct i2c_msm_ctrl *ctrl,
 
 	if (!use_param_vals) {
 		void __iomem        *base = ctrl->rsrcs.base;
+
 		status = readl_relaxed(base + QUP_I2C_STATUS);
 		qup_op = readl_relaxed(base + QUP_OPERATIONAL);
 	}
@@ -105,7 +99,7 @@ static void i2c_msm_dbg_dump_diag(struct i2c_msm_ctrl *ctrl,
 			snprintf(buf, I2C_MSM_REG_2_STR_BUF_SZ,
 				"%s(val:%dmsec) misconfigured GPIO or slave pulling bus line(s) low\n",
 				str, jiffies_to_msecs(xfer->timeout));
-		 else
+		else
 			snprintf(buf, I2C_MSM_REG_2_STR_BUF_SZ,
 			"%s(val:%dmsec)", str, jiffies_to_msecs(xfer->timeout));
 
@@ -131,7 +125,7 @@ static u32 i2c_msm_reg_io_modes_in_blk_sz(u32 qup_io_modes)
 	return i2c_msm_fifo_block_sz_tbl[BITS_AT(qup_io_modes, 5, 2)];
 }
 
-static const u32 i2c_msm_fifo_sz_table[] = {2, 4 , 8, 16};
+static const u32 i2c_msm_fifo_sz_table[] = {2, 4, 8, 16};
 
 static void i2c_msm_qup_fifo_calc_size(struct i2c_msm_ctrl *ctrl)
 {
@@ -151,7 +145,7 @@ static void i2c_msm_qup_fifo_calc_size(struct i2c_msm_ctrl *ctrl)
 	fifo->output_fifo_sz = i2c_msm_reg_io_modes_out_blk_sz(reg_data) *
 					i2c_msm_fifo_sz_table[output_fifo_size];
 
-	i2c_msm_dbg(ctrl, MSM_PROF, "QUP input-sz:%zu, input-sz:%zu",
+	i2c_msm_dbg(ctrl, MSM_PROF, "QUP input-sz:%zu, input-sz:%zu\n",
 			fifo->input_fifo_sz, fifo->output_fifo_sz);
 
 }
@@ -172,21 +166,22 @@ static u8 *i2c_msm_buf_to_ptr(struct i2c_msm_xfer_buf *buf)
 	struct i2c_msm_xfer *xfer =
 				container_of(buf, struct i2c_msm_xfer, cur_buf);
 	struct i2c_msg *msg = xfer->msgs + buf->msg_idx;
+
 	return msg->buf + buf->byte_idx;
 }
 
 /*
  * tag_lookup_table[is_new_addr][is_last][is_rx]
  * @is_new_addr Is start tag required? (which requires two more bytes.)
- * @is_last     Use the XXXXX_N_STOP tag varient
+ * @is_last     Use the XXXXX_N_STOP tag variant
  * @is_rx       READ/WRITE
  */
 static const struct i2c_msm_tag tag_lookup_table[2][2][2] = {
-	{{{QUP_TAG2_DATA_WRITE                                   , 2},
-	   {QUP_TAG2_DATA_READ                                   , 2} },
+	{{{QUP_TAG2_DATA_WRITE,					2},
+	   {QUP_TAG2_DATA_READ,					2} },
 	/* last buffer */
-	  {{QUP_TAG2_DATA_WRITE_N_STOP                            , 2},
-	   {QUP_TAG2_DATA_READ_N_STOP                             , 2} } } ,
+	  {{QUP_TAG2_DATA_WRITE_N_STOP,				2},
+	   {QUP_TAG2_DATA_READ_N_STOP,				2} } },
 	/* new addr */
 	 {{{QUP_TAG2_START | (QUP_TAG2_DATA_WRITE           << 16), 4},
 	   {QUP_TAG2_START | (QUP_TAG2_DATA_READ            << 16), 4} },
@@ -330,11 +325,11 @@ i2c_msm_qup_xfer_init_reset_state(struct i2c_msm_ctrl *ctrl)
 	/*
 	 * DMA mode:
 	 * 1. QUP_MX_*_COUNT must be zero in all cases.
-	 * 2. both QUP_NO_INPUT and QUP_NO_OUPUT are unset.
+	 * 2. both QUP_NO_INPUT and QUP_NO_OUTPUT are unset.
 	 * FIFO mode:
 	 * 1. QUP_MX_INPUT_COUNT and QUP_MX_OUTPUT_COUNT are zero
 	 * 2. QUP_MX_READ_COUNT and QUP_MX_WRITE_COUNT reflect true count
-	 * 3. QUP_NO_INPUT and QUP_NO_OUPUT are set according to counts
+	 * 3. QUP_NO_INPUT and QUP_NO_OUTPUT are set according to counts
 	 */
 	if (xfer->mode_id != I2C_MSM_XFER_MODE_DMA) {
 		rx_cnt   = xfer->rx_cnt + xfer->rx_ovrhd_cnt;
@@ -369,7 +364,7 @@ i2c_msm_qup_xfer_init_reset_state(struct i2c_msm_ctrl *ctrl)
 	 */
 	config_reg = readl_relaxed(base + QUP_CONFIG);
 	config_reg &=
-	      ~(QUP_NO_INPUT | QUP_NO_OUPUT | QUP_N_MASK | QUP_MINI_CORE_MASK);
+	      ~(QUP_NO_INPUT | QUP_NO_OUTPUT | QUP_N_MASK | QUP_MINI_CORE_MASK);
 	config_reg |= (no_input | no_output | QUP_N_VAL |
 							QUP_MINI_CORE_I2C_VAL);
 	writel_relaxed(config_reg, base + QUP_CONFIG);
@@ -391,7 +386,7 @@ i2c_msm_qup_xfer_init_reset_state(struct i2c_msm_ctrl *ctrl)
 	 * change on DMA-mode transfers
 	 */
 	op_mask = (xfer->mode_id == I2C_MSM_XFER_MODE_DMA) ?
-		    (QUP_INPUT_SERVICE_MASK | QUP_OUTPUT_SERVICE_MASK) : 0 ;
+		    (QUP_INPUT_SERVICE_MASK | QUP_OUTPUT_SERVICE_MASK) : 0;
 	writel_relaxed(op_mask, base + QUP_OPERATIONAL_MASK);
 	/* Ensure that QUP configuration is written before leaving this func */
 	wmb();
@@ -440,21 +435,24 @@ static int i2c_msm_set_mstr_clk_ctl(struct i2c_msm_ctrl *ctrl, int fs_div,
 
 	/*
 	 * find matching freq and set divider values unless they are forced
-	 * from parametr list
+	 * from parameter list
 	 */
 	for (i = 0; i < ARRAY_SIZE(i2c_msm_clk_div_map); ++i, ++itr) {
 		if (ctrl->rsrcs.clk_freq_out == itr->clk_freq_out) {
-			if (!fs_div)
+			if (fs_div < 0)
 				fs_div = itr->fs_div;
-			if (!ht_div)
+			if (ht_div < 0)
 				ht_div = itr->ht_div;
 			break;
 		}
 	}
-	if (!fs_div) {
-		dev_err(ctrl->dev, "For non-standard clock freq:%dKHz\n"
-		"clk divider value fs_div should be supply by client through\n"
-		"device tree\n", (ctrl->rsrcs.clk_freq_out / 1000));
+
+	/* For non-standard clock freq, clk divider value
+	 * fs_div should be supplied by client through device tree
+	 */
+	if (fs_div < 0) {
+		dev_err(ctrl->dev, "Missing clk divider value in DT for %dKHz\n",
+			(ctrl->rsrcs.clk_freq_out / 1000));
 		return -EINVAL;
 	}
 
@@ -471,6 +469,7 @@ static int i2c_msm_set_mstr_clk_ctl(struct i2c_msm_ctrl *ctrl, int fs_div,
 static void i2c_msm_qup_xfer_init_run_state(struct i2c_msm_ctrl *ctrl)
 {
 	void __iomem *base = ctrl->rsrcs.base;
+
 	writel_relaxed(ctrl->mstr_clk_ctl, base + QUP_I2C_MASTER_CLK_CTL);
 
 	/* Ensure that QUP configuration is written before leaving this func */
@@ -486,7 +485,7 @@ static void i2c_msm_qup_xfer_init_run_state(struct i2c_msm_ctrl *ctrl)
 static void i2c_msm_fifo_wr_word(struct i2c_msm_ctrl *ctrl, u32 data)
 {
 	writel_relaxed(data, ctrl->rsrcs.base + QUP_OUT_FIFO_BASE);
-	i2c_msm_dbg(ctrl, MSM_DBG, "OUT-FIFO:0x%08x", data);
+	i2c_msm_dbg(ctrl, MSM_DBG, "OUT-FIFO:0x%08x\n", data);
 }
 
 static u32 i2c_msm_fifo_rd_word(struct i2c_msm_ctrl *ctrl, u32 *data)
@@ -494,7 +493,7 @@ static u32 i2c_msm_fifo_rd_word(struct i2c_msm_ctrl *ctrl, u32 *data)
 	u32 val;
 
 	val = readl_relaxed(ctrl->rsrcs.base + QUP_IN_FIFO_BASE);
-	i2c_msm_dbg(ctrl, MSM_DBG, "IN-FIFO :0x%08x", val);
+	i2c_msm_dbg(ctrl, MSM_DBG, "IN-FIFO :0x%08x\n", val);
 
 	if (data)
 		*data = val;
@@ -555,6 +554,7 @@ static size_t i2c_msm_fifo_xfer_wr_tag(struct i2c_msm_ctrl *ctrl)
 
 	if (ctrl->dbgfs.dbg_lvl >= MSM_DBG) {
 		char str[I2C_MSM_REG_2_STR_BUF_SZ];
+
 		dev_info(ctrl->dev, "tag.val:0x%llx tag.len:%d %s\n",
 			buf->out_tag.val, buf->out_tag.len,
 			i2c_msm_dbg_tag_to_str(&buf->out_tag, str,
@@ -612,6 +612,7 @@ static void i2c_msm_fifo_read_xfer_buf(struct i2c_msm_ctrl *ctrl)
 			if ((ctrl->dbgfs.dbg_lvl >= MSM_DBG) &&
 							!buf->in_tag.len) {
 				char str[64];
+
 				dev_info(ctrl->dev, "%s\n",
 					i2c_msm_dbg_tag_to_str(&buf->in_tag,
 							str, sizeof(str)));
@@ -651,7 +652,7 @@ static void i2c_msm_fifo_write_xfer_buf(struct i2c_msm_ctrl *ctrl)
 			int  i;
 
 			for (i = 0 ; i < len; ++i, ++p)
-				offset += snprintf(str + offset,
+				offset += scnprintf(str + offset,
 						   sizeof(str) - offset,
 						   "0x%x ", *p);
 			dev_info(ctrl->dev, "data: %s\n", str);
@@ -712,7 +713,7 @@ static int i2c_msm_fifo_xfer(struct i2c_msm_ctrl *ctrl)
 {
 	int ret;
 
-	i2c_msm_dbg(ctrl, MSM_DBG, "Starting FIFO transfer");
+	i2c_msm_dbg(ctrl, MSM_DBG, "Starting FIFO transfer\n");
 
 	ret = i2c_msm_qup_state_set(ctrl, QUP_STATE_RESET);
 	if (ret < 0)
@@ -749,18 +750,12 @@ static int i2c_msm_blk_init_struct(struct i2c_msm_ctrl *ctrl)
 
 	blk->tx_cache = kmalloc(blk->out_blk_sz, GFP_KERNEL);
 	if (!blk->tx_cache) {
-		dev_err(ctrl->dev,
-		"error on allocating memory for block tx_cache. malloc(size:%zu)\n",
-		 blk->out_blk_sz);
 		ret = -ENOMEM;
 		goto out_buf_err;
 	}
 
 	blk->rx_cache = kmalloc(blk->in_blk_sz, GFP_KERNEL);
 	if (!blk->tx_cache) {
-		dev_err(ctrl->dev,
-		"error on allocating memory for block tx_cache. malloc(size:%zu)\n",
-		 blk->out_blk_sz);
 		ret = -ENOMEM;
 		goto in_buf_err;
 	}
@@ -790,7 +785,7 @@ static int i2c_msm_blk_wr_flush(struct i2c_msm_ctrl *ctrl)
 	if (!blk->tx_cache_idx)
 		return 0;
 
-	/* if no blocks availble wait for interrupt */
+	/* if no blocks available wait for interrupt */
 	ret = i2c_msm_xfer_wait_for_completion(ctrl, &blk->wait_tx_blk);
 	if (ret)
 		return ret;
@@ -802,7 +797,7 @@ static int i2c_msm_blk_wr_flush(struct i2c_msm_ctrl *ctrl)
 	ret = i2c_msm_qup_state_set(ctrl, QUP_STATE_PAUSE);
 	if (ret < 0)
 		return ret;
-	i2c_msm_dbg(ctrl, MSM_DBG, "OUT-BLK:%*phC", blk->tx_cache_idx,
+	i2c_msm_dbg(ctrl, MSM_DBG, "OUT-BLK:%*phC\n", blk->tx_cache_idx,
 							blk->tx_cache);
 
 	for (byte_num = 0; byte_num < blk->tx_cache_idx;
@@ -858,6 +853,7 @@ static int i2c_msm_blk_xfer_wr_tag(struct i2c_msm_ctrl *ctrl)
 {
 	struct i2c_msm_xfer_buf *buf = &ctrl->xfer.cur_buf;
 	int len = 0;
+
 	if (!buf->out_tag.len)
 		return 0;
 
@@ -880,6 +876,7 @@ static int i2c_msm_blk_wr_xfer_buf(struct i2c_msm_ctrl *ctrl)
 	struct i2c_msm_xfer_buf *buf  = &ctrl->xfer.cur_buf;
 	int len;
 	int ret;
+
 	ret = i2c_msm_blk_xfer_wr_tag(ctrl);
 	if (ret)
 		return ret;
@@ -1025,9 +1022,9 @@ static int i2c_msm_blk_xfer(struct i2c_msm_ctrl *ctrl)
 			if (ret)
 				return ret;
 			/*
-			* SW workaround to wait for extra interrupt from
-			* hardware for last block in block mode for read
-			*/
+			 * SW workaround to wait for extra interrupt from
+			 * hardware for last block in block mode for read
+			 */
 			if (buf->is_last) {
 				ret = i2c_msm_xfer_wait_for_completion(ctrl,
 							&blk->wait_rx_blk);
@@ -1093,7 +1090,8 @@ static int i2c_msm_dma_xfer_prepare(struct i2c_msm_ctrl *ctrl)
 			ctrl->xfer.tx_ovrhd_cnt += 2; /* EOT+FLUSH_STOP tags */
 
 			/* increment rx desc cnt to read off tags and
-			 * increment tx desc cnt to queue EOT+FLUSH_STOP tags */
+			 * increment tx desc cnt to queue EOT+FLUSH_STOP tags
+			 */
 			tx->desc_cnt_cur++;
 			rx->desc_cnt_cur++;
 		}
@@ -1107,7 +1105,7 @@ static int i2c_msm_dma_xfer_prepare(struct i2c_msm_ctrl *ctrl)
 
 		if (dma_mapping_error(ctrl->dev, data.phy_addr)) {
 			dev_err(ctrl->dev,
-			  "error DMA mapping DMA buffers, err:%lld buf_vrtl:0x%p data_len:%d dma_dir:%s\n",
+			  "error DMA mapping DMA buffers, err:%lld buf_vrtl:0x%pK data_len:%d dma_dir:%s\n",
 			  (u64) data.phy_addr, data.vrtl_addr, buf->len,
 			  ((buf_dma_dirctn == DMA_FROM_DEVICE)
 				? "DMA_FROM_DEVICE" : "DMA_TO_DEVICE"));
@@ -1118,7 +1116,7 @@ static int i2c_msm_dma_xfer_prepare(struct i2c_msm_ctrl *ctrl)
 		*((u64 *)tag_arr_itr_vrtl_addr) =  buf->out_tag.val;
 
 		i2c_msm_dbg(ctrl, MSM_DBG,
-			"vrtl:0x%p phy:0x%llx val:0x%llx sizeof(dma_addr_t):%zu",
+			"vrtl:0x%pK phy:0x%llx val:0x%llx sizeof(dma_addr_t):%zu\n",
 			tag_arr_itr_vrtl_addr, (u64) tag_arr_itr_phy_addr,
 			*((u64 *)tag_arr_itr_vrtl_addr), sizeof(dma_addr_t));
 
@@ -1190,7 +1188,7 @@ static int i2c_msm_dma_xfer_process(struct i2c_msm_ctrl *ctrl)
 	int  i;
 	int  ret = 0;
 
-	i2c_msm_dbg(ctrl, MSM_DBG, "Going to enqueue %zu buffers in DMA",
+	i2c_msm_dbg(ctrl, MSM_DBG, "Going to enqueue %zu buffers in DMA\n",
 							dma->buf_arr_cnt);
 
 	/* Set the QUP State to pause while DMA completes the txn */
@@ -1201,7 +1199,7 @@ static int i2c_msm_dma_xfer_process(struct i2c_msm_ctrl *ctrl)
 		return ret;
 	}
 
-	sg_tx = kzalloc(sizeof(struct scatterlist) * tx->desc_cnt_cur,
+	sg_tx = kcalloc(tx->desc_cnt_cur, sizeof(struct scatterlist),
 								GFP_KERNEL);
 	if (!sg_tx) {
 		ret = -ENOMEM;
@@ -1210,7 +1208,7 @@ static int i2c_msm_dma_xfer_process(struct i2c_msm_ctrl *ctrl)
 	sg_init_table(sg_tx, tx->desc_cnt_cur);
 	sg_tx_itr = sg_tx;
 
-	sg_rx = kzalloc(sizeof(struct scatterlist) * rx->desc_cnt_cur,
+	sg_rx = kcalloc(rx->desc_cnt_cur, sizeof(struct scatterlist),
 								GFP_KERNEL);
 	if (!sg_rx) {
 		ret = -ENOMEM;
@@ -1329,8 +1327,10 @@ dma_xfer_end:
 static void i2c_msm_dma_free_channels(struct i2c_msm_ctrl *ctrl)
 {
 	int i;
+
 	for (i = 0; i < I2C_MSM_DMA_CNT; ++i) {
 		struct i2c_msm_dma_chan *chan = &ctrl->xfer.dma.chan[i];
+
 		if (!chan->is_init)
 			continue;
 
@@ -1352,10 +1352,12 @@ static int i2c_msm_dma_init_channels(struct i2c_msm_ctrl *ctrl)
 {
 	int ret = 0;
 	int i;
+
 	/* Iterate over the dma channels to initialize them */
 	for (i = 0; i < I2C_MSM_DMA_CNT; ++i) {
 		struct dma_slave_config cfg = {0};
 		struct i2c_msm_dma_chan *chan = &ctrl->xfer.dma.chan[i];
+
 		if (chan->is_init)
 			continue;
 
@@ -1460,6 +1462,7 @@ dma_core_is_init:
 static int i2c_msm_dma_xfer(struct i2c_msm_ctrl *ctrl)
 {
 	int ret;
+
 	ret = i2c_msm_dma_init(ctrl);
 	if (ret) {
 		dev_err(ctrl->dev, "DMA Init Failed: %d\n", ret);
@@ -1586,30 +1589,21 @@ static int i2c_msm_clk_path_init_structs(struct i2c_msm_ctrl *ctrl)
 	struct msm_bus_vectors *paths    = NULL;
 	struct msm_bus_paths   *usecases = NULL;
 
-	i2c_msm_dbg(ctrl, MSM_PROF, "initializes path clock voting structs");
+	i2c_msm_dbg(ctrl, MSM_PROF, "initializes path clock voting structs\n");
 
-	paths = devm_kzalloc(ctrl->dev, sizeof(*paths) * 2, GFP_KERNEL);
-	if (!paths) {
-		dev_err(ctrl->dev,
-			"error msm_bus_paths.paths memory allocation failed\n");
+	paths = kzalloc(sizeof(*paths) * 2, GFP_KERNEL);
+	if (!paths)
 		return -ENOMEM;
-	}
 
-	usecases = devm_kzalloc(ctrl->dev, sizeof(*usecases) * 2, GFP_KERNEL);
-	if (!usecases) {
-		dev_err(ctrl->dev,
-		"error  msm_bus_scale_pdata.usecases memory allocation failed\n");
+	usecases = kzalloc(sizeof(*usecases) * 2, GFP_KERNEL);
+	if (!usecases)
 		goto path_init_err;
-	}
 
-	ctrl->rsrcs.clk_path_vote.pdata = devm_kzalloc(ctrl->dev,
+	ctrl->rsrcs.clk_path_vote.pdata = kzalloc(
 				       sizeof(*ctrl->rsrcs.clk_path_vote.pdata),
 				       GFP_KERNEL);
-	if (!ctrl->rsrcs.clk_path_vote.pdata) {
-		dev_err(ctrl->dev,
-			"error  msm_bus_scale_pdata memory allocation failed\n");
+	if (!ctrl->rsrcs.clk_path_vote.pdata)
 		goto path_init_err;
-	}
 
 	paths[I2C_MSM_CLK_PATH_SUSPEND_VEC] = (struct msm_bus_vectors) {
 		.src = ctrl->rsrcs.clk_path_vote.mstr_id,
@@ -1644,9 +1638,9 @@ static int i2c_msm_clk_path_init_structs(struct i2c_msm_ctrl *ctrl)
 	return 0;
 
 path_init_err:
-	devm_kfree(ctrl->dev, paths);
-	devm_kfree(ctrl->dev, usecases);
-	devm_kfree(ctrl->dev, ctrl->rsrcs.clk_path_vote.pdata);
+	kfree(paths);
+	kfree(usecases);
+	kfree(ctrl->rsrcs.clk_path_vote.pdata);
 	ctrl->rsrcs.clk_path_vote.pdata = NULL;
 	return -ENOMEM;
 }
@@ -1673,7 +1667,7 @@ static int i2c_msm_clk_path_postponed_register(struct i2c_msm_ctrl *ctrl)
 			/* log a success message if an error msg was logged */
 			ctrl->rsrcs.clk_path_vote.reg_err = false;
 			dev_err(ctrl->dev,
-				"msm_bus_scale_register_client(mstr-id:%d):0x%x (ok)",
+				"msm_bus_scale_register_client(mstr-id:%d):0x%x (ok)\n",
 				ctrl->rsrcs.clk_path_vote.mstr_id,
 				ctrl->rsrcs.clk_path_vote.client_hdl);
 		}
@@ -1683,7 +1677,7 @@ static int i2c_msm_clk_path_postponed_register(struct i2c_msm_ctrl *ctrl)
 			ctrl->rsrcs.clk_path_vote.reg_err = true;
 
 			dev_info(ctrl->dev,
-				"msm_bus_scale_register_client(mstr-id:%d):0 (not a problem)",
+				"msm_bus_scale_register_client(mstr-id:%d):0 (not a problem)\n",
 				ctrl->rsrcs.clk_path_vote.mstr_id);
 		}
 	}
@@ -1706,7 +1700,7 @@ static void i2c_msm_clk_path_init(struct i2c_msm_ctrl *ctrl)
 					i2c_msm_clk_path_init_structs(ctrl)) {
 		ctrl->rsrcs.clk_path_vote.mstr_id = 0;
 		return;
-	};
+	}
 
 	/* on failure try again later */
 	if (i2c_msm_clk_path_postponed_register(ctrl))
@@ -1928,7 +1922,7 @@ static void qup_i2c_recover_bit_bang(struct i2c_msm_ctrl *ctrl)
 	int gpio_clk;
 	int gpio_dat;
 	bool gpio_clk_status = false;
-	uint32_t status = readl_relaxed(ctrl->rsrcs.base + QUP_I2C_STATUS);
+	u32 status = readl_relaxed(ctrl->rsrcs.base + QUP_I2C_STATUS);
 	struct pinctrl_state *bitbang;
 
 	dev_info(ctrl->dev, "Executing bus recovery procedure (9 clk pulse)\n");
@@ -2069,7 +2063,7 @@ static void i2c_msm_xfer_calc_timeout(struct i2c_msm_ctrl *ctrl)
 	size_t bit_cnt  = byte_cnt * 9;
 	size_t bit_usec = (bit_cnt * USEC_PER_SEC) / ctrl->rsrcs.clk_freq_out;
 	size_t loging_ovrhd_coef = ctrl->dbgfs.dbg_lvl + 1;
-	size_t safety_coef   = I2C_MSM_TIMEOUT_SAFTY_COEF * loging_ovrhd_coef;
+	size_t safety_coef   = I2C_MSM_TIMEOUT_SAFETY_COEF * loging_ovrhd_coef;
 	size_t xfer_max_usec = (bit_usec * safety_coef) +
 						I2C_MSM_TIMEOUT_MIN_USEC;
 
@@ -2155,12 +2149,8 @@ static bool i2c_msm_xfer_next_buf(struct i2c_msm_ctrl *ctrl)
 {
 	struct i2c_msm_xfer_buf *cur_buf = &ctrl->xfer.cur_buf;
 	struct i2c_msg          *cur_msg = ctrl->xfer.msgs + cur_buf->msg_idx;
-	int bc_rem = 0;
+	int bc_rem = cur_msg->len - cur_buf->end_idx;
 
-	if (!cur_msg)
-		return false;
-
-	bc_rem = cur_msg->len - cur_buf->end_idx;
 	if (cur_buf->is_init && cur_buf->end_idx && bc_rem) {
 		/* not the first buffer in a message */
 
@@ -2174,12 +2164,11 @@ static bool i2c_msm_xfer_next_buf(struct i2c_msm_ctrl *ctrl)
 	} else {
 		/* first buffer in a new message */
 		if (cur_buf->is_init) {
-			if (i2c_msm_xfer_msg_is_last(ctrl)) {
+			if (i2c_msm_xfer_msg_is_last(ctrl))
 				return false;
-			} else {
-				++cur_buf->msg_idx;
-				++cur_msg;
-			}
+
+			++cur_buf->msg_idx;
+			++cur_msg;
 		} else {
 			cur_buf->is_init = true;
 		}
@@ -2206,7 +2195,9 @@ static void i2c_msm_pm_clk_unprepare(struct i2c_msm_ctrl *ctrl)
 static int i2c_msm_pm_clk_prepare(struct i2c_msm_ctrl *ctrl)
 {
 	int ret;
+
 	ret = clk_prepare(ctrl->rsrcs.iface_clk);
+
 	if (ret) {
 		dev_err(ctrl->dev,
 			"error on clk_prepare(iface_clk):%d\n", ret);
@@ -2252,6 +2243,7 @@ static int i2c_msm_pm_clk_enable(struct i2c_msm_ctrl *ctrl)
 static int i2c_msm_pm_xfer_start(struct i2c_msm_ctrl *ctrl)
 {
 	int ret;
+
 	mutex_lock(&ctrl->xfer.mtx);
 
 	i2c_msm_pm_pinctrl_state(ctrl, true);
@@ -2261,7 +2253,7 @@ static int i2c_msm_pm_xfer_start(struct i2c_msm_ctrl *ctrl)
 	 * and systme-pm are in transition concurrently)
 	 */
 	if (ctrl->pwr_state != I2C_MSM_PM_RT_ACTIVE) {
-		dev_info(ctrl->dev, "Runtime PM-callback was not invoked.\n");
+		dev_info(ctrl->dev, "Runtime PM-callback was not invoked\n");
 		i2c_msm_pm_resume(ctrl->dev);
 	}
 
@@ -2334,10 +2326,9 @@ i2c_msm_frmwrk_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 	struct i2c_msm_ctrl      *ctrl = i2c_get_adapdata(adap);
 	struct i2c_msm_xfer      *xfer = &ctrl->xfer;
 
-	if (IS_ERR_OR_NULL(msgs) || num < 1) {
-		dev_err(ctrl->dev,
-		"Error on msgs Accessing invalid message pointer or message buffer\n");
-		return -EINVAL;
+	if (IS_ERR_OR_NULL(msgs)) {
+		dev_err(ctrl->dev, " error on msgs Accessing invalid  pointer location\n");
+		return (msgs) ? PTR_ERR(msgs) : -EINVAL;
 	}
 
 	/* if system is suspended just bail out */
@@ -2390,7 +2381,7 @@ i2c_msm_frmwrk_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 		break;
 	default:
 		ret = -EINTR;
-	};
+	}
 
 	i2c_msm_prof_evnt_add(ctrl, MSM_PROF, I2C_MSM_SCAN_SUM,
 		((xfer->rx_cnt & 0xff) | ((xfer->rx_ovrhd_cnt & 0xff) << 16)),
@@ -2464,7 +2455,7 @@ static int i2c_msm_dt_to_pdata_populate(struct i2c_msm_ctrl *ctrl,
 			ret = -EBADE;
 		}
 
-		i2c_msm_dbg(ctrl, MSM_PROF, "DT entry ret:%d name:%s val:%d",
+		i2c_msm_dbg(ctrl, MSM_PROF, "DT entry ret:%d name:%s val:%d\n",
 				ret, itr->dt_name, *((int *)itr->ptr_data));
 
 		if (ret) {
@@ -2493,7 +2484,7 @@ static int i2c_msm_dt_to_pdata_populate(struct i2c_msm_ctrl *ctrl,
 static int i2c_msm_rsrcs_process_dt(struct i2c_msm_ctrl *ctrl,
 					struct platform_device *pdev)
 {
-	u32 fs_clk_div, ht_clk_div, noise_rjct_scl, noise_rjct_sda;
+	int fs_clk_div, ht_clk_div, noise_rjct_scl, noise_rjct_sda;
 	int ret;
 
 	struct i2c_msm_dt_to_pdata_map map[] = {
@@ -2511,9 +2502,9 @@ static int i2c_msm_rsrcs_process_dt(struct i2c_msm_ctrl *ctrl,
 	{"qcom,noise-rjct-sda",		&noise_rjct_sda,
 							DT_OPT,  DT_U32,  0},
 	{"qcom,high-time-clk-div",	&ht_clk_div,
-							DT_OPT,  DT_U32,  0},
+							DT_OPT,  DT_U32,  -1},
 	{"qcom,fs-clk-div",		&fs_clk_div,
-							DT_OPT,  DT_U32,  0},
+							DT_OPT,  DT_U32,  -1},
 	{NULL,  NULL,					0,       0,       0},
 	};
 
@@ -2555,7 +2546,7 @@ static int i2c_msm_rsrcs_mem_init(struct platform_device *pdev,
 				   resource_size(ctrl->rsrcs.mem));
 	if (!ctrl->rsrcs.base) {
 		dev_err(ctrl->dev,
-			"error failed ioremap(base:0x%llx size:0x%llx\n)",
+			"error failed ioremap(base:0x%llx size:0x%llx\n)\n",
 			(u64) ctrl->rsrcs.mem->start,
 			(u64) resource_size(ctrl->rsrcs.mem));
 		release_mem_region(ctrl->rsrcs.mem->start,
@@ -2657,6 +2648,7 @@ static void i2c_msm_pm_pinctrl_state(struct i2c_msm_ctrl *ctrl,
 
 	if (!IS_ERR_OR_NULL(pins_state)) {
 		int ret = pinctrl_select_state(ctrl->rsrcs.pinctrl, pins_state);
+
 		if (ret)
 			dev_err(ctrl->dev,
 			"error pinctrl_select_state(%s) err:%d\n",
@@ -2731,7 +2723,7 @@ static void i2c_msm_pm_suspend(struct device *dev)
 		dev_err(ctrl->dev, "attempt to suspend when suspended\n");
 		return;
 	}
-	i2c_msm_dbg(ctrl, MSM_DBG, "suspending...");
+	i2c_msm_dbg(ctrl, MSM_DBG, "suspending...\n");
 	i2c_msm_pm_clk_unprepare(ctrl);
 	i2c_msm_clk_path_unvote(ctrl);
 
@@ -2746,7 +2738,6 @@ static void i2c_msm_pm_suspend(struct device *dev)
 	 */
 	if (ctrl->pwr_state != I2C_MSM_PM_SYS_SUSPENDED)
 		ctrl->pwr_state = I2C_MSM_PM_RT_SUSPENDED;
-	return;
 }
 
 static int i2c_msm_pm_resume(struct device *dev)
@@ -2756,7 +2747,7 @@ static int i2c_msm_pm_resume(struct device *dev)
 	if (ctrl->pwr_state == I2C_MSM_PM_RT_ACTIVE)
 		return 0;
 
-	i2c_msm_dbg(ctrl, MSM_DBG, "resuming...");
+	i2c_msm_dbg(ctrl, MSM_DBG, "resuming...\n");
 
 	i2c_msm_clk_path_vote(ctrl);
 	i2c_msm_pm_clk_prepare(ctrl);
@@ -2770,16 +2761,16 @@ static int i2c_msm_pm_resume(struct device *dev)
  */
 static int i2c_msm_pm_sys_suspend_noirq(struct device *dev)
 {
-	int ret = 0;
 	struct i2c_msm_ctrl *ctrl = dev_get_drvdata(dev);
 	enum i2c_msm_power_state prev_state = ctrl->pwr_state;
-	i2c_msm_dbg(ctrl, MSM_DBG, "pm_sys_noirq: suspending...");
+
+	i2c_msm_dbg(ctrl, MSM_DBG, "pm_sys_noirq: suspending...\n");
 
 	/* Acquire mutex to ensure current transaction is over */
 	mutex_lock(&ctrl->xfer.mtx);
 	ctrl->pwr_state = I2C_MSM_PM_SYS_SUSPENDED;
 	mutex_unlock(&ctrl->xfer.mtx);
-	i2c_msm_dbg(ctrl, MSM_DBG, "pm_sys_noirq: suspending...");
+	i2c_msm_dbg(ctrl, MSM_DBG, "pm_sys_noirq: suspending...\n");
 
 	if (prev_state == I2C_MSM_PM_RT_ACTIVE) {
 		i2c_msm_pm_suspend(dev);
@@ -2795,7 +2786,7 @@ static int i2c_msm_pm_sys_suspend_noirq(struct device *dev)
 		pm_runtime_enable(dev);
 	}
 
-	return ret;
+	return 0;
 }
 
 /*
@@ -2805,7 +2796,8 @@ static int i2c_msm_pm_sys_suspend_noirq(struct device *dev)
 static int i2c_msm_pm_sys_resume_noirq(struct device *dev)
 {
 	struct i2c_msm_ctrl *ctrl = dev_get_drvdata(dev);
-	i2c_msm_dbg(ctrl, MSM_DBG, "pm_sys_noirq: resuming...");
+
+	i2c_msm_dbg(ctrl, MSM_DBG, "pm_sys_noirq: resuming...\n");
 	mutex_lock(&ctrl->xfer.mtx);
 	ctrl->pwr_state = I2C_MSM_PM_RT_SUSPENDED;
 	mutex_unlock(&ctrl->xfer.mtx);
@@ -2829,7 +2821,7 @@ static int i2c_msm_pm_rt_suspend(struct device *dev)
 {
 	struct i2c_msm_ctrl *ctrl = dev_get_drvdata(dev);
 
-	i2c_msm_dbg(ctrl, MSM_DBG, "pm_runtime: suspending...");
+	i2c_msm_dbg(ctrl, MSM_DBG, "pm_runtime: suspending...\n");
 	i2c_msm_pm_suspend(dev);
 	return 0;
 }
@@ -2841,7 +2833,7 @@ static int i2c_msm_pm_rt_resume(struct device *dev)
 {
 	struct i2c_msm_ctrl *ctrl = dev_get_drvdata(dev);
 
-	i2c_msm_dbg(ctrl, MSM_DBG, "pm_runtime: resuming...");
+	i2c_msm_dbg(ctrl, MSM_DBG, "pm_runtime: resuming...\n");
 	return  i2c_msm_pm_resume(dev);
 }
 
@@ -2853,8 +2845,8 @@ static void i2c_msm_pm_rt_init(struct device *dev) {}
 
 static const struct dev_pm_ops i2c_msm_pm_ops = {
 #ifdef CONFIG_PM_SLEEP
-	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(i2c_msm_pm_sys_suspend_noirq,
-					i2c_msm_pm_sys_resume_noirq)
+	.suspend_noirq		= i2c_msm_pm_sys_suspend_noirq,
+	.resume_noirq		= i2c_msm_pm_sys_resume_noirq,
 #endif
 	SET_RUNTIME_PM_OPS(i2c_msm_pm_rt_suspend,
 			   i2c_msm_pm_rt_resume,
@@ -2871,7 +2863,7 @@ static const struct i2c_algorithm i2c_msm_frmwrk_algrtm = {
 	.functionality	= i2c_msm_frmwrk_func,
 };
 
-static const char *i2c_msm_adapter_name = "MSM-I2C-v2-adapter";
+static const char * const i2c_msm_adapter_name = "MSM-I2C-v2-adapter";
 
 static int i2c_msm_frmwrk_reg(struct platform_device *pdev,
 						struct i2c_msm_ctrl *ctrl)
@@ -2905,8 +2897,6 @@ static int i2c_msm_probe(struct platform_device *pdev)
 	struct i2c_msm_ctrl *ctrl;
 	int ret = 0;
 
-	dev_info(&pdev->dev, "probing driver i2c-msm-v2\n");
-
 	ctrl = devm_kzalloc(&pdev->dev, sizeof(*ctrl), GFP_KERNEL);
 	if (!ctrl)
 		return -ENOMEM;
@@ -2918,13 +2908,13 @@ static int i2c_msm_probe(struct platform_device *pdev)
 	ctrl->pwr_state = I2C_MSM_PM_RT_SUSPENDED;
 
 	if (!pdev->dev.of_node) {
-		dev_err(&pdev->dev, "error: null device-tree node");
+		dev_err(&pdev->dev, "error: null device-tree node\n");
 		return -EBADE;
 	}
 
 	ret = i2c_msm_rsrcs_process_dt(ctrl, pdev);
 	if (ret) {
-		dev_err(ctrl->dev, "error in process device tree node");
+		dev_err(ctrl->dev, "error in process device tree node\n");
 		return ret;
 	}
 
@@ -2977,7 +2967,7 @@ static int i2c_msm_probe(struct platform_device *pdev)
 	if (ret)
 		goto reg_err;
 
-	i2c_msm_dbg(ctrl, MSM_PROF, "probe() completed with success");
+	i2c_msm_dbg(ctrl, MSM_PROF, "probe() completed with success\n");
 	return 0;
 
 reg_err:
@@ -2991,7 +2981,6 @@ clk_err:
 	i2c_msm_rsrcs_mem_teardown(ctrl);
 mem_err:
 	dev_err(ctrl->dev, "error probe() failed with err:%d\n", ret);
-	devm_kfree(&pdev->dev, ctrl);
 	return ret;
 }
 
@@ -3017,7 +3006,7 @@ static int i2c_msm_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id i2c_msm_dt_match[] = {
+static const struct of_device_id i2c_msm_dt_match[] = {
 	{
 		.compatible = "qcom,i2c-msm-v2",
 	},
@@ -3029,7 +3018,6 @@ static struct platform_driver i2c_msm_driver = {
 	.remove = i2c_msm_remove,
 	.driver = {
 		.name           = "i2c-msm-v2",
-		.owner          = THIS_MODULE,
 		.pm             = &i2c_msm_pm_ops,
 		.of_match_table = i2c_msm_dt_match,
 	},

@@ -1,13 +1,6 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/types.h>
@@ -32,12 +25,15 @@
 
 #define IMAGE_LOAD_CMD 1
 #define IMAGE_UNLOAD_CMD 0
+#define SSR_RESET_CMD 1
 #define CLASS_NAME	"ssc"
 #define DRV_NAME	"sensors"
 #define DRV_VERSION	"2.00"
 #ifdef CONFIG_COMPAT
-#define DSPS_IOCTL_READ_SLOW_TIMER32 _IOR(DSPS_IOCTL_MAGIC, 3, compat_uint_t)
+#define DSPS_IOCTL_READ_SLOW_TIMER32	_IOR(DSPS_IOCTL_MAGIC, 3, compat_uint_t)
 #endif
+
+#define QTICK_DIV_FACTOR	0x249F
 
 struct sns_ssc_control_s {
 	struct class *dev_class;
@@ -51,6 +47,10 @@ static ssize_t slpi_boot_store(struct kobject *kobj,
 	struct kobj_attribute *attr,
 	const char *buf, size_t count);
 
+static ssize_t slpi_ssr_store(struct kobject *kobj,
+	struct kobj_attribute *attr,
+	const char *buf, size_t count);
+
 struct slpi_loader_private {
 	void *pil_h;
 	struct kobject *boot_slpi_obj;
@@ -60,8 +60,12 @@ struct slpi_loader_private {
 static struct kobj_attribute slpi_boot_attribute =
 	__ATTR(boot, 0220, NULL, slpi_boot_store);
 
+static struct kobj_attribute slpi_ssr_attribute =
+	__ATTR(ssr, 0220, NULL, slpi_ssr_store);
+
 static struct attribute *attrs[] = {
 	&slpi_boot_attribute.attr,
+	&slpi_ssr_attribute.attr,
 	NULL,
 };
 
@@ -76,7 +80,7 @@ static void slpi_load_fw(struct work_struct *slpi_ldr_work)
 	const char *firmware_name = NULL;
 
 	if (!pdev) {
-		dev_err(&pdev->dev, "%s: Platform device null\n", __func__);
+		pr_err("%s: Platform device null\n", __func__);
 		goto fail;
 	}
 
@@ -107,16 +111,16 @@ static void slpi_load_fw(struct work_struct *slpi_ldr_work)
 		goto fail;
 	}
 
-	dev_err(&pdev->dev, "%s: SLPI image is loaded\n", __func__);
+	dev_dbg(&pdev->dev, "%s: SLPI image is loaded\n", __func__);
 	return;
 
 fail:
-	dev_err(&pdev->dev, "%s: SLPI image loading failed\n", __func__);
+	pr_err("%s: SLPI image loading failed\n", __func__);
 }
 
 static void slpi_loader_do(struct platform_device *pdev)
 {
-	dev_info(&pdev->dev, "%s: scheduling work to load SLPI fw\n", __func__);
+	dev_dbg(&pdev->dev, "%s: scheduling work to load SLPI fw\n", __func__);
 	schedule_work(&slpi_ldr_work);
 }
 
@@ -134,6 +138,44 @@ static void slpi_loader_unload(struct platform_device *pdev)
 		subsystem_put(priv->pil_h);
 		priv->pil_h = NULL;
 	}
+}
+
+static ssize_t slpi_ssr_store(struct kobject *kobj,
+	struct kobj_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	int ssr_cmd = 0;
+	struct subsys_device *sns_dev = NULL;
+	struct platform_device *pdev = slpi_private;
+	struct slpi_loader_private *priv = NULL;
+
+	pr_debug("%s: going to call slpi_ssr\n", __func__);
+
+	if (kstrtoint(buf, 10, &ssr_cmd) < 0)
+		return -EINVAL;
+
+	if (ssr_cmd != SSR_RESET_CMD)
+		return -EINVAL;
+
+	priv = platform_get_drvdata(pdev);
+	if (!priv)
+		return -EINVAL;
+
+	sns_dev = (struct subsys_device *)priv->pil_h;
+	if (!sns_dev)
+		return -EINVAL;
+
+	dev_err(&pdev->dev, "Something went wrong with SLPI, restarting\n");
+
+	/* subsystem_restart_dev has worker queue to handle */
+	if (subsystem_restart_dev(sns_dev) != 0) {
+		dev_err(&pdev->dev, "subsystem_restart_dev failed\n");
+		return -EINVAL;
+	}
+
+	dev_dbg(&pdev->dev, "SLPI restarted\n");
+	return count;
 }
 
 static ssize_t slpi_boot_store(struct kobject *kobj,
@@ -244,17 +286,18 @@ static int slpi_loader_remove(struct platform_device *pdev)
 static u32 sns_read_qtimer(void)
 {
 	u64 val;
+
 	val = arch_counter_get_cntvct();
 	/*
 	 * To convert ticks from 19.2 Mhz clock to 32768 Hz clock:
 	 * x = (value * 32768) / 19200000
-	 * This is same as first left shift the value by 4 bits, i.e. mutiply
-	 * by 16, and then divide by 9375. The latter is preferable since
+	 * This is same as first left shift the value by 4 bits, i.e. multiply
+	 * by 16, and then divide by 0x249F. The latter is preferable since
 	 * QTimer tick (value) is 56-bit, so (value * 32768) could overflow,
 	 * while (value * 16) will never do
 	 */
 	val <<= 4;
-	do_div(val, 9375);
+	do_div(val, QTICK_DIV_FACTOR);
 
 	return (u32)val;
 }
@@ -383,7 +426,6 @@ MODULE_DEVICE_TABLE(of, msm_ssc_sensors_dt_match);
 static struct platform_driver sensors_ssc_driver = {
 	.driver = {
 		.name = "sensors-ssc",
-		.owner = THIS_MODULE,
 		.of_match_table = msm_ssc_sensors_dt_match,
 	},
 	.probe = sensors_ssc_probe,

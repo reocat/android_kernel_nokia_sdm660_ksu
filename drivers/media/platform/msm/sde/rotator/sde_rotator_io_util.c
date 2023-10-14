@@ -1,13 +1,6 @@
-/* Copyright (c) 2012, 2015-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2012, 2015-2020, The Linux Foundation. All rights reserved.
  */
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
@@ -349,7 +342,7 @@ int sde_rot_clk_set_rate(struct sde_clk *clk_arry, int num_clk)
 
 	for (i = 0; i < num_clk; i++) {
 		if (clk_arry[i].clk) {
-			if (SDE_CLK_AHB != clk_arry[i].type) {
+			if (clk_arry[i].type != SDE_CLK_AHB) {
 				DEV_DBG("%pS->%s: '%s' rate %ld\n",
 					__builtin_return_address(0), __func__,
 					clk_arry[i].clk_name,

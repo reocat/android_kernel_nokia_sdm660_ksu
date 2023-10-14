@@ -1,15 +1,7 @@
-/* Copyright (c) 2011-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (c) 2011-2018, 2020, The Linux Foundation. All rights reserved.
  */
-
 /**
  * Smart-Peripheral-Switch (SPS) internal API.
  */
@@ -220,13 +212,13 @@ extern u8 print_limit_option;
 		}	\
 	} while (0)
 #else
-#define	SPS_DBG3(x...)		pr_debug(x)
-#define	SPS_DBG2(x...)		pr_debug(x)
-#define	SPS_DBG1(x...)		pr_debug(x)
-#define	SPS_DBG(x...)		pr_debug(x)
-#define	SPS_INFO(x...)		pr_info(x)
-#define	SPS_ERR(x...)		pr_err(x)
-#define	SPS_DUMP(x...)		pr_info(x)
+#define SPS_DBG3(dev, msg, args...)             pr_debug(msg, ##args)
+#define SPS_DBG2(dev, msg, args...)             pr_debug(msg, ##args)
+#define SPS_DBG1(dev, msg, args...)             pr_debug(msg, ##args)
+#define SPS_DBG(dev, msg, args...)              pr_debug(msg, ##args)
+#define SPS_INFO(dev, msg, args...)             pr_info(msg, ##args)
+#define SPS_ERR(dev, msg, args...)              pr_err(msg, ##args)
+#define SPS_DUMP(msg, args...)                  pr_info(msg, ##args)
 #endif
 
 /* End point parameters */
@@ -259,7 +251,7 @@ struct sps_connection {
 	void *client_dest;
 	int refs;		/* Reference counter */
 
-	/* Dynamically allocated resouces, if required */
+	/* Dynamically allocated resources, if required */
 	u32 alloc_src_pipe;	/* Source pipe index */
 	u32 alloc_dest_pipe;	/* Destination pipe index */
 	/* Physical address of descriptor FIFO */
@@ -291,29 +283,29 @@ enum sps_bam_type {
 
 #ifdef CONFIG_DEBUG_FS
 /* record debug info for debugfs */
-void sps_debugfs_record(const char *);
+void sps_debugfs_record(const char *msg);
 #endif
 
 /* output the content of BAM-level registers */
-void print_bam_reg(void *);
+void print_bam_reg(void *virt_addr);
 
 /* output the content of BAM pipe registers */
-void print_bam_pipe_reg(void *, u32);
+void print_bam_pipe_reg(void *virt_addr, u32 pipe_index);
 
 /* output the content of selected BAM-level registers */
-void print_bam_selected_reg(void *, u32);
+void print_bam_selected_reg(void *virt_addr, u32 pipe_index);
 
 /* output the content of selected BAM pipe registers */
-void print_bam_pipe_selected_reg(void *, u32);
+void print_bam_pipe_selected_reg(void *virt_addr, u32 pipe_index);
 
 /* output descriptor FIFO of a pipe */
-void print_bam_pipe_desc_fifo(void *, u32, u32);
+void print_bam_pipe_desc_fifo(void *virt_addr, u32 pipe_index, u32 option);
 
 /* output BAM_TEST_BUS_REG */
-void print_bam_test_bus_reg(void *, u32);
+void print_bam_test_bus_reg(void *base, u32 tb_sel);
 
 /* halt and un-halt a pipe */
-void bam_pipe_halt(void *, u32, bool);
+void bam_pipe_halt(void *base, u32 pipe, bool halt);
 
 /**
  * Translate physical to virtual address

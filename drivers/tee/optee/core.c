@@ -32,7 +32,7 @@
 
 #define DRIVER_NAME "optee"
 
-#define OPTEE_SHM_NUM_PRIV_PAGES	1
+#define OPTEE_SHM_NUM_PRIV_PAGES	CONFIG_OPTEE_SHM_NUM_PRIV_PAGES
 
 /**
  * optee_from_msg_param() - convert from OPTEE_MSG parameters to
@@ -87,16 +87,6 @@ int optee_from_msg_param(struct tee_param *params, size_t num_params,
 				return rc;
 			p->u.memref.shm_offs = mp->u.tmem.buf_ptr - pa;
 			p->u.memref.shm = shm;
-
-			/* Check that the memref is covered by the shm object */
-			if (p->u.memref.size) {
-				size_t o = p->u.memref.shm_offs +
-					   p->u.memref.size - 1;
-
-				rc = tee_shm_get_pa(shm, o, NULL);
-				if (rc)
-					return rc;
-			}
 			break;
 		case OPTEE_MSG_ATTR_TYPE_RMEM_INPUT:
 		case OPTEE_MSG_ATTR_TYPE_RMEM_OUTPUT:
@@ -356,6 +346,27 @@ static bool optee_msg_api_uid_is_optee_api(optee_invoke_fn *invoke_fn)
 	return false;
 }
 
+static void optee_msg_get_os_revision(optee_invoke_fn *invoke_fn)
+{
+	union {
+		struct arm_smccc_res smccc;
+		struct optee_smc_call_get_os_revision_result result;
+	} res = {
+		.result = {
+			.build_id = 0
+		}
+	};
+
+	invoke_fn(OPTEE_SMC_CALL_GET_OS_REVISION, 0, 0, 0, 0, 0, 0, 0,
+		  &res.smccc);
+
+	if (res.result.build_id)
+		pr_info("revision %lu.%lu (%08lx)", res.result.major,
+			res.result.minor, res.result.build_id);
+	else
+		pr_info("revision %lu.%lu", res.result.major, res.result.minor);
+}
+
 static bool optee_msg_api_revision_is_compatible(optee_invoke_fn *invoke_fn)
 {
 	union {
@@ -547,6 +558,8 @@ static struct optee *optee_probe(struct device_node *np)
 		return ERR_PTR(-EINVAL);
 	}
 
+	optee_msg_get_os_revision(invoke_fn);
+
 	if (!optee_msg_api_revision_is_compatible(invoke_fn)) {
 		pr_warn("api revision mismatch\n");
 		return ERR_PTR(-EINVAL);
@@ -605,6 +618,15 @@ static struct optee *optee_probe(struct device_node *np)
 	optee_supp_init(&optee->supp);
 	optee->memremaped_shm = memremaped_shm;
 	optee->pool = pool;
+
+	/*
+	 * Ensure that there are no pre-existing shm objects before enabling
+	 * the shm cache so that there's no chance of receiving an invalid
+	 * address during shutdown. This could occur, for example, if we're
+	 * kexec booting from an older kernel that did not properly cleanup the
+	 * shm cache.
+	 */
+	optee_disable_unmapped_shm_cache(optee);
 
 	optee_enable_shm_cache(optee);
 
@@ -673,8 +695,10 @@ static int __init optee_driver_init(void)
 		return -ENODEV;
 
 	np = of_find_matching_node(fw_np, optee_match);
-	if (!np)
+	if (!np || !of_device_is_available(np)) {
+		of_node_put(np);
 		return -ENODEV;
+	}
 
 	optee = optee_probe(np);
 	of_node_put(np);

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * S390 64-bit swsusp implementation
  *
@@ -197,12 +198,10 @@ pgm_check_entry:
 
 	/* Suspend CPU not available -> panic */
 	larl	%r15,init_thread_union
-	ahi	%r15,1<<(PAGE_SHIFT+THREAD_ORDER)
+	aghi	%r15,1<<(PAGE_SHIFT+THREAD_SIZE_ORDER)
+	aghi	%r15,-STACK_FRAME_OVERHEAD
 	larl	%r2,.Lpanic_string
-	lghi	%r1,0
-	sam31
-	sigp	%r1,%r0,SIGP_SET_ARCHITECTURE
-	brasl	%r14,_sclp_print_early
+	brasl	%r14,sclp_early_printk_force
 	larl	%r3,.Ldisabled_wait_31
 	lpsw	0(%r3)
 4:
@@ -275,7 +274,7 @@ restore_registers:
 .Ldisabled_wait_31:
 	.long  0x000a0000,0x00000000
 .Lpanic_string:
-	.asciz	"Resume not possible because suspend CPU is no longer available"
+	.asciz	"Resume not possible because suspend CPU is no longer available\n"
 	.align	8
 .Lrestart_diag308_psw:
 	.long	0x00080000,0x80000000

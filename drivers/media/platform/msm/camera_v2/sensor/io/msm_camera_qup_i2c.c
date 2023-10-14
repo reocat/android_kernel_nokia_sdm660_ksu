@@ -1,4 +1,5 @@
-/* Copyright (c) 2011, 2013-2016, The Linux Foundation. All rights reserved.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2011, 2013-2016, 2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -44,7 +45,7 @@ static int32_t msm_camera_qup_i2c_rxdata(
 	};
 	rc = i2c_transfer(dev_client->client->adapter, msgs, 2);
 	if (rc < 0)
-		S_I2C_DBG("msm_camera_qup_i2c_rxdata failed 0x%x\n", saddr);
+		S_I2C_DBG("%s failed 0x%x\n", __func__, saddr);
 	return rc;
 }
 
@@ -64,7 +65,7 @@ static int32_t msm_camera_qup_i2c_txdata(
 	};
 	rc = i2c_transfer(dev_client->client->adapter, msg, 1);
 	if (rc < 0)
-		S_I2C_DBG("msm_camera_qup_i2c_txdata faild 0x%x\n", saddr);
+		S_I2C_DBG("%s failed 0x%x\n", __func__, saddr);
 	return rc;
 }
 
@@ -86,7 +87,8 @@ int32_t msm_camera_qup_i2c_read(struct msm_camera_i2c_client *client,
 		return rc;
 	}
 
-	buf = kzalloc(client->addr_type+data_type, GFP_KERNEL);
+	buf = kzalloc((uint32_t)client->addr_type + (uint32_t)data_type,
+					GFP_KERNEL);
 	if (!buf) {
 		S_I2C_DBG("%s:%d no memory\n", __func__, __LINE__);
 		return -ENOMEM;
@@ -175,7 +177,7 @@ int32_t msm_camera_qup_i2c_write(struct msm_camera_i2c_client *client,
 	enum msm_camera_i2c_data_type data_type)
 {
 	int32_t rc = -EFAULT;
-	unsigned char buf[client->addr_type+data_type];
+	unsigned char *buf = NULL;
 	uint8_t len = 0;
 
 	if ((client->addr_type != MSM_CAMERA_I2C_BYTE_ADDR
@@ -183,6 +185,12 @@ int32_t msm_camera_qup_i2c_write(struct msm_camera_i2c_client *client,
 		|| (data_type != MSM_CAMERA_I2C_BYTE_DATA
 		&& data_type != MSM_CAMERA_I2C_WORD_DATA))
 		return rc;
+
+	buf = kzalloc((uint32_t)client->addr_type + (uint32_t)data_type,
+					GFP_KERNEL);
+
+	if (!buf)
+		return -ENOMEM;
 
 	S_I2C_DBG("%s reg addr = 0x%x data type: %d\n",
 			  __func__, addr, data_type);
@@ -215,6 +223,8 @@ int32_t msm_camera_qup_i2c_write(struct msm_camera_i2c_client *client,
 	rc = msm_camera_qup_i2c_txdata(client, buf, len);
 	if (rc < 0)
 		S_I2C_DBG("%s fail\n", __func__);
+	kfree(buf);
+	buf = NULL;
 	return rc;
 }
 
@@ -222,13 +232,18 @@ int32_t msm_camera_qup_i2c_write_seq(struct msm_camera_i2c_client *client,
 	uint32_t addr, uint8_t *data, uint32_t num_byte)
 {
 	int32_t rc = -EFAULT;
-	unsigned char buf[client->addr_type+num_byte];
+	unsigned char *buf;
 	uint8_t len = 0, i = 0;
 
 	if ((client->addr_type != MSM_CAMERA_I2C_BYTE_ADDR
 		&& client->addr_type != MSM_CAMERA_I2C_WORD_ADDR)
 		|| num_byte == 0)
 		return rc;
+
+	buf = kzalloc(client->addr_type+num_byte, GFP_KERNEL);
+
+	if (!buf)
+		return -ENOMEM;
 
 	S_I2C_DBG("%s reg addr = 0x%x num bytes: %d\n",
 			  __func__, addr, num_byte);
@@ -259,6 +274,8 @@ int32_t msm_camera_qup_i2c_write_seq(struct msm_camera_i2c_client *client,
 	rc = msm_camera_qup_i2c_txdata(client, buf, len+num_byte);
 	if (rc < 0)
 		S_I2C_DBG("%s fail\n", __func__);
+	kfree(buf);
+	buf = NULL;
 	return rc;
 }
 
@@ -316,7 +333,7 @@ int32_t msm_camera_qup_i2c_write_seq_table(struct msm_camera_i2c_client *client,
 
 	if ((write_setting->addr_type != MSM_CAMERA_I2C_BYTE_ADDR
 		&& write_setting->addr_type != MSM_CAMERA_I2C_WORD_ADDR)) {
-		pr_err("%s Invalide addr type %d\n", __func__,
+		pr_err("%s Invalid addr type %d\n", __func__,
 			write_setting->addr_type);
 		return rc;
 	}
@@ -386,6 +403,7 @@ static int32_t msm_camera_qup_i2c_compare(
 	int32_t rc;
 	uint16_t reg_data = 0;
 	int data_len = 0;
+
 	switch (data_type) {
 	case MSM_CAMERA_I2C_BYTE_DATA:
 	case MSM_CAMERA_I2C_WORD_DATA:
@@ -441,6 +459,7 @@ int32_t msm_camera_qup_i2c_poll(struct msm_camera_i2c_client *client,
 {
 	int32_t rc = 0;
 	int i;
+
 	S_I2C_DBG("%s: addr: 0x%x data: 0x%x dt: %d\n",
 		__func__, addr, data, data_type);
 
@@ -454,8 +473,8 @@ int32_t msm_camera_qup_i2c_poll(struct msm_camera_i2c_client *client,
 		rc = msm_camera_qup_i2c_compare(client,
 			addr, data, data_type);
 		if (rc < 0) {
-			pr_err("%s:%d qup_i2c_compare failed rc = %d", __func__,
-				__LINE__, rc);
+			pr_err("%s:%d qup_i2c_compare failed rc = %d\n",
+				__func__, __LINE__, rc);
 			break;
 		}
 		if (rc == I2C_COMPARE_MISMATCH)
@@ -500,6 +519,7 @@ static int32_t msm_camera_qup_i2c_set_write_mask_data(
 {
 	int32_t rc;
 	uint16_t reg_data;
+
 	CDBG("%s\n", __func__);
 	if (mask == -1)
 		return 0;
@@ -530,9 +550,11 @@ int32_t msm_camera_qup_i2c_write_conf_tbl(
 {
 	int i;
 	int32_t rc = -EFAULT;
-	pr_err("%s, E. ", __func__);
+
+	pr_err("%s, E.\n", __func__);
 	for (i = 0; i < size; i++) {
 		enum msm_camera_i2c_data_type dt;
+
 		if (reg_conf_tbl->cmd_type == MSM_CAMERA_I2C_CMD_POLL) {
 			rc = msm_camera_qup_i2c_poll(client,
 				reg_conf_tbl->reg_addr,
@@ -595,4 +617,3 @@ int32_t msm_camera_qup_i2c_write_conf_tbl(
 	}
 	return rc;
 }
-

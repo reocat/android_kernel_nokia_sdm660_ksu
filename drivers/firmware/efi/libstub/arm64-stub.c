@@ -20,16 +20,37 @@
 
 #include <linux/efi.h>
 #include <asm/efi.h>
+#include <asm/memory.h>
+#include <asm/sysreg.h>
 
 #include "efistub.h"
 
-efi_status_t __init handle_kernel_image(efi_system_table_t *sys_table_arg,
-					unsigned long *image_addr,
-					unsigned long *image_size,
-					unsigned long *reserve_addr,
-					unsigned long *reserve_size,
-					unsigned long dram_base,
-					efi_loaded_image_t *image)
+efi_status_t check_platform_features(efi_system_table_t *sys_table_arg)
+{
+	u64 tg;
+
+	/* UEFI mandates support for 4 KB granularity, no need to check */
+	if (IS_ENABLED(CONFIG_ARM64_4K_PAGES))
+		return EFI_SUCCESS;
+
+	tg = (read_cpuid(ID_AA64MMFR0_EL1) >> ID_AA64MMFR0_TGRAN_SHIFT) & 0xf;
+	if (tg != ID_AA64MMFR0_TGRAN_SUPPORTED) {
+		if (IS_ENABLED(CONFIG_ARM64_64K_PAGES))
+			pr_efi_err(sys_table_arg, "This 64 KB granular kernel is not supported by your CPU\n");
+		else
+			pr_efi_err(sys_table_arg, "This 16 KB granular kernel is not supported by your CPU\n");
+		return EFI_UNSUPPORTED;
+	}
+	return EFI_SUCCESS;
+}
+
+efi_status_t handle_kernel_image(efi_system_table_t *sys_table_arg,
+				 unsigned long *image_addr,
+				 unsigned long *image_size,
+				 unsigned long *reserve_addr,
+				 unsigned long *reserve_size,
+				 unsigned long dram_base,
+				 efi_loaded_image_t *image)
 {
 	efi_status_t status;
 	unsigned long kernel_size, kernel_memsize = 0;
@@ -69,11 +90,22 @@ efi_status_t __init handle_kernel_image(efi_system_table_t *sys_table_arg,
 		/*
 		 * If CONFIG_DEBUG_ALIGN_RODATA is not set, produce a
 		 * displacement in the interval [0, MIN_KIMG_ALIGN) that
-		 * is a multiple of the minimal segment alignment (SZ_64K)
+		 * doesn't violate this kernel's de-facto alignment
+		 * constraints.
 		 */
-		u32 mask = (MIN_KIMG_ALIGN - 1) & ~(SZ_64K - 1);
+		u32 mask = (MIN_KIMG_ALIGN - 1) & ~(EFI_KIMG_ALIGN - 1);
 		u32 offset = !IS_ENABLED(CONFIG_DEBUG_ALIGN_RODATA) ?
 			     (phys_seed >> 32) & mask : TEXT_OFFSET;
+
+		/*
+		 * With CONFIG_RANDOMIZE_TEXT_OFFSET=y, TEXT_OFFSET may not
+		 * be a multiple of EFI_KIMG_ALIGN, and we must ensure that
+		 * we preserve the misalignment of 'offset' relative to
+		 * EFI_KIMG_ALIGN so that statically allocated objects whose
+		 * alignment exceeds PAGE_SIZE appear correctly aligned in
+		 * memory.
+		 */
+		offset |= TEXT_OFFSET % EFI_KIMG_ALIGN;
 
 		/*
 		 * If KASLR is enabled, and we have some randomness available,

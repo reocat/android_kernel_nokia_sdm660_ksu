@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/sh/kernel/signal.c
  *
@@ -9,6 +10,7 @@
  *
  */
 #include <linux/sched.h>
+#include <linux/sched/task_stack.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
 #include <linux/kernel.h>
@@ -25,7 +27,7 @@
 #include <linux/io.h>
 #include <linux/tracehook.h>
 #include <asm/ucontext.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/pgtable.h>
 #include <asm/cacheflush.h>
 #include <asm/syscalls.h>
@@ -114,6 +116,7 @@ static int
 restore_sigcontext(struct pt_regs *regs, struct sigcontext __user *sc, int *r0_p)
 {
 	unsigned int err = 0;
+	unsigned int sr = regs->sr & ~SR_USER_MASK;
 
 #define COPY(x)		err |= __get_user(regs->x, &sc->sc_##x)
 			COPY(regs[1]);
@@ -128,6 +131,8 @@ restore_sigcontext(struct pt_regs *regs, struct sigcontext __user *sc, int *r0_p
 	COPY(macl);	COPY(pr);
 	COPY(sr);	COPY(pc);
 #undef COPY
+
+	regs->sr = (regs->sr & SR_USER_MASK) | sr;
 
 #ifdef CONFIG_SH_FPU
 	if (boot_cpu_data.flags & CPU_HAS_FPU) {

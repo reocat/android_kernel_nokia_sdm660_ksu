@@ -1,23 +1,34 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2015, Linaro Limited
- * Copyright (c) 2014, 2017, The Linux Foundation. All rights reserved.
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2017, Linaro Limited
+ * Author: Georgi Djakov <georgi.djakov@linaro.org>
  */
 
 #ifndef __QCOM_CLK_REGMAP_MUX_DIV_H__
 #define __QCOM_CLK_REGMAP_MUX_DIV_H__
 
 #include <linux/clk-provider.h>
-#include "clk-rcg.h"
+#include <linux/pm_qos.h>
+#include <soc/qcom/pm.h>
+#include "common.h"
 #include "clk-regmap.h"
+
+/**
+ * struct clk_regmap_mux_div_lpm - regmap_mux_div_lpm clock
+ * @cpu_reg_mask: logical cpu mask for node
+ * @hw_low_power_ctrl: hw low power control
+ * @req:  pm_qos request
+ * @latency_lvl: lpm latency level
+ * @cpu_latency_no_l2_pc_us:  cpu latency in ms
+ */
+
+struct clk_regmap_mux_div_lpm {
+	cpumask_t cpu_reg_mask;
+	bool hw_low_power_ctrl;
+	struct pm_qos_request req;
+	struct latency_level latency_lvl;
+	s32 cpu_latency_no_l2_pc_us;
+};
 
 /**
  * struct mux_div_clk - combined mux/divider clock
@@ -40,10 +51,11 @@
  *		parent B to change, then safe_freq must be defined.
  *		safe_freq is expected to have a source clock which is always
  *		on and runs at only one rate.
- * @parent_map:	pointer to parent_map struct
+ * @parent_map: pointer to parent_map struct
  * @clkr:	handle between common and hardware-specific interfaces
+ * @pclk:	the input PLL clock
+ * @clk_nb:	clock notifier for rate changes of the input PLL
  */
-
 struct clk_regmap_mux_div {
 	u32				reg_offset;
 	u32				hid_width;
@@ -57,10 +69,15 @@ struct clk_regmap_mux_div {
 	unsigned long			safe_freq;
 	const struct parent_map		*parent_map;
 	struct clk_regmap		clkr;
+	struct clk			*pclk;
+	struct notifier_block		clk_nb;
+
+	/* LPM Latency related */
+	struct clk_regmap_mux_div_lpm	clk_lpm;
 };
 
 extern const struct clk_ops clk_regmap_mux_div_ops;
-int __mux_div_set_src_div(struct clk_regmap_mux_div *md, u32 src, u32 div);
+extern int mux_div_set_src_div(struct clk_regmap_mux_div *md, u32 src, u32 div);
 int mux_div_get_src_div(struct clk_regmap_mux_div *md, u32 *src, u32 *div);
 
 #endif

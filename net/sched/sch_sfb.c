@@ -25,6 +25,7 @@
 #include <linux/siphash.h>
 #include <net/ip.h>
 #include <net/pkt_sched.h>
+#include <net/pkt_cls.h>
 #include <net/inet_ecn.h>
 
 /*
@@ -55,6 +56,7 @@ struct sfb_bins {
 struct sfb_sched_data {
 	struct Qdisc	*qdisc;
 	struct tcf_proto __rcu *filter_list;
+	struct tcf_block *block;
 	unsigned long	rehash_interval;
 	unsigned long	warmup_time;	/* double buffering warmup time in jiffies */
 	u32		max;
@@ -137,15 +139,15 @@ static void increment_one_qlen(u32 sfbhash, u32 slot, struct sfb_sched_data *q)
 	}
 }
 
-static void increment_qlen(const struct sk_buff *skb, struct sfb_sched_data *q)
+static void increment_qlen(const struct sfb_skb_cb *cb, struct sfb_sched_data *q)
 {
 	u32 sfbhash;
 
-	sfbhash = sfb_hash(skb, 0);
+	sfbhash = cb->hashes[0];
 	if (sfbhash)
 		increment_one_qlen(sfbhash, 0, q);
 
-	sfbhash = sfb_hash(skb, 1);
+	sfbhash = cb->hashes[1];
 	if (sfbhash)
 		increment_one_qlen(sfbhash, 1, q);
 }
@@ -259,13 +261,15 @@ static bool sfb_classify(struct sk_buff *skb, struct tcf_proto *fl,
 	struct tcf_result res;
 	int result;
 
-	result = tc_classify(skb, fl, &res, false);
+	result = tcf_classify(skb, fl, &res, false);
 	if (result >= 0) {
 #ifdef CONFIG_NET_CLS_ACT
 		switch (result) {
 		case TC_ACT_STOLEN:
 		case TC_ACT_QUEUED:
+		case TC_ACT_TRAP:
 			*qerr = NET_XMIT_SUCCESS | __NET_XMIT_STOLEN;
+			/* fall through */
 		case TC_ACT_SHOT:
 			return false;
 		}
@@ -276,12 +280,15 @@ static bool sfb_classify(struct sk_buff *skb, struct tcf_proto *fl,
 	return false;
 }
 
-static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch)
+static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch,
+		       struct sk_buff **to_free)
 {
 
 	struct sfb_sched_data *q = qdisc_priv(sch);
+	unsigned int len = qdisc_pkt_len(skb);
 	struct Qdisc *child = q->qdisc;
 	struct tcf_proto *fl;
+	struct sfb_skb_cb cb;
 	int i;
 	u32 p_min = ~0;
 	u32 minqlen = ~0;
@@ -398,11 +405,12 @@ static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 	}
 
 enqueue:
-	ret = qdisc_enqueue(skb, child);
+	memcpy(&cb, sfb_skb_cb(skb), sizeof(cb));
+	ret = qdisc_enqueue(skb, child, to_free);
 	if (likely(ret == NET_XMIT_SUCCESS)) {
-		qdisc_qstats_backlog_inc(sch, skb);
+		sch->qstats.backlog += len;
 		sch->q.qlen++;
-		increment_qlen(skb, q);
+		increment_qlen(&cb, q);
 	} else if (net_xmit_drop_count(ret)) {
 		q->stats.childdrop++;
 		qdisc_qstats_drop(sch);
@@ -410,7 +418,7 @@ enqueue:
 	return ret;
 
 drop:
-	qdisc_drop(skb, sch);
+	qdisc_drop(skb, sch, to_free);
 	return NET_XMIT_CN;
 other_drop:
 	if (ret & __NET_XMIT_BYPASS)
@@ -464,8 +472,8 @@ static void sfb_destroy(struct Qdisc *sch)
 {
 	struct sfb_sched_data *q = qdisc_priv(sch);
 
-	tcf_destroy_chain(&q->filter_list);
-	qdisc_destroy(q->qdisc);
+	tcf_block_put(q->block);
+	qdisc_put(q->qdisc);
 }
 
 static const struct nla_policy sfb_policy[TCA_SFB_MAX + 1] = {
@@ -484,7 +492,8 @@ static const struct tc_sfb_qopt sfb_default_ops = {
 	.penalty_burst = 20,
 };
 
-static int sfb_change(struct Qdisc *sch, struct nlattr *opt)
+static int sfb_change(struct Qdisc *sch, struct nlattr *opt,
+		      struct netlink_ext_ack *extack)
 {
 	struct sfb_sched_data *q = qdisc_priv(sch);
 	struct Qdisc *child;
@@ -494,7 +503,7 @@ static int sfb_change(struct Qdisc *sch, struct nlattr *opt)
 	int err;
 
 	if (opt) {
-		err = nla_parse_nested(tb, TCA_SFB_MAX, opt, sfb_policy);
+		err = nla_parse_nested(tb, TCA_SFB_MAX, opt, sfb_policy, NULL);
 		if (err < 0)
 			return -EINVAL;
 
@@ -508,15 +517,17 @@ static int sfb_change(struct Qdisc *sch, struct nlattr *opt)
 	if (limit == 0)
 		limit = qdisc_dev(sch)->tx_queue_len;
 
-	child = fifo_create_dflt(sch, &pfifo_qdisc_ops, limit);
+	child = fifo_create_dflt(sch, &pfifo_qdisc_ops, limit, extack);
 	if (IS_ERR(child))
 		return PTR_ERR(child);
 
+	if (child != &noop_qdisc)
+		qdisc_hash_add(child, true);
 	sch_tree_lock(sch);
 
 	qdisc_tree_reduce_backlog(q->qdisc, q->qdisc->q.qlen,
 				  q->qdisc->qstats.backlog);
-	qdisc_destroy(q->qdisc);
+	qdisc_put(q->qdisc);
 	q->qdisc = child;
 
 	q->rehash_interval = msecs_to_jiffies(ctl->rehash_interval);
@@ -543,12 +554,18 @@ static int sfb_change(struct Qdisc *sch, struct nlattr *opt)
 	return 0;
 }
 
-static int sfb_init(struct Qdisc *sch, struct nlattr *opt)
+static int sfb_init(struct Qdisc *sch, struct nlattr *opt,
+		    struct netlink_ext_ack *extack)
 {
 	struct sfb_sched_data *q = qdisc_priv(sch);
+	int err;
+
+	err = tcf_block_get(&q->block, &q->filter_list, sch, extack);
+	if (err)
+		return err;
 
 	q->qdisc = &noop_qdisc;
-	return sfb_change(sch, opt);
+	return sfb_change(sch, opt, extack);
 }
 
 static int sfb_dump(struct Qdisc *sch, struct sk_buff *skb)
@@ -604,7 +621,7 @@ static int sfb_dump_class(struct Qdisc *sch, unsigned long cl,
 }
 
 static int sfb_graft(struct Qdisc *sch, unsigned long arg, struct Qdisc *new,
-		     struct Qdisc **old)
+		     struct Qdisc **old, struct netlink_ext_ack *extack)
 {
 	struct sfb_sched_data *q = qdisc_priv(sch);
 
@@ -622,17 +639,18 @@ static struct Qdisc *sfb_leaf(struct Qdisc *sch, unsigned long arg)
 	return q->qdisc;
 }
 
-static unsigned long sfb_get(struct Qdisc *sch, u32 classid)
+static unsigned long sfb_find(struct Qdisc *sch, u32 classid)
 {
 	return 1;
 }
 
-static void sfb_put(struct Qdisc *sch, unsigned long arg)
+static void sfb_unbind(struct Qdisc *sch, unsigned long arg)
 {
 }
 
 static int sfb_change_class(struct Qdisc *sch, u32 classid, u32 parentid,
-			    struct nlattr **tca, unsigned long *arg)
+			    struct nlattr **tca, unsigned long *arg,
+			    struct netlink_ext_ack *extack)
 {
 	return -ENOSYS;
 }
@@ -654,14 +672,14 @@ static void sfb_walk(struct Qdisc *sch, struct qdisc_walker *walker)
 	}
 }
 
-static struct tcf_proto __rcu **sfb_find_tcf(struct Qdisc *sch,
-					     unsigned long cl)
+static struct tcf_block *sfb_tcf_block(struct Qdisc *sch, unsigned long cl,
+				       struct netlink_ext_ack *extack)
 {
 	struct sfb_sched_data *q = qdisc_priv(sch);
 
 	if (cl)
 		return NULL;
-	return &q->filter_list;
+	return q->block;
 }
 
 static unsigned long sfb_bind(struct Qdisc *sch, unsigned long parent,
@@ -674,14 +692,13 @@ static unsigned long sfb_bind(struct Qdisc *sch, unsigned long parent,
 static const struct Qdisc_class_ops sfb_class_ops = {
 	.graft		=	sfb_graft,
 	.leaf		=	sfb_leaf,
-	.get		=	sfb_get,
-	.put		=	sfb_put,
+	.find		=	sfb_find,
 	.change		=	sfb_change_class,
 	.delete		=	sfb_delete,
 	.walk		=	sfb_walk,
-	.tcf_chain	=	sfb_find_tcf,
+	.tcf_block	=	sfb_tcf_block,
 	.bind_tcf	=	sfb_bind,
-	.unbind_tcf	=	sfb_put,
+	.unbind_tcf	=	sfb_unbind,
 	.dump		=	sfb_dump_class,
 };
 

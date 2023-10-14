@@ -1,15 +1,5 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2012-2018, 2020, The Linux Foundation. All rights reserved. */
 
 #ifndef MDSS_H
 #define MDSS_H
@@ -28,6 +18,8 @@
 #include <linux/file.h>
 #include <linux/dma-direction.h>
 #include <soc/qcom/cx_ipeak.h>
+#include <linux/dma-buf.h>
+#include <linux/iommu.h>
 
 #include "mdss_panel.h"
 
@@ -46,6 +38,7 @@ enum mdss_mdp_clk_type {
 	MDSS_CLK_MDP_VSYNC,
 	MDSS_CLK_MNOC_AHB,
 	MDSS_CLK_THROTTLE_AXI,
+	MDSS_CLK_BIMC,
 	MDSS_MAX_CLK
 };
 
@@ -229,7 +222,7 @@ struct reg_bus_client {
 
 struct mdss_smmu_client {
 	struct mdss_smmu_intf base;
-	struct dma_iommu_mapping *mmu_mapping;
+	struct iommu_domain	*domain;
 	struct dss_module_power mp;
 	struct reg_bus_client *reg_bus_clt;
 	bool domain_attached;
@@ -494,7 +487,6 @@ struct mdss_data_type {
 
 	struct mdss_intr hist_intr;
 
-	struct ion_client *iclient;
 	int iommu_attached;
 
 	u32 dbg_bus_flags;
@@ -579,9 +571,10 @@ struct irq_info *mdss_intr_line(void);
 void mdss_bus_bandwidth_ctrl(int enable);
 int mdss_iommu_ctrl(int enable);
 int mdss_bus_scale_set_quota(int client, u64 ab_quota, u64 ib_quota);
-int mdss_update_reg_bus_vote(struct reg_bus_client *, u32 usecase_ndx);
+int mdss_update_reg_bus_vote(struct reg_bus_client *bus_client,
+				u32 usecase_ndx);
 struct reg_bus_client *mdss_reg_bus_vote_client_create(char *client_name);
-void mdss_reg_bus_vote_client_destroy(struct reg_bus_client *);
+void mdss_reg_bus_vote_client_destroy(struct reg_bus_client *bus_client);
 
 struct mdss_util_intf {
 	bool mdp_probe_done;

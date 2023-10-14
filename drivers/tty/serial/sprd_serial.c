@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2012-2015 Spreadtrum Communications Inc.
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #if defined(CONFIG_SERIAL_SPRD_CONSOLE) && defined(CONFIG_MAGIC_SYSRQ)
@@ -500,7 +492,7 @@ static int sprd_verify_port(struct uart_port *port,
 	return 0;
 }
 
-static struct uart_ops serial_sprd_ops = {
+static const struct uart_ops serial_sprd_ops = {
 	.tx_empty = sprd_tx_empty,
 	.get_mctrl = sprd_get_mctrl,
 	.set_mctrl = sprd_set_mctrl,
@@ -519,7 +511,7 @@ static struct uart_ops serial_sprd_ops = {
 };
 
 #ifdef CONFIG_SERIAL_SPRD_CONSOLE
-static inline void wait_for_xmitr(struct uart_port *port)
+static void wait_for_xmitr(struct uart_port *port)
 {
 	unsigned int status, tmout = 10000;
 
@@ -656,7 +648,7 @@ static int sprd_probe_dt_alias(int index, struct device *dev)
 		return ret;
 
 	ret = of_alias_get_id(np, "serial");
-	if (IS_ERR_VALUE(ret))
+	if (ret < 0)
 		ret = index;
 	else if (ret >= ARRAY_SIZE(sprd_port) || sprd_port[ret] != NULL) {
 		dev_warn(dev, "requested serial port %d not available.\n", ret);

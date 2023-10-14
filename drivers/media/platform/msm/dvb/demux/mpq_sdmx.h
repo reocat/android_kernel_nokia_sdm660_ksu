@@ -1,13 +1,6 @@
-/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _MPQ_SDMX_H
@@ -119,6 +112,15 @@ enum sdmx_raw_out_format {
 	SDMX_188_OUTPUT,
 	SDMX_192_HEAD_OUTPUT,
 	SDMX_192_TAIL_OUTPUT
+};
+
+struct sdmx_buff_descriptor {
+	void *virt_base;   /* logical address of the actual data */
+	phys_addr_t phys_base; /* physical address of the actual data */
+	dma_addr_t dma_base; /* DMA address of the actual data */
+	u32 size;          /* size of buffer in bytes */
+	int id;            /* unique identifier */
+	void *user;        /* user-defined data */
 };
 
 #pragma pack(push, sdmx, 1)

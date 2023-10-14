@@ -1,5 +1,8 @@
 #ifndef __NET_WIRELESS_REG_H
 #define __NET_WIRELESS_REG_H
+
+#include <net/cfg80211.h>
+
 /*
  * Copyright 2008-2011	Luis R. Rodriguez <mcgrof@qca.qualcomm.com>
  *
@@ -27,9 +30,6 @@ bool reg_is_valid_request(const char *alpha2);
 bool is_world_regdom(const char *alpha2);
 bool reg_supported_dfs_region(enum nl80211_dfs_regions dfs_region);
 enum nl80211_dfs_regions reg_get_dfs_region(struct wiphy *wiphy);
-
-int regulatory_hint_user(const char *alpha2,
-			 enum nl80211_user_reg_hint_type user_reg_hint_type);
 
 /**
  * regulatory_hint_indoor - hint operation in indoor env. or not
@@ -157,4 +157,37 @@ bool regulatory_indoor_allowed(void);
  * Pre-CAC is allowed only in ETSI domain.
  */
 bool regulatory_pre_cac_allowed(struct wiphy *wiphy);
+
+/**
+ * regulatory_propagate_dfs_state - Propagate DFS channel state to other wiphys
+ * @wiphy - wiphy on which radar is detected and the event will be propagated
+ *	to other available wiphys having the same DFS domain
+ * @chandef - Channel definition of radar detected channel
+ * @dfs_state - DFS channel state to be set
+ * @event - Type of radar event which triggered this DFS state change
+ *
+ * This function should be called with rtnl lock held.
+ */
+void regulatory_propagate_dfs_state(struct wiphy *wiphy,
+				    struct cfg80211_chan_def *chandef,
+				    enum nl80211_dfs_state dfs_state,
+				    enum nl80211_radar_event event);
+
+/**
+ * reg_dfs_domain_same - Checks if both wiphy have same DFS domain configured
+ * @wiphy1 - wiphy it's dfs_region to be checked against that of wiphy2
+ * @wiphy2 - wiphy it's dfs_region to be checked against that of wiphy1
+ */
+bool reg_dfs_domain_same(struct wiphy *wiphy1, struct wiphy *wiphy2);
+
+/**
+ * reg_reload_regdb - reload the regulatory.db firmware file
+ */
+int reg_reload_regdb(void);
+
+extern const u8 shipped_regdb_certs[];
+extern unsigned int shipped_regdb_certs_len;
+extern const u8 extra_regdb_certs[];
+extern unsigned int extra_regdb_certs_len;
+
 #endif  /* __NET_WIRELESS_REG_H */

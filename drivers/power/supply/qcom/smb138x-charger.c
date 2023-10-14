@@ -1,17 +1,10 @@
-/* Copyright (c) 2016-2017 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2016-2018, 2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "SMB138X: %s: " fmt, __func__
 
+#include <linux/debugfs.h>
 #include <linux/device.h>
 #include <linux/iio/consumer.h>
 #include <linux/module.h>
@@ -97,19 +90,67 @@ struct smb_dt_props {
 	int	chg_temp_max_mdegc;
 	int	connector_temp_max_mdegc;
 	int	pl_mode;
+	int	pl_batfet_mode;
 };
 
 struct smb138x {
 	struct smb_charger	chg;
+	struct dentry		*dfs_root;
 	struct smb_dt_props	dt;
 	struct power_supply	*parallel_psy;
 	u32			wa_flags;
 };
 
 static int __debug_mask;
-module_param_named(
-	debug_mask, __debug_mask, int, S_IRUSR | S_IWUSR
-);
+
+static int __try_sink_enabled;
+static ssize_t try_sink_enabled_show(struct device *dev, struct device_attribute
+				     *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", __try_sink_enabled);
+}
+
+static ssize_t try_sink_enabled_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	int val;
+
+	if (kstrtos32(buf, 0, &val))
+		return -EINVAL;
+
+	__try_sink_enabled = val;
+
+	return count;
+}
+static DEVICE_ATTR_RW(try_sink_enabled);
+
+static int __audio_headset_drp_wait_ms = 100;
+static ssize_t audio_headset_drp_wait_ms_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", __audio_headset_drp_wait_ms);
+}
+
+static ssize_t audio_headset_drp_wait_ms_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	int val;
+
+	if (kstrtos32(buf, 0, &val))
+		return -EINVAL;
+
+	__audio_headset_drp_wait_ms = val;
+
+	return count;
+}
+static DEVICE_ATTR_RW(audio_headset_drp_wait_ms);
+
+static struct attribute *smb138x_attrs[] = {
+	&dev_attr_try_sink_enabled.attr,
+	&dev_attr_audio_headset_drp_wait_ms.attr,
+	NULL,
+};
+ATTRIBUTE_GROUPS(smb138x);
 
 static irqreturn_t smb138x_handle_slave_chg_state_change(int irq, void *data)
 {
@@ -170,6 +211,9 @@ static int smb138x_parse_dt(struct smb138x *chip)
 	chip->dt.suspend_input = of_property_read_bool(node,
 				"qcom,suspend-input");
 
+	chg->use_extcon = of_property_read_bool(node,
+				"qcom,use-extcon");
+
 	rc = of_property_read_u32(node,
 				"qcom,fcc-max-ua", &chip->dt.fcc_ua);
 	if (rc < 0)
@@ -197,6 +241,10 @@ static int smb138x_parse_dt(struct smb138x *chip)
 	if (rc < 0)
 		chip->dt.connector_temp_max_mdegc = 105000;
 
+	chip->dt.pl_batfet_mode = POWER_SUPPLY_PL_NON_STACKED_BATFET;
+	if (of_property_read_bool(node, "qcom,stacked-batfet"))
+		chip->dt.pl_batfet_mode = POWER_SUPPLY_PL_STACKED_BATFET;
+
 	return 0;
 }
 
@@ -212,6 +260,7 @@ static enum power_supply_property smb138x_usb_props[] = {
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_CURRENT_MAX,
 	POWER_SUPPLY_PROP_TYPE,
+	POWER_SUPPLY_PROP_REAL_TYPE,
 	POWER_SUPPLY_PROP_TYPEC_MODE,
 	POWER_SUPPLY_PROP_TYPEC_POWER_ROLE,
 	POWER_SUPPLY_PROP_TYPEC_CC_ORIENTATION,
@@ -247,6 +296,9 @@ static int smb138x_usb_get_prop(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_TYPE:
 		val->intval = chg->usb_psy_desc.type;
+		break;
+	case POWER_SUPPLY_PROP_REAL_TYPE:
+		val->intval = chg->real_charger_type;
 		break;
 	case POWER_SUPPLY_PROP_TYPEC_MODE:
 		val->intval = chg->typec_mode;
@@ -324,6 +376,120 @@ static int smb138x_init_usb_psy(struct smb138x *chip)
 	if (IS_ERR(chg->usb_psy)) {
 		pr_err("Couldn't register USB power supply\n");
 		return PTR_ERR(chg->usb_psy);
+	}
+
+	return 0;
+}
+
+/*****************************
+ * USB MAIN PSY REGISTRATION *
+ *****************************/
+
+static enum power_supply_property smb138x_usb_main_props[] = {
+	POWER_SUPPLY_PROP_VOLTAGE_MAX,
+	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
+	POWER_SUPPLY_PROP_TYPE,
+	POWER_SUPPLY_PROP_INPUT_CURRENT_SETTLED,
+	POWER_SUPPLY_PROP_INPUT_VOLTAGE_SETTLED,
+	POWER_SUPPLY_PROP_FCC_DELTA,
+	POWER_SUPPLY_PROP_CURRENT_MAX,
+};
+
+static int smb138x_usb_main_get_prop(struct power_supply *psy,
+		enum power_supply_property psp,
+		union power_supply_propval *val)
+{
+	struct smb138x *chip = power_supply_get_drvdata(psy);
+	struct smb_charger *chg = &chip->chg;
+	int rc = 0;
+
+	switch (psp) {
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+		rc = smblib_get_charge_param(chg, &chg->param.fv, &val->intval);
+		break;
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
+		rc = smblib_get_charge_param(chg, &chg->param.fcc,
+							&val->intval);
+		break;
+	case POWER_SUPPLY_PROP_TYPE:
+		val->intval = POWER_SUPPLY_TYPE_MAIN;
+		break;
+	case POWER_SUPPLY_PROP_INPUT_CURRENT_SETTLED:
+		rc = smblib_get_prop_input_current_settled(chg, val);
+		break;
+	case POWER_SUPPLY_PROP_INPUT_VOLTAGE_SETTLED:
+		rc = smblib_get_prop_input_voltage_settled(chg, val);
+		break;
+	case POWER_SUPPLY_PROP_FCC_DELTA:
+		rc = smblib_get_prop_fcc_delta(chg, val);
+		break;
+	case POWER_SUPPLY_PROP_CURRENT_MAX:
+		rc = smblib_get_icl_current(chg, &val->intval);
+		break;
+	default:
+		pr_debug("get prop %d is not supported in usb-main\n", psp);
+		rc = -EINVAL;
+		break;
+	}
+
+	if (rc < 0) {
+		pr_debug("Couldn't get prop %d rc = %d\n", psp, rc);
+		return -ENODATA;
+	}
+	return 0;
+}
+
+static int smb138x_usb_main_set_prop(struct power_supply *psy,
+		enum power_supply_property psp,
+		const union power_supply_propval *val)
+{
+	struct smb138x *chip = power_supply_get_drvdata(psy);
+	struct smb_charger *chg = &chip->chg;
+	int rc = 0;
+
+	switch (psp) {
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+		rc = smblib_set_charge_param(chg, &chg->param.fv, val->intval);
+		break;
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
+		rc = smblib_set_charge_param(chg, &chg->param.fcc, val->intval);
+		break;
+	case POWER_SUPPLY_PROP_CURRENT_MAX:
+		rc = smblib_set_icl_current(chg, val->intval);
+		break;
+	default:
+		rc = -EINVAL;
+		break;
+	}
+
+	if (rc < 0)
+		pr_err("Couldn't set prop %d, rc=%d\n", psp, rc);
+
+	return rc;
+}
+
+static const struct power_supply_desc usb_main_psy_desc = {
+	.name		= "main",
+	.type		= POWER_SUPPLY_TYPE_MAIN,
+	.properties     = smb138x_usb_main_props,
+	.num_properties = ARRAY_SIZE(smb138x_usb_main_props),
+	.get_property   = smb138x_usb_main_get_prop,
+	.set_property   = smb138x_usb_main_set_prop,
+};
+
+static int smb138x_init_usb_main_psy(struct smb138x *chip)
+{
+	struct power_supply_config usb_main_cfg = {};
+	struct smb_charger *chg = &chip->chg;
+
+	usb_main_cfg.drv_data = chip;
+	usb_main_cfg.of_node = chg->dev->of_node;
+	chg->usb_main_psy = devm_power_supply_register(chg->dev,
+						  &usb_main_psy_desc,
+						  &usb_main_cfg);
+	if (IS_ERR(chg->usb_main_psy)) {
+		pr_err("Couldn't register USB main power supply\n");
+		return PTR_ERR(chg->usb_main_psy);
 	}
 
 	return 0;
@@ -538,6 +704,7 @@ static enum power_supply_property smb138x_parallel_props[] = {
 	POWER_SUPPLY_PROP_PARALLEL_MODE,
 	POWER_SUPPLY_PROP_CONNECTOR_HEALTH,
 	POWER_SUPPLY_PROP_SET_SHIP_MODE,
+	POWER_SUPPLY_PROP_PARALLEL_BATFET_MODE,
 };
 
 static int smb138x_parallel_get_prop(struct power_supply *psy,
@@ -612,6 +779,9 @@ static int smb138x_parallel_get_prop(struct power_supply *psy,
 		/* Not in ship mode as long as device is active */
 		val->intval = 0;
 		break;
+	case POWER_SUPPLY_PROP_PARALLEL_BATFET_MODE:
+		val->intval = chip->dt.pl_batfet_mode;
+		break;
 	default:
 		pr_err("parallel power supply get prop %d not supported\n",
 			prop);
@@ -635,7 +805,7 @@ static int smb138x_set_parallel_suspend(struct smb138x *chip, bool suspend)
 				 suspend ? 0 : WDOG_TIMER_EN_BIT);
 	if (rc < 0) {
 		pr_err("Couldn't %s watchdog rc=%d\n",
-		       suspend ? "disable" : "enable", rc);
+			suspend ? "disable" : "enable", rc);
 		suspend = true;
 	}
 
@@ -643,7 +813,7 @@ static int smb138x_set_parallel_suspend(struct smb138x *chip, bool suspend)
 				 suspend ? USBIN_SUSPEND_BIT : 0);
 	if (rc < 0) {
 		pr_err("Couldn't %s parallel charger rc=%d\n",
-		       suspend ? "suspend" : "resume", rc);
+			suspend ? "suspend" : "resume", rc);
 		return rc;
 	}
 
@@ -947,6 +1117,14 @@ static int smb138x_init_slave_hw(struct smb138x *chip)
 		return rc;
 	}
 
+	/* increase the concurrent mode threshold */
+	rc = smblib_masked_write(chg, ENG_SDCDC_CFG7_REG,
+				 ENG_SDCDC_BST_SET_POINT_MASK, 0);
+	if (rc < 0) {
+		pr_err("Couldn't set concurrent mode threshold\n");
+		return rc;
+	}
+
 	return 0;
 }
 
@@ -978,6 +1156,17 @@ static int smb138x_init_hw(struct smb138x *chip)
 	rc = smblib_masked_write(chg, USBIN_CMD_IL_REG, USBIN_SUSPEND_BIT, 0);
 	if (rc < 0) {
 		pr_err("Couldn't unsuspend USB, rc=%d\n", rc);
+		return rc;
+	}
+
+	/* enable usb-src-change interrupt sources */
+	rc = smblib_masked_write(chg, USBIN_SOURCE_CHANGE_INTRPT_ENB_REG,
+				APSD_IRQ_EN_CFG_BIT | HVDCP_IRQ_EN_CFG_BIT
+			      | AUTH_IRQ_EN_CFG_BIT | VADP_IRQ_EN_CFG_BIT,
+				APSD_IRQ_EN_CFG_BIT | HVDCP_IRQ_EN_CFG_BIT
+			      | AUTH_IRQ_EN_CFG_BIT | VADP_IRQ_EN_CFG_BIT);
+	if (rc < 0) {
+		pr_err("Couldn't configure Type-C interrupts rc=%d\n", rc);
 		return rc;
 	}
 
@@ -1106,7 +1295,9 @@ static irqreturn_t smb138x_handle_temperature_change(int irq, void *data)
 	struct smb_irq_data *irq_data = data;
 	struct smb138x *chip = irq_data->parent_data;
 
-	power_supply_changed(chip->parallel_psy);
+	if (chip->parallel_psy)
+		power_supply_changed(chip->parallel_psy);
+
 	return IRQ_HANDLED;
 }
 
@@ -1162,7 +1353,7 @@ static struct smb_irq_info smb138x_irqs[] = {
 	},
 	[OTG_OVERCURRENT_IRQ] = {
 		.name		= "otg-overcurrent",
-		.handler	= smblib_handle_debug,
+		.handler	= smblib_handle_otg_overcurrent,
 	},
 	[OTG_OC_DIS_SW_STS_IRQ] = {
 		.name		= "otg-oc-dis-sw-sts",
@@ -1217,10 +1408,12 @@ static struct smb_irq_info smb138x_irqs[] = {
 	[USBIN_PLUGIN_IRQ] = {
 		.name		= "usbin-plugin",
 		.handler	= smblib_handle_usb_plugin,
+		.wake		= true,
 	},
 	[USBIN_SRC_CHANGE_IRQ] = {
 		.name		= "usbin-src-change",
 		.handler	= smblib_handle_usb_source_change,
+		.wake		= true,
 	},
 	[USBIN_ICL_CHANGE_IRQ] = {
 		.name		= "usbin-icl-change",
@@ -1229,6 +1422,7 @@ static struct smb_irq_info smb138x_irqs[] = {
 	[TYPE_C_CHANGE_IRQ] = {
 		.name		= "type-c-change",
 		.handler	= smblib_handle_usb_typec_change,
+		.wake		= true,
 	},
 /* DC INPUT IRQs */
 	[DCIN_COLLAPSE_IRQ] = {
@@ -1368,7 +1562,7 @@ static int smb138x_request_interrupts(struct smb138x *chip)
 			rc = smb138x_request_interrupt(chip, child, name);
 			if (rc < 0) {
 				pr_err("Couldn't request interrupt %s rc=%d\n",
-				       name, rc);
+					name, rc);
 				return rc;
 			}
 		}
@@ -1376,6 +1570,43 @@ static int smb138x_request_interrupts(struct smb138x *chip)
 
 	return rc;
 }
+
+static void smb138x_free_interrupts(struct smb_charger *chg)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(smb138x_irqs); i++) {
+		if (smb138x_irqs[i].irq > 0) {
+			if (smb138x_irqs[i].wake)
+				disable_irq_wake(smb138x_irqs[i].irq);
+		}
+	}
+}
+
+#ifdef CONFIG_DEBUG_FS
+static void smb138x_create_debugfs(struct smb138x *chip)
+{
+	struct dentry *entry;
+
+	chip->dfs_root = debugfs_create_dir("smb138x", NULL);
+	if (IS_ERR_OR_NULL(chip->dfs_root)) {
+		pr_err("Failed to create debugfs directory rc=%ld\n",
+				(long)chip->dfs_root);
+		return;
+	}
+
+	entry = debugfs_create_u32("debug_mask", 0600, chip->dfs_root,
+				&__debug_mask);
+	if (IS_ERR_OR_NULL(entry)) {
+		pr_err("Failed to create debug_mask rc=%ld\n", (long)entry);
+		debugfs_remove_recursive(chip->dfs_root);
+	}
+}
+#else
+static void smb138x_create_debugfs(struct smb138x *chip)
+{
+}
+#endif
 
 /*********
  * PROBE *
@@ -1397,53 +1628,110 @@ static int smb138x_master_probe(struct smb138x *chip)
 	rc = smb138x_parse_dt(chip);
 	if (rc < 0) {
 		pr_err("Couldn't parse device tree rc=%d\n", rc);
-		return rc;
+		goto cleanup;
 	}
 
 	rc = smb138x_init_vbus_regulator(chip);
 	if (rc < 0) {
 		pr_err("Couldn't initialize vbus regulator rc=%d\n",
 			rc);
-		return rc;
+		goto cleanup;
 	}
 
 	rc = smb138x_init_vconn_regulator(chip);
 	if (rc < 0) {
 		pr_err("Couldn't initialize vconn regulator rc=%d\n",
 			rc);
-		return rc;
+		goto cleanup;
 	}
+
+	if (chg->use_extcon) {
+		/* extcon registration */
+		chg->extcon = devm_extcon_dev_allocate(chg->dev,
+							smblib_extcon_cable);
+		if (IS_ERR(chg->extcon)) {
+			rc = PTR_ERR(chg->extcon);
+			dev_err(chg->dev, "failed to allocate extcon device rc=%d\n",
+					rc);
+			goto cleanup;
+		}
+
+		extcon_set_mutually_exclusive(chg->extcon,
+						smblib_extcon_exclusive);
+		rc = devm_extcon_dev_register(chg->dev, chg->extcon);
+		if (rc < 0) {
+			dev_err(chg->dev, "failed to register extcon device rc=%d\n",
+						rc);
+			goto cleanup;
+		}
+
+		/* Support reporting polarity and speed via properties */
+		rc = extcon_set_property_capability(chg->extcon,
+				EXTCON_USB, EXTCON_PROP_USB_TYPEC_POLARITY);
+		rc |= extcon_set_property_capability(chg->extcon,
+				EXTCON_USB, EXTCON_PROP_USB_SS);
+		rc |= extcon_set_property_capability(chg->extcon,
+				EXTCON_USB_HOST,
+				EXTCON_PROP_USB_TYPEC_POLARITY);
+		rc |= extcon_set_property_capability(chg->extcon,
+				EXTCON_USB_HOST, EXTCON_PROP_USB_SS);
+		if (rc < 0) {
+			dev_err(chg->dev,
+				"failed to configure extcon capabilities\n");
+			goto cleanup;
+		}
+	}
+
+	smb138x_create_debugfs(chip);
 
 	rc = smb138x_init_usb_psy(chip);
 	if (rc < 0) {
 		pr_err("Couldn't initialize usb psy rc=%d\n", rc);
-		return rc;
+		goto cleanup;
+	}
+
+	rc = smb138x_init_usb_main_psy(chip);
+	if (rc < 0) {
+		pr_err("Couldn't initialize main usb psy rc=%d\n", rc);
+		goto cleanup;
+	}
+
+	rc = sysfs_create_groups(&chg->dev->kobj, smb138x_groups);
+	if (rc < 0) {
+		pr_err("Failed to create sysfs files rc=%d\n", rc);
+		goto cleanup;
 	}
 
 	rc = smb138x_init_batt_psy(chip);
 	if (rc < 0) {
 		pr_err("Couldn't initialize batt psy rc=%d\n", rc);
-		return rc;
+		goto cleanup;
 	}
 
 	rc = smb138x_init_hw(chip);
 	if (rc < 0) {
 		pr_err("Couldn't initialize hardware rc=%d\n", rc);
-		return rc;
+		goto cleanup;
 	}
 
 	rc = smb138x_determine_initial_status(chip);
 	if (rc < 0) {
 		pr_err("Couldn't determine initial status rc=%d\n",
 			rc);
-		return rc;
+		goto cleanup;
 	}
 
 	rc = smb138x_request_interrupts(chip);
 	if (rc < 0) {
 		pr_err("Couldn't request interrupts rc=%d\n", rc);
-		return rc;
+		goto cleanup;
 	}
+
+	return rc;
+
+cleanup:
+	smb138x_free_interrupts(chg);
+	smblib_deinit(chg);
 
 	return rc;
 }
@@ -1563,8 +1851,10 @@ static int smb138x_probe(struct platform_device *pdev)
 
 	chip->chg.dev = &pdev->dev;
 	chip->chg.debug_mask = &__debug_mask;
+	chip->chg.try_sink_enabled = &__try_sink_enabled;
 	chip->chg.irq_info = smb138x_irqs;
 	chip->chg.name = "SMB";
+	chip->chg.audio_headset_drp_wait_ms = &__audio_headset_drp_wait_ms;
 
 	chip->chg.regmap = dev_get_regmap(chip->chg.dev->parent, NULL);
 	if (!chip->chg.regmap) {
@@ -1607,6 +1897,8 @@ static int smb138x_probe(struct platform_device *pdev)
 		goto cleanup;
 	}
 
+	device_init_wakeup(chip->chg.dev, true);
+
 	pr_info("SMB138X probed successfully mode=%d\n", chip->chg.mode);
 	return rc;
 
@@ -1617,6 +1909,11 @@ cleanup:
 
 static int smb138x_remove(struct platform_device *pdev)
 {
+	struct smb138x *chip = platform_get_drvdata(pdev);
+	struct smb_charger *chg = &chip->chg;
+
+	sysfs_remove_groups(&chg->dev->kobj, smb138x_groups);
+	debugfs_remove_recursive(chip->dfs_root);
 	platform_set_drvdata(pdev, NULL);
 	return 0;
 }
@@ -1642,7 +1939,6 @@ static void smb138x_shutdown(struct platform_device *pdev)
 static struct platform_driver smb138x_driver = {
 	.driver	= {
 		.name		= "qcom,smb138x-charger",
-		.owner		= THIS_MODULE,
 		.of_match_table	= match_table,
 	},
 	.probe		= smb138x_probe,

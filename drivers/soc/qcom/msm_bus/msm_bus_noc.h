@@ -1,13 +1,6 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2012-2016, 2018, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _ARCH_ARM_MACH_MSM_BUS_BIMC_H
@@ -47,6 +40,7 @@ struct msm_bus_noc_info {
 	uint32_t qos_baseoffset;
 	uint32_t qos_delta;
 	uint32_t *mas_modes;
+	uint32_t sbm_offset;
 	struct msm_bus_noc_commit cdata[NUM_CTX];
 };
 

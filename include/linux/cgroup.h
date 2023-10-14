@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_CGROUP_H
 #define _LINUX_CGROUP_H
 /*
@@ -17,11 +18,12 @@
 #include <linux/seq_file.h>
 #include <linux/kernfs.h>
 #include <linux/jump_label.h>
-#include <linux/nsproxy.h>
 #include <linux/types.h>
 #include <linux/ns_common.h>
 #include <linux/nsproxy.h>
 #include <linux/user_namespace.h>
+#include <linux/refcount.h>
+#include <linux/kernel_stat.h>
 
 #include <linux/cgroup-defs.h>
 
@@ -36,22 +38,38 @@
 #define CGROUP_WEIGHT_DFL		100
 #define CGROUP_WEIGHT_MAX		10000
 
+/* walk only threadgroup leaders */
+#define CSS_TASK_ITER_PROCS		(1U << 0)
+/* walk all threaded css_sets in the domain */
+#define CSS_TASK_ITER_THREADED		(1U << 1)
+
+/* internal flags */
+#define CSS_TASK_ITER_SKIPPED		(1U << 16)
+
 /* a css_task_iter should be treated as an opaque object */
 struct css_task_iter {
 	struct cgroup_subsys		*ss;
+	unsigned int			flags;
 
 	struct list_head		*cset_pos;
 	struct list_head		*cset_head;
 
+	struct list_head		*tcset_pos;
+	struct list_head		*tcset_head;
+
 	struct list_head		*task_pos;
 	struct list_head		*tasks_head;
 	struct list_head		*mg_tasks_head;
+	struct list_head		*dying_tasks_head;
 
+	struct list_head		*cur_tasks_head;
 	struct css_set			*cur_cset;
+	struct css_set			*cur_dcset;
 	struct task_struct		*cur_task;
 	struct list_head		iters_node;	/* css_set->task_iters */
 };
 
+extern struct file_system_type cgroup_fs_type;
 extern struct cgroup_root cgrp_dfl_root;
 extern struct css_set init_css_set;
 
@@ -107,10 +125,13 @@ extern int cgroup_can_fork(struct task_struct *p);
 extern void cgroup_cancel_fork(struct task_struct *p);
 extern void cgroup_post_fork(struct task_struct *p);
 void cgroup_exit(struct task_struct *p);
+void cgroup_release(struct task_struct *p);
 void cgroup_free(struct task_struct *p);
 
 int cgroup_init_early(void);
 int cgroup_init(void);
+
+int cgroup_parse_float(const char *input, unsigned dec_shift, s64 *v);
 
 /*
  * Iteration helpers and macros.
@@ -129,7 +150,7 @@ struct task_struct *cgroup_taskset_first(struct cgroup_taskset *tset,
 struct task_struct *cgroup_taskset_next(struct cgroup_taskset *tset,
 					struct cgroup_subsys_state **dst_cssp);
 
-void css_task_iter_start(struct cgroup_subsys_state *css,
+void css_task_iter_start(struct cgroup_subsys_state *css, unsigned int flags,
 			 struct css_task_iter *it);
 struct task_struct *css_task_iter_next(struct css_task_iter *it);
 void css_task_iter_end(struct css_task_iter *it);
@@ -266,7 +287,7 @@ void css_task_iter_end(struct css_task_iter *it);
  * cgroup_taskset_for_each_leader - iterate group leaders in a cgroup_taskset
  * @leader: the loop cursor
  * @dst_css: the destination css
- * @tset: takset to iterate
+ * @tset: taskset to iterate
  *
  * Iterate threadgroup leaders of @tset.  For single-task migrations, @tset
  * may not contain any.
@@ -548,6 +569,27 @@ static inline bool cgroup_is_descendant(struct cgroup *cgrp,
 }
 
 /**
+ * cgroup_ancestor - find ancestor of cgroup
+ * @cgrp: cgroup to find ancestor of
+ * @ancestor_level: level of ancestor to find starting from root
+ *
+ * Find ancestor of cgroup at specified level starting from root if it exists
+ * and return pointer to it. Return NULL if @cgrp doesn't have ancestor at
+ * @ancestor_level.
+ *
+ * This function is safe to call as long as @cgrp is accessible.
+ */
+static inline struct cgroup *cgroup_ancestor(struct cgroup *cgrp,
+					     int ancestor_level)
+{
+	if (cgrp->level < ancestor_level)
+		return NULL;
+	while (cgrp && cgrp->level > ancestor_level)
+		cgrp = cgroup_parent(cgrp);
+	return cgrp;
+}
+
+/**
  * task_under_cgroup_hierarchy - test task's membership of cgroup ancestry
  * @task: the task to be tested
  * @ancestor: possible ancestor of @task's cgroup
@@ -567,13 +609,14 @@ static inline bool task_under_cgroup_hierarchy(struct task_struct *task,
 /* no synchronization, the result can only be used as a hint */
 static inline bool cgroup_is_populated(struct cgroup *cgrp)
 {
-	return cgrp->populated_cnt;
+	return cgrp->nr_populated_csets + cgrp->nr_populated_domain_children +
+		cgrp->nr_populated_threaded_children;
 }
 
 /* returns ino associated with a cgroup */
 static inline ino_t cgroup_ino(struct cgroup *cgrp)
 {
-	return cgrp->kn->ino;
+	return cgrp->kn->id.ino;
 }
 
 /* cft/css accessors for cftype->write() operation */
@@ -621,6 +664,13 @@ static inline void pr_cont_cgroup_path(struct cgroup *cgrp)
 	pr_cont_kernfs_path(cgrp->kn);
 }
 
+static inline struct psi_group *cgroup_psi(struct cgroup *cgrp)
+{
+	return &cgrp->psi;
+}
+
+bool cgroup_psi_enabled(void);
+
 static inline void cgroup_init_kthreadd(void)
 {
 	/*
@@ -640,17 +690,13 @@ static inline void cgroup_kthread_ready(void)
 	current->no_cgroup_migration = 0;
 }
 
-/*
- * Default Android check for whether the current process is allowed to move a
- * task across cgroups, either because CAP_SYS_NICE is set or because the uid
- * of the calling process is the same as the moved task or because we are
- * running as root.
- * Returns 0 if this is allowed, or -EACCES otherwise.
- */
-int subsys_cgroup_allow_attach(struct cgroup_subsys_state *css,
-			       struct cgroup_taskset *tset);
+static inline union kernfs_node_id *cgroup_get_kernfs_id(struct cgroup *cgrp)
+{
+	return &cgrp->kn->id;
+}
 
-
+void cgroup_path_from_kernfs_id(const union kernfs_node_id *id,
+					char *buf, size_t buflen);
 #else /* !CONFIG_CGROUPS */
 
 struct cgroup_subsys_state;
@@ -667,10 +713,236 @@ static inline int cgroup_can_fork(struct task_struct *p) { return 0; }
 static inline void cgroup_cancel_fork(struct task_struct *p) {}
 static inline void cgroup_post_fork(struct task_struct *p) {}
 static inline void cgroup_exit(struct task_struct *p) {}
+static inline void cgroup_release(struct task_struct *p) {}
 static inline void cgroup_free(struct task_struct *p) {}
 
 static inline int cgroup_init_early(void) { return 0; }
 static inline int cgroup_init(void) { return 0; }
+static inline void cgroup_init_kthreadd(void) {}
+static inline void cgroup_kthread_ready(void) {}
+static inline union kernfs_node_id *cgroup_get_kernfs_id(struct cgroup *cgrp)
+{
+	return NULL;
+}
+
+static inline struct cgroup *cgroup_parent(struct cgroup *cgrp)
+{
+	return NULL;
+}
+
+static inline struct psi_group *cgroup_psi(struct cgroup *cgrp)
+{
+	return NULL;
+}
+
+static inline bool cgroup_psi_enabled(void)
+{
+	return false;
+}
+
+static inline bool task_under_cgroup_hierarchy(struct task_struct *task,
+					       struct cgroup *ancestor)
+{
+	return true;
+}
+
+static inline void cgroup_path_from_kernfs_id(const union kernfs_node_id *id,
+	char *buf, size_t buflen) {}
+#endif /* !CONFIG_CGROUPS */
+
+#ifdef CONFIG_CGROUPS
+/*
+ * cgroup scalable recursive statistics.
+ */
+void cgroup_rstat_updated(struct cgroup *cgrp, int cpu);
+void cgroup_rstat_flush(struct cgroup *cgrp);
+void cgroup_rstat_flush_irqsafe(struct cgroup *cgrp);
+void cgroup_rstat_flush_hold(struct cgroup *cgrp);
+void cgroup_rstat_flush_release(void);
+
+/*
+ * Basic resource stats.
+ */
+#ifdef CONFIG_CGROUP_CPUACCT
+void cpuacct_charge(struct task_struct *tsk, u64 cputime);
+void cpuacct_account_field(struct task_struct *tsk, int index, u64 val);
+#else
+static inline void cpuacct_charge(struct task_struct *tsk, u64 cputime) {}
+static inline void cpuacct_account_field(struct task_struct *tsk, int index,
+					 u64 val) {}
+#endif
+
+void __cgroup_account_cputime(struct cgroup *cgrp, u64 delta_exec);
+void __cgroup_account_cputime_field(struct cgroup *cgrp,
+				    enum cpu_usage_stat index, u64 delta_exec);
+
+static inline void cgroup_account_cputime(struct task_struct *task,
+					  u64 delta_exec)
+{
+	struct cgroup *cgrp;
+
+	cpuacct_charge(task, delta_exec);
+
+	rcu_read_lock();
+	cgrp = task_dfl_cgroup(task);
+	if (cgroup_parent(cgrp))
+		__cgroup_account_cputime(cgrp, delta_exec);
+	rcu_read_unlock();
+}
+
+static inline void cgroup_account_cputime_field(struct task_struct *task,
+						enum cpu_usage_stat index,
+						u64 delta_exec)
+{
+	struct cgroup *cgrp;
+
+	cpuacct_account_field(task, index, delta_exec);
+
+	rcu_read_lock();
+	cgrp = task_dfl_cgroup(task);
+	if (cgroup_parent(cgrp))
+		__cgroup_account_cputime_field(cgrp, index, delta_exec);
+	rcu_read_unlock();
+}
+
+#else	/* CONFIG_CGROUPS */
+
+static inline void cgroup_account_cputime(struct task_struct *task,
+					  u64 delta_exec) {}
+static inline void cgroup_account_cputime_field(struct task_struct *task,
+						enum cpu_usage_stat index,
+						u64 delta_exec) {}
+
+#endif	/* CONFIG_CGROUPS */
+
+/*
+ * sock->sk_cgrp_data handling.  For more info, see sock_cgroup_data
+ * definition in cgroup-defs.h.
+ */
+#ifdef CONFIG_SOCK_CGROUP_DATA
+
+#if defined(CONFIG_CGROUP_NET_PRIO) || defined(CONFIG_CGROUP_NET_CLASSID)
+extern spinlock_t cgroup_sk_update_lock;
+#endif
+
+void cgroup_sk_alloc_disable(void);
+void cgroup_sk_alloc(struct sock_cgroup_data *skcd);
+void cgroup_sk_clone(struct sock_cgroup_data *skcd);
+void cgroup_sk_free(struct sock_cgroup_data *skcd);
+
+static inline struct cgroup *sock_cgroup_ptr(struct sock_cgroup_data *skcd)
+{
+#if defined(CONFIG_CGROUP_NET_PRIO) || defined(CONFIG_CGROUP_NET_CLASSID)
+	unsigned long v;
+
+	/*
+	 * @skcd->val is 64bit but the following is safe on 32bit too as we
+	 * just need the lower ulong to be written and read atomically.
+	 */
+	v = READ_ONCE(skcd->val);
+
+	if (v & 3)
+		return &cgrp_dfl_root.cgrp;
+
+	return (struct cgroup *)(unsigned long)v ?: &cgrp_dfl_root.cgrp;
+#else
+	return (struct cgroup *)(unsigned long)skcd->val;
+#endif
+}
+
+#else	/* CONFIG_CGROUP_DATA */
+
+static inline void cgroup_sk_alloc(struct sock_cgroup_data *skcd) {}
+static inline void cgroup_sk_clone(struct sock_cgroup_data *skcd) {}
+static inline void cgroup_sk_free(struct sock_cgroup_data *skcd) {}
+
+#endif	/* CONFIG_CGROUP_DATA */
+
+struct cgroup_namespace {
+	refcount_t		count;
+	struct ns_common	ns;
+	struct user_namespace	*user_ns;
+	struct ucounts		*ucounts;
+	struct css_set          *root_cset;
+};
+
+extern struct cgroup_namespace init_cgroup_ns;
+
+#ifdef CONFIG_CGROUPS
+
+void free_cgroup_ns(struct cgroup_namespace *ns);
+
+struct cgroup_namespace *copy_cgroup_ns(unsigned long flags,
+					struct user_namespace *user_ns,
+					struct cgroup_namespace *old_ns);
+
+int cgroup_path_ns(struct cgroup *cgrp, char *buf, size_t buflen,
+		   struct cgroup_namespace *ns);
+
+#else /* !CONFIG_CGROUPS */
+
+static inline void free_cgroup_ns(struct cgroup_namespace *ns) { }
+static inline struct cgroup_namespace *
+copy_cgroup_ns(unsigned long flags, struct user_namespace *user_ns,
+	       struct cgroup_namespace *old_ns)
+{
+	return old_ns;
+}
+
+#endif /* !CONFIG_CGROUPS */
+
+static inline void get_cgroup_ns(struct cgroup_namespace *ns)
+{
+	if (ns)
+		refcount_inc(&ns->count);
+}
+
+static inline void put_cgroup_ns(struct cgroup_namespace *ns)
+{
+	if (ns && refcount_dec_and_test(&ns->count))
+		free_cgroup_ns(ns);
+}
+
+#ifdef CONFIG_CGROUPS
+
+void cgroup_enter_frozen(void);
+void cgroup_leave_frozen(bool always_leave);
+void cgroup_update_frozen(struct cgroup *cgrp);
+void cgroup_freeze(struct cgroup *cgrp, bool freeze);
+void cgroup_freezer_migrate_task(struct task_struct *task, struct cgroup *src,
+				 struct cgroup *dst);
+void cgroup_freezer_frozen_exit(struct task_struct *task);
+static inline bool cgroup_task_freeze(struct task_struct *task)
+{
+	bool ret;
+
+	if (task->flags & PF_KTHREAD)
+		return false;
+
+	rcu_read_lock();
+	ret = test_bit(CGRP_FREEZE, &task_dfl_cgroup(task)->flags);
+	rcu_read_unlock();
+
+	return ret;
+}
+
+static inline bool cgroup_task_frozen(struct task_struct *task)
+{
+	return task->frozen;
+}
+
+#else /* !CONFIG_CGROUPS */
+
+static inline void cgroup_enter_frozen(void) { }
+static inline void cgroup_leave_frozen(bool always_leave) { }
+static inline bool cgroup_task_freeze(struct task_struct *task)
+{
+	return false;
+}
+static inline bool cgroup_task_frozen(struct task_struct *task)
+{
+	return false;
+}
 
 static inline bool task_under_cgroup_hierarchy(struct task_struct *task,
 					       struct cgroup *ancestor)

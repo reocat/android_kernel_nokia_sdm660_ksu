@@ -1,14 +1,8 @@
-/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
  */
+
 #ifndef BTFM_SLIM_H
 #define BTFM_SLIM_H
 #include <linux/slimbus/slimbus.h>
@@ -19,7 +13,7 @@
 
 /* Vendor specific defines
  * This should redefines in slimbus slave specific header
-*/
+ */
 #define SLIM_SLAVE_COMPATIBLE_STR	"btfmslim_slave"
 #define SLIM_SLAVE_REG_OFFSET		0x0000
 #define SLIM_SLAVE_RXPORT		NULL
@@ -77,6 +71,8 @@ struct btfmslim {
 	int (*vendor_port_en)(struct btfmslim *btfmslim, uint8_t port_num,
 		uint8_t rxport, uint8_t enable);
 };
+
+extern int btfm_feedback_ch_setting;
 
 /**
  * btfm_slim_hw_init: Initialize slimbus slave device
@@ -160,6 +156,14 @@ int btfm_slim_disable_ch(struct btfmslim *btfmslim,
  * Returns:
  * -ENOMEM
  * 0
-*/
+ */
 int btfm_slim_register_codec(struct device *dev);
+
+/**
+ * btfm_slim_unregister_codec: Unregister codec driver in slimbus device node
+ * @dev: device node
+ * Returns:
+ * VOID
+ */
+void btfm_slim_unregister_codec(struct device *dev);
 #endif /* BTFM_SLIM_H */

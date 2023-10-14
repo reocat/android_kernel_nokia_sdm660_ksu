@@ -228,7 +228,7 @@
 #define DRV_VERSION "v1.11"
 #define DRV_RELDATE "2014/07/01"
 
-static char version[] =
+static const char version[] =
 	DRV_NAME ": " DRV_VERSION " " DRV_RELDATE
 	"  Lawrence V. Stefani and others\n";
 
@@ -552,8 +552,8 @@ static int dfx_register(struct device *bdev)
 	const char *print_name = dev_name(bdev);
 	struct net_device *dev;
 	DFX_board_t	  *bp;			/* board pointer */
-	resource_size_t bar_start[3];		/* pointers to ports */
-	resource_size_t bar_len[3];		/* resource length */
+	resource_size_t bar_start[3] = {0};	/* pointers to ports */
+	resource_size_t bar_len[3] = {0};	/* resource length */
 	int alloc_size;				/* total buffer size used */
 	struct resource *region;
 	int err = 0;
@@ -3710,8 +3710,8 @@ static void dfx_unregister(struct device *bdev)
 	int dfx_bus_pci = dev_is_pci(bdev);
 	int dfx_bus_tc = DFX_BUS_TC(bdev);
 	int dfx_use_mmio = DFX_MMIO || dfx_bus_tc;
-	resource_size_t bar_start[3];		/* pointers to ports */
-	resource_size_t bar_len[3];		/* resource lengths */
+	resource_size_t bar_start[3] = {0};	/* pointers to ports */
+	resource_size_t bar_len[3] = {0};	/* resource lengths */
 	int		alloc_size;		/* total buffer size used */
 
 	unregister_netdev(dev);
@@ -3780,7 +3780,7 @@ static void dfx_pci_unregister(struct pci_dev *pdev)
 #endif /* CONFIG_PCI */
 
 #ifdef CONFIG_EISA
-static struct eisa_device_id dfx_eisa_table[] = {
+static const struct eisa_device_id dfx_eisa_table[] = {
         { "DEC3001", DEFEA_PROD_ID_1 },
         { "DEC3002", DEFEA_PROD_ID_2 },
         { "DEC3003", DEFEA_PROD_ID_3 },
@@ -3844,10 +3844,24 @@ static int dfx_init(void)
 	int status;
 
 	status = pci_register_driver(&dfx_pci_driver);
-	if (!status)
-		status = eisa_driver_register(&dfx_eisa_driver);
-	if (!status)
-		status = tc_register_driver(&dfx_tc_driver);
+	if (status)
+		goto err_pci_register;
+
+	status = eisa_driver_register(&dfx_eisa_driver);
+	if (status)
+		goto err_eisa_register;
+
+	status = tc_register_driver(&dfx_tc_driver);
+	if (status)
+		goto err_tc_register;
+
+	return 0;
+
+err_tc_register:
+	eisa_driver_unregister(&dfx_eisa_driver);
+err_eisa_register:
+	pci_unregister_driver(&dfx_pci_driver);
+err_pci_register:
 	return status;
 }
 

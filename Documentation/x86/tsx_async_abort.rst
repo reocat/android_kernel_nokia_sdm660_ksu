@@ -28,7 +28,7 @@ controls the enumeration of the TSX feature bits (RTM and HLE) in CPUID.
 
 b) Clear CPU buffers - similar to MDS, clearing the CPU buffers mitigates this
 vulnerability. More details on this approach can be found in
-:ref:`Documentation/hw-vuln/mds.rst <mds>`.
+:ref:`Documentation/admin-guide/hw-vuln/mds.rst <mds>`.
 
 Kernel internal mitigation modes
 --------------------------------

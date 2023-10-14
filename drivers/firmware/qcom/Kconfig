@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 config MSM_TZ_LOG
         tristate "MSM Trust Zone (TZ) Log Driver"
         depends on DEBUG_FS

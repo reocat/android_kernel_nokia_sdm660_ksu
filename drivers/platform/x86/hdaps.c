@@ -378,7 +378,7 @@ static ssize_t hdaps_variance_show(struct device *dev,
 static ssize_t hdaps_temp1_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
-	u8 uninitialized_var(temp);
+	u8 temp;
 	int ret;
 
 	ret = hdaps_readb_one(HDAPS_PORT_TEMP1, &temp);
@@ -391,7 +391,7 @@ static ssize_t hdaps_temp1_show(struct device *dev,
 static ssize_t hdaps_temp2_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
-	u8 uninitialized_var(temp);
+	u8 temp;
 	int ret;
 
 	ret = hdaps_readb_one(HDAPS_PORT_TEMP2, &temp);
@@ -514,7 +514,7 @@ static int __init hdaps_dmi_match_invert(const struct dmi_system_id *id)
    "ThinkPad T42p", so the order of the entries matters.
    If your ThinkPad is not recognized, please update to latest
    BIOS. This is especially the case for some R52 ThinkPads. */
-static struct dmi_system_id __initdata hdaps_whitelist[] = {
+static const struct dmi_system_id hdaps_whitelist[] __initconst = {
 	HDAPS_DMI_MATCH_INVERT("IBM", "ThinkPad R50p", HDAPS_BOTH_AXES),
 	HDAPS_DMI_MATCH_NORMAL("IBM", "ThinkPad R50"),
 	HDAPS_DMI_MATCH_NORMAL("IBM", "ThinkPad R51"),

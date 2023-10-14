@@ -1,11 +1,8 @@
-/*
+/* SPDX-License-Identifier: GPL-2.0
+ *
  * linux/sound/soc-dpcm.h -- ALSA SoC Dynamic PCM Support
  *
  * Author:		Liam Girdwood <lrg@ti.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #ifndef __LINUX_SND_SOC_DPCM_H
@@ -156,7 +153,7 @@ int dpcm_fe_dai_hw_params_be(struct snd_soc_pcm_runtime *fe,
 int dpcm_be_dai_trigger(struct snd_soc_pcm_runtime *fe, int stream, int cmd);
 int dpcm_be_dai_prepare(struct snd_soc_pcm_runtime *fe, int stream);
 int dpcm_fe_dai_prepare_be(struct snd_soc_pcm_runtime *fe,
-		struct snd_soc_pcm_runtime *be, int stream);
+	struct snd_soc_pcm_runtime *be, int stream);
 int dpcm_dapm_stream_event(struct snd_soc_pcm_runtime *fe, int dir,
 	int event);
 

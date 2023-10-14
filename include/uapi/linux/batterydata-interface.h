@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 #ifndef __BATTERYDATA_LIB_H__
 #define __BATTERYDATA_LIB_H__
 

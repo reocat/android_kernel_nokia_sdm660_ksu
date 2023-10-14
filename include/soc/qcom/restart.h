@@ -1,14 +1,6 @@
-/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2011-2014, 2016, 2018, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _ASM_ARCH_MSM_RESTART_H_
@@ -19,11 +11,6 @@
 
 void msm_set_restart_mode(int mode);
 extern int pmic_reset_irq;
-
-/* FIH, to support fih apr */
-unsigned int restart_reason_rd(void);
-void restart_reason_wt(unsigned int rere);
-/* FIH, to support fih apr */
 
 #endif
 

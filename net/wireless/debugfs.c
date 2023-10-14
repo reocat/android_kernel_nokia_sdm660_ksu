@@ -17,7 +17,7 @@
 static ssize_t name## _read(struct file *file, char __user *userbuf,	\
 			    size_t count, loff_t *ppos)			\
 {									\
-	struct wiphy *wiphy= file->private_data;		\
+	struct wiphy *wiphy = file->private_data;			\
 	char buf[buflen];						\
 	int res;							\
 									\
@@ -29,14 +29,14 @@ static const struct file_operations name## _ops = {			\
 	.read = name## _read,						\
 	.open = simple_open,						\
 	.llseek = generic_file_llseek,					\
-};
+}
 
 DEBUGFS_READONLY_FILE(rts_threshold, 20, "%d",
-		      wiphy->rts_threshold)
+		      wiphy->rts_threshold);
 DEBUGFS_READONLY_FILE(fragmentation_threshold, 20, "%d",
 		      wiphy->frag_threshold);
 DEBUGFS_READONLY_FILE(short_retry_limit, 20, "%d",
-		      wiphy->retry_short)
+		      wiphy->retry_short);
 DEBUGFS_READONLY_FILE(long_retry_limit, 20, "%d",
 		      wiphy->retry_long);
 
@@ -68,9 +68,10 @@ static ssize_t ht40allow_map_read(struct file *file,
 {
 	struct wiphy *wiphy = file->private_data;
 	char *buf;
-	unsigned int offset = 0, buf_size = PAGE_SIZE, i, r;
+	unsigned int offset = 0, buf_size = PAGE_SIZE, i;
 	enum nl80211_band band;
 	struct ieee80211_supported_band *sband;
+	ssize_t r;
 
 	buf = kzalloc(buf_size, GFP_KERNEL);
 	if (!buf)
@@ -103,7 +104,7 @@ static const struct file_operations ht40allow_map_ops = {
 };
 
 #define DEBUGFS_ADD(name)						\
-	debugfs_create_file(#name, S_IRUGO, phyd, &rdev->wiphy, &name## _ops);
+	debugfs_create_file(#name, 0444, phyd, &rdev->wiphy, &name## _ops)
 
 void cfg80211_debugfs_rdev_add(struct cfg80211_registered_device *rdev)
 {

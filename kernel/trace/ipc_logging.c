@@ -1,14 +1,6 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  */
 
 #include <asm/arch_timer.h>
@@ -27,6 +19,7 @@
 #include <linux/wait.h>
 #include <linux/delay.h>
 #include <linux/completion.h>
+#include <linux/sched/clock.h>
 #include <linux/ipc_logging.h>
 
 #include "ipc_logging_private.h"
@@ -162,7 +155,8 @@ static void ipc_log_read(struct ipc_log_context *ilctxt,
 		ilctxt->nd_read_page->hdr.nd_read_offset = 0;
 		ilctxt->nd_read_page = get_next_page(ilctxt,
 			ilctxt->nd_read_page);
-		BUG_ON(ilctxt->nd_read_page == NULL);
+		if (WARN_ON(ilctxt->nd_read_page == NULL))
+			return;
 
 		memcpy((data + bytes_to_read),
 			   (ilctxt->nd_read_page->data +
@@ -202,12 +196,14 @@ static void ipc_log_drop(struct ipc_log_context *ilctxt, void *data,
 			ilctxt->read_page->hdr.nd_read_offset = 0;
 			ilctxt->read_page = get_next_page(ilctxt,
 				ilctxt->read_page);
-			BUG_ON(ilctxt->read_page == NULL);
+			if (WARN_ON(ilctxt->read_page == NULL))
+				return;
 			ilctxt->nd_read_page = ilctxt->read_page;
 		} else {
 			ilctxt->read_page = get_next_page(ilctxt,
 				ilctxt->read_page);
-			BUG_ON(ilctxt->read_page == NULL);
+			if (WARN_ON(ilctxt->read_page == NULL))
+				return;
 		}
 
 		if (data)
@@ -311,7 +307,11 @@ void ipc_log_write(void *ctxt, struct encode_context *ectxt)
 		ilctxt->write_page->hdr.end_time = t_now;
 
 		ilctxt->write_page = get_next_page(ilctxt, ilctxt->write_page);
-		BUG_ON(ilctxt->write_page == NULL);
+		if (WARN_ON(ilctxt->write_page == NULL)) {
+			spin_unlock(&ilctxt->context_lock_lhb1);
+			read_unlock_irqrestore(&context_list_lock_lha1, flags);
+			return;
+		}
 		ilctxt->write_page->hdr.write_offset = 0;
 		ilctxt->write_page->hdr.start_time = t_now;
 		memcpy((ilctxt->write_page->data +
@@ -357,13 +357,12 @@ void msg_encode_end(struct encode_context *ectxt)
 
 	/* finalize data size */
 	ectxt->hdr.size = ectxt->offset - sizeof(ectxt->hdr);
-	BUG_ON(ectxt->hdr.size > MAX_MSG_SIZE);
 	memcpy(ectxt->buff, &ectxt->hdr, sizeof(ectxt->hdr));
 }
 EXPORT_SYMBOL(msg_encode_end);
 
 /*
- * Helper funtion used to write data to a message context.
+ * Helper function used to write data to a message context.
  *
  * @ectxt context initialized by calling msg_encode_start()
  * @data  data to write
@@ -446,6 +445,7 @@ EXPORT_SYMBOL(tsv_qtimer_write);
 int tsv_pointer_write(struct encode_context *ectxt, void *pointer)
 {
 	int ret;
+
 	ret = tsv_write_header(ectxt, TSV_TYPE_POINTER, sizeof(pointer));
 	if (ret)
 		return ret;
@@ -462,6 +462,7 @@ EXPORT_SYMBOL(tsv_pointer_write);
 int tsv_int32_write(struct encode_context *ectxt, int32_t n)
 {
 	int ret;
+
 	ret = tsv_write_header(ectxt, TSV_TYPE_INT32, sizeof(n));
 	if (ret)
 		return ret;
@@ -480,6 +481,7 @@ int tsv_byte_array_write(struct encode_context *ectxt,
 			 void *data, int data_size)
 {
 	int ret;
+
 	ret = tsv_write_header(ectxt, TSV_TYPE_BYTE_ARRAY, data_size);
 	if (ret)
 		return ret;
@@ -538,6 +540,7 @@ int ipc_log_extract(void *ctxt, char *buff, int size)
 				 struct decode_context *dctxt);
 	struct ipc_log_context *ilctxt = (struct ipc_log_context *)ctxt;
 	unsigned long flags;
+	int ret;
 
 	if (size < MAX_MSG_DECODED_SIZE)
 		return -EINVAL;
@@ -547,6 +550,11 @@ int ipc_log_extract(void *ctxt, char *buff, int size)
 	dctxt.size = size;
 	read_lock_irqsave(&context_list_lock_lha1, flags);
 	spin_lock(&ilctxt->context_lock_lhb1);
+	if (ilctxt->destroyed) {
+		ret = -EIO;
+		goto done;
+	}
+
 	while (dctxt.size >= MAX_MSG_DECODED_SIZE &&
 	       !is_nd_read_empty(ilctxt)) {
 		msg_read(ilctxt, &ectxt);
@@ -562,16 +570,22 @@ int ipc_log_extract(void *ctxt, char *buff, int size)
 		read_lock_irqsave(&context_list_lock_lha1, flags);
 		spin_lock(&ilctxt->context_lock_lhb1);
 	}
-	if ((size - dctxt.size) == 0)
-		reinit_completion(&ilctxt->read_avail);
+	ret = size - dctxt.size;
+	if (ret == 0) {
+		if (!ilctxt->destroyed)
+			reinit_completion(&ilctxt->read_avail);
+		else
+			ret = -EIO;
+	}
+done:
 	spin_unlock(&ilctxt->context_lock_lhb1);
 	read_unlock_irqrestore(&context_list_lock_lha1, flags);
-	return size - dctxt.size;
+	return ret;
 }
 EXPORT_SYMBOL(ipc_log_extract);
 
 /*
- * Helper funtion used to read data from a message context.
+ * Helper function used to read data from a message context.
  *
  * @ectxt  context initialized by calling msg_read()
  * @data  data to read
@@ -580,7 +594,12 @@ EXPORT_SYMBOL(ipc_log_extract);
 static void tsv_read_data(struct encode_context *ectxt,
 			  void *data, uint32_t size)
 {
-	BUG_ON((ectxt->offset + size) > MAX_MSG_SIZE);
+	if (WARN_ON((ectxt->offset + size) > MAX_MSG_SIZE)) {
+		memcpy(data, (ectxt->buff + ectxt->offset),
+			MAX_MSG_SIZE - ectxt->offset - 1);
+		ectxt->offset += MAX_MSG_SIZE - ectxt->offset - 1;
+		return;
+	}
 	memcpy(data, (ectxt->buff + ectxt->offset), size);
 	ectxt->offset += size;
 }
@@ -595,7 +614,12 @@ static void tsv_read_data(struct encode_context *ectxt,
 static void tsv_read_header(struct encode_context *ectxt,
 			    struct tsv_header *hdr)
 {
-	BUG_ON((ectxt->offset + sizeof(*hdr)) > MAX_MSG_SIZE);
+	if (WARN_ON((ectxt->offset + sizeof(*hdr)) > MAX_MSG_SIZE)) {
+		memcpy(hdr, (ectxt->buff + ectxt->offset),
+			MAX_MSG_SIZE - ectxt->offset - 1);
+		ectxt->offset += MAX_MSG_SIZE - ectxt->offset - 1;
+		return;
+	}
 	memcpy(hdr, (ectxt->buff + ectxt->offset), sizeof(*hdr));
 	ectxt->offset += sizeof(*hdr);
 }
@@ -615,11 +639,12 @@ void tsv_timestamp_read(struct encode_context *ectxt,
 	unsigned long nanosec_rem;
 
 	tsv_read_header(ectxt, &hdr);
-	BUG_ON(hdr.type != TSV_TYPE_TIMESTAMP);
+	if (WARN_ON(hdr.type != TSV_TYPE_TIMESTAMP))
+		return;
 	tsv_read_data(ectxt, &val, sizeof(val));
 	nanosec_rem = do_div(val, 1000000000U);
 	IPC_SPRINTF_DECODE(dctxt, "[%6u.%09lu%s/",
-			(unsigned)val, nanosec_rem, format);
+			(unsigned int)val, nanosec_rem, format);
 }
 EXPORT_SYMBOL(tsv_timestamp_read);
 
@@ -637,7 +662,8 @@ void tsv_qtimer_read(struct encode_context *ectxt,
 	uint64_t val;
 
 	tsv_read_header(ectxt, &hdr);
-	BUG_ON(hdr.type != TSV_TYPE_QTIMER);
+	if (WARN_ON(hdr.type != TSV_TYPE_QTIMER))
+		return;
 	tsv_read_data(ectxt, &val, sizeof(val));
 
 	/*
@@ -662,7 +688,8 @@ void tsv_pointer_read(struct encode_context *ectxt,
 	void *val;
 
 	tsv_read_header(ectxt, &hdr);
-	BUG_ON(hdr.type != TSV_TYPE_POINTER);
+	if (WARN_ON(hdr.type != TSV_TYPE_POINTER))
+		return;
 	tsv_read_data(ectxt, &val, sizeof(val));
 
 	IPC_SPRINTF_DECODE(dctxt, format, val);
@@ -683,7 +710,8 @@ int32_t tsv_int32_read(struct encode_context *ectxt,
 	int32_t val;
 
 	tsv_read_header(ectxt, &hdr);
-	BUG_ON(hdr.type != TSV_TYPE_INT32);
+	if (WARN_ON(hdr.type != TSV_TYPE_INT32))
+		return -EINVAL;
 	tsv_read_data(ectxt, &val, sizeof(val));
 
 	IPC_SPRINTF_DECODE(dctxt, format, val);
@@ -704,7 +732,8 @@ void tsv_byte_array_read(struct encode_context *ectxt,
 	struct tsv_header hdr;
 
 	tsv_read_header(ectxt, &hdr);
-	BUG_ON(hdr.type != TSV_TYPE_BYTE_ARRAY);
+	if (WARN_ON(hdr.type != TSV_TYPE_BYTE_ARRAY))
+		return;
 	tsv_read_data(ectxt, dctxt->buff, hdr.size);
 	dctxt->buff += hdr.size;
 	dctxt->size -= hdr.size;
@@ -753,7 +782,7 @@ static void *get_deserialization_func(struct ipc_log_context *ilctxt,
 }
 
 /**
- * ipc_log_context_create: Create a debug log context
+ * ipc_log_context_create: Create a debug log context if context does not exist.
  *                         Should not be called from atomic context
  *
  * @max_num_pages: Number of pages of logging space required (max. 10)
@@ -765,16 +794,26 @@ static void *get_deserialization_func(struct ipc_log_context *ilctxt,
 void *ipc_log_context_create(int max_num_pages,
 			     const char *mod_name, uint16_t user_version)
 {
-	struct ipc_log_context *ctxt;
+	struct ipc_log_context *ctxt = NULL, *tmp;
 	struct ipc_log_page *pg = NULL;
 	int page_cnt;
 	unsigned long flags;
 
+	/* check if ipc ctxt already exists */
+	read_lock_irq(&context_list_lock_lha1);
+	list_for_each_entry(tmp, &ipc_log_context_list, list)
+		if (!strcmp(tmp->name, mod_name)) {
+			ctxt = tmp;
+			break;
+		}
+	read_unlock_irq(&context_list_lock_lha1);
+
+	if (ctxt)
+		return ctxt;
+
 	ctxt = kzalloc(sizeof(struct ipc_log_context), GFP_KERNEL);
-	if (!ctxt) {
-		pr_err("%s: cannot create ipc_log_context\n", __func__);
+	if (!ctxt)
 		return 0;
-	}
 
 	init_completion(&ctxt->read_avail);
 	INIT_LIST_HEAD(&ctxt->page_list);
@@ -782,10 +821,8 @@ void *ipc_log_context_create(int max_num_pages,
 	spin_lock_init(&ctxt->context_lock_lhb1);
 	for (page_cnt = 0; page_cnt < max_num_pages; page_cnt++) {
 		pg = kzalloc(sizeof(struct ipc_log_page), GFP_KERNEL);
-		if (!pg) {
-			pr_err("%s: cannot create ipc_log_page\n", __func__);
+		if (!pg)
 			goto release_ipc_log_context;
-		}
 		pg->hdr.log_id = (uint64_t)(uintptr_t)ctxt;
 		pg->hdr.page_num = LOG_PAGE_FLAG | page_cnt;
 		pg->hdr.ctx_offset = (int64_t)((uint64_t)(uintptr_t)ctxt -
@@ -811,6 +848,8 @@ void *ipc_log_context_create(int max_num_pages,
 	ctxt->nd_read_page = ctxt->first_page;
 	ctxt->write_avail = max_num_pages * LOG_PAGE_DATA_SIZE;
 	ctxt->header_size = sizeof(struct ipc_log_page_header);
+	kref_init(&ctxt->refcount);
+	ctxt->destroyed = false;
 	create_ctx_debugfs(ctxt, mod_name);
 
 	/* set magic last to signal context init is complete */
@@ -833,6 +872,21 @@ release_ipc_log_context:
 }
 EXPORT_SYMBOL(ipc_log_context_create);
 
+void ipc_log_context_free(struct kref *kref)
+{
+	struct ipc_log_context *ilctxt = container_of(kref,
+				struct ipc_log_context, refcount);
+	struct ipc_log_page *pg = NULL;
+
+	while (!list_empty(&ilctxt->page_list)) {
+		pg = get_first_page(ilctxt);
+		list_del(&pg->hdr.list);
+		kfree(pg);
+	}
+
+	kfree(ilctxt);
+}
+
 /*
  * Destroy debug log context
  *
@@ -841,25 +895,29 @@ EXPORT_SYMBOL(ipc_log_context_create);
 int ipc_log_context_destroy(void *ctxt)
 {
 	struct ipc_log_context *ilctxt = (struct ipc_log_context *)ctxt;
-	struct ipc_log_page *pg = NULL;
+	struct dfunc_info *df_info = NULL, *tmp = NULL;
 	unsigned long flags;
 
 	if (!ilctxt)
 		return 0;
 
-	while (!list_empty(&ilctxt->page_list)) {
-		pg = get_first_page(ctxt);
-		list_del(&pg->hdr.list);
-		kfree(pg);
+	debugfs_remove_recursive(ilctxt->dent);
+
+	spin_lock(&ilctxt->context_lock_lhb1);
+	ilctxt->destroyed = true;
+	complete_all(&ilctxt->read_avail);
+	list_for_each_entry_safe(df_info, tmp, &ilctxt->dfunc_info_list, list) {
+		list_del(&df_info->list);
+		kfree(df_info);
 	}
+	spin_unlock(&ilctxt->context_lock_lhb1);
 
 	write_lock_irqsave(&context_list_lock_lha1, flags);
 	list_del(&ilctxt->list);
 	write_unlock_irqrestore(&context_list_lock_lha1, flags);
 
-	debugfs_remove_recursive(ilctxt->dent);
+	ipc_log_context_put(ilctxt);
 
-	kfree(ilctxt);
 	return 0;
 }
 EXPORT_SYMBOL(ipc_log_context_destroy);

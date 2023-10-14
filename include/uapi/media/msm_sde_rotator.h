@@ -1,3 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
+/*
+ * Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
+ */
+
 #ifndef __UAPI_MSM_SDE_ROTATOR_H__
 #define __UAPI_MSM_SDE_ROTATOR_H__
 
@@ -61,15 +66,18 @@
 #define SDE_PIX_FMT_RGBA_1010102_UBWC	V4L2_PIX_FMT_SDE_RGBA_1010102_UBWC
 #define SDE_PIX_FMT_RGBX_1010102_UBWC	V4L2_PIX_FMT_SDE_RGBX_1010102_UBWC
 #define SDE_PIX_FMT_Y_CBCR_H2V2_P010	V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_P010
+#define SDE_PIX_FMT_Y_CBCR_H2V2_P010_VENUS \
+	V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_P010_VENUS
 #define SDE_PIX_FMT_Y_CBCR_H2V2_TP10	V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_TP10
 #define SDE_PIX_FMT_Y_CBCR_H2V2_TP10_UBWC	V4L2_PIX_FMT_NV12_TP10_UBWC
+#define SDE_PIX_FMT_Y_CBCR_H2V2_P010_UBWC	V4L2_PIX_FMT_NV12_P010_UBWC
 
-/**
-* struct msm_sde_rotator_fence - v4l2 buffer fence info
-* @index: id number of the buffer
-* @type: enum v4l2_buf_type; buffer type
-* @fd: file descriptor of the fence associated with this buffer
-**/
+/*
+ * struct msm_sde_rotator_fence - v4l2 buffer fence info
+ * @index: id number of the buffer
+ * @type: enum v4l2_buf_type; buffer type
+ * @fd: file descriptor of the fence associated with this buffer
+ */
 struct msm_sde_rotator_fence {
 	__u32	index;
 	__u32	type;
@@ -77,13 +85,13 @@ struct msm_sde_rotator_fence {
 	__u32	reserved[5];
 };
 
-/**
-* struct msm_sde_rotator_comp_ratio - v4l2 buffer compression ratio
-* @index: id number of the buffer
-* @type: enum v4l2_buf_type; buffer type
-* @numer: numerator of the ratio
-* @denom: denominator of the ratio
-**/
+/*
+ * struct msm_sde_rotator_comp_ratio - v4l2 buffer compression ratio
+ * @index: id number of the buffer
+ * @type: enum v4l2_buf_type; buffer type
+ * @numer: numerator of the ratio
+ * @denom: denominator of the ratio
+ */
 struct msm_sde_rotator_comp_ratio {
 	__u32	index;
 	__u32	type;

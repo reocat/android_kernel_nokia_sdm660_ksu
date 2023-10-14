@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 #ifndef __UAPI_MSM_FD__
 #define __UAPI_MSM_FD__
 
@@ -73,4 +74,3 @@ struct msm_fd_result {
 #define V4L2_CID_FD_WORK_MEMORY_FD       (V4L2_CID_PRIVATE_BASE + 6)
 
 #endif
-

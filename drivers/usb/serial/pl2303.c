@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Prolific PL2303 USB to serial adaptor driver
  *
@@ -5,10 +6,6 @@
  * Copyright (C) 2003 IBM Corp.
  *
  * Original driver for 2.2.x by anonymous
- *
- *	This program is free software; you can redistribute it and/or
- *	modify it under the terms of the GNU General Public License version
- *	2 as published by the Free Software Foundation.
  *
  * See Documentation/usb/usb-serial.txt for more information on using this
  * driver
@@ -33,9 +30,11 @@
 
 #define PL2303_QUIRK_UART_STATE_IDX0		BIT(0)
 #define PL2303_QUIRK_LEGACY			BIT(1)
+#define PL2303_QUIRK_ENDPOINT_HACK		BIT(2)
 
 static const struct usb_device_id id_table[] = {
-	{ USB_DEVICE(PL2303_VENDOR_ID, PL2303_PRODUCT_ID) },
+	{ USB_DEVICE(PL2303_VENDOR_ID, PL2303_PRODUCT_ID),
+		.driver_info = PL2303_QUIRK_ENDPOINT_HACK },
 	{ USB_DEVICE(PL2303_VENDOR_ID, PL2303_PRODUCT_ID_RSAQ2) },
 	{ USB_DEVICE(PL2303_VENDOR_ID, PL2303_PRODUCT_ID_DCU11) },
 	{ USB_DEVICE(PL2303_VENDOR_ID, PL2303_PRODUCT_ID_RSAQ3) },
@@ -50,8 +49,12 @@ static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(PL2303_VENDOR_ID, PL2303_PRODUCT_ID_TB) },
 	{ USB_DEVICE(IODATA_VENDOR_ID, IODATA_PRODUCT_ID) },
 	{ USB_DEVICE(IODATA_VENDOR_ID, IODATA_PRODUCT_ID_RSAQ5) },
-	{ USB_DEVICE(ATEN_VENDOR_ID, ATEN_PRODUCT_ID) },
-	{ USB_DEVICE(ATEN_VENDOR_ID, ATEN_PRODUCT_UC485) },
+	{ USB_DEVICE(ATEN_VENDOR_ID, ATEN_PRODUCT_ID),
+		.driver_info = PL2303_QUIRK_ENDPOINT_HACK },
+	{ USB_DEVICE(ATEN_VENDOR_ID, ATEN_PRODUCT_UC485),
+		.driver_info = PL2303_QUIRK_ENDPOINT_HACK },
+	{ USB_DEVICE(ATEN_VENDOR_ID, ATEN_PRODUCT_UC232B),
+		.driver_info = PL2303_QUIRK_ENDPOINT_HACK },
 	{ USB_DEVICE(ATEN_VENDOR_ID, ATEN_PRODUCT_ID2) },
 	{ USB_DEVICE(ATEN_VENDOR_ID2, ATEN_PRODUCT_ID) },
 	{ USB_DEVICE(ELCOM_VENDOR_ID, ELCOM_PRODUCT_ID) },
@@ -71,7 +74,8 @@ static const struct usb_device_id id_table[] = {
 		.driver_info = PL2303_QUIRK_UART_STATE_IDX0 },
 	{ USB_DEVICE(SIEMENS_VENDOR_ID, SIEMENS_PRODUCT_ID_X75),
 		.driver_info = PL2303_QUIRK_UART_STATE_IDX0 },
-	{ USB_DEVICE(SIEMENS_VENDOR_ID, SIEMENS_PRODUCT_ID_EF81) },
+	{ USB_DEVICE(SIEMENS_VENDOR_ID, SIEMENS_PRODUCT_ID_EF81),
+		.driver_info = PL2303_QUIRK_ENDPOINT_HACK },
 	{ USB_DEVICE(BENQ_VENDOR_ID, BENQ_PRODUCT_ID_S81) }, /* Benq/Siemens S81 */
 	{ USB_DEVICE(SYNTECH_VENDOR_ID, SYNTECH_PRODUCT_ID) },
 	{ USB_DEVICE(NOKIA_CA42_VENDOR_ID, NOKIA_CA42_PRODUCT_ID) },
@@ -81,7 +85,8 @@ static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(SPEEDDRAGON_VENDOR_ID, SPEEDDRAGON_PRODUCT_ID) },
 	{ USB_DEVICE(DATAPILOT_U2_VENDOR_ID, DATAPILOT_U2_PRODUCT_ID) },
 	{ USB_DEVICE(BELKIN_VENDOR_ID, BELKIN_PRODUCT_ID) },
-	{ USB_DEVICE(ALCOR_VENDOR_ID, ALCOR_PRODUCT_ID) },
+	{ USB_DEVICE(ALCOR_VENDOR_ID, ALCOR_PRODUCT_ID),
+		.driver_info = PL2303_QUIRK_ENDPOINT_HACK },
 	{ USB_DEVICE(WS002IN_VENDOR_ID, WS002IN_PRODUCT_ID) },
 	{ USB_DEVICE(COREGA_VENDOR_ID, COREGA_PRODUCT_ID) },
 	{ USB_DEVICE(YCCABLE_VENDOR_ID, YCCABLE_PRODUCT_ID) },
@@ -95,6 +100,7 @@ static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(HP_VENDOR_ID, HP_LCM220_PRODUCT_ID) },
 	{ USB_DEVICE(HP_VENDOR_ID, HP_LCM960_PRODUCT_ID) },
 	{ USB_DEVICE(HP_VENDOR_ID, HP_LM920_PRODUCT_ID) },
+	{ USB_DEVICE(HP_VENDOR_ID, HP_LM930_PRODUCT_ID) },
 	{ USB_DEVICE(HP_VENDOR_ID, HP_LM940_PRODUCT_ID) },
 	{ USB_DEVICE(HP_VENDOR_ID, HP_TD620_PRODUCT_ID) },
 	{ USB_DEVICE(CRESSI_VENDOR_ID, CRESSI_EDY_PRODUCT_ID) },
@@ -105,6 +111,7 @@ static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(ADLINK_VENDOR_ID, ADLINK_ND6530GC_PRODUCT_ID) },
 	{ USB_DEVICE(SMART_VENDOR_ID, SMART_PRODUCT_ID) },
 	{ USB_DEVICE(AT_VENDOR_ID, AT_VTKIT3_PRODUCT_ID) },
+	{ USB_DEVICE(IBM_VENDOR_ID, IBM_PRODUCT_ID) },
 	{ }					/* Terminating entry */
 };
 
@@ -228,6 +235,62 @@ static int pl2303_probe(struct usb_serial *serial,
 	usb_set_serial_data(serial, (void *)id->driver_info);
 
 	return 0;
+}
+
+/*
+ * Use interrupt endpoint from first interface if available.
+ *
+ * This is needed due to the looney way its endpoints are set up.
+ */
+static int pl2303_endpoint_hack(struct usb_serial *serial,
+					struct usb_serial_endpoints *epds)
+{
+	struct usb_interface *interface = serial->interface;
+	struct usb_device *dev = serial->dev;
+	struct device *ddev = &interface->dev;
+	struct usb_host_interface *iface_desc;
+	struct usb_endpoint_descriptor *endpoint;
+	unsigned int i;
+
+	if (interface == dev->actconfig->interface[0])
+		return 0;
+
+	/* check out the endpoints of the other interface */
+	iface_desc = dev->actconfig->interface[0]->cur_altsetting;
+
+	for (i = 0; i < iface_desc->desc.bNumEndpoints; ++i) {
+		endpoint = &iface_desc->endpoint[i].desc;
+
+		if (!usb_endpoint_is_int_in(endpoint))
+			continue;
+
+		dev_dbg(ddev, "found interrupt in on separate interface\n");
+		if (epds->num_interrupt_in < ARRAY_SIZE(epds->interrupt_in))
+			epds->interrupt_in[epds->num_interrupt_in++] = endpoint;
+	}
+
+	return 0;
+}
+
+static int pl2303_calc_num_ports(struct usb_serial *serial,
+					struct usb_serial_endpoints *epds)
+{
+	unsigned long quirks = (unsigned long)usb_get_serial_data(serial);
+	struct device *dev = &serial->interface->dev;
+	int ret;
+
+	if (quirks & PL2303_QUIRK_ENDPOINT_HACK) {
+		ret = pl2303_endpoint_hack(serial, epds);
+		if (ret)
+			return ret;
+	}
+
+	if (epds->num_interrupt_in < 1) {
+		dev_err(dev, "required interrupt-in endpoint missing\n");
+		return -ENODEV;
+	}
+
+	return 1;
 }
 
 static int pl2303_startup(struct usb_serial *serial)
@@ -462,7 +525,7 @@ static int pl2303_get_line_request(struct usb_serial_port *port,
 	if (ret != 7) {
 		dev_err(&port->dev, "%s - failed: %d\n", __func__, ret);
 
-		if (ret > 0)
+		if (ret >= 0)
 			ret = -EIO;
 
 		return ret;
@@ -482,18 +545,25 @@ static int pl2303_set_line_request(struct usb_serial_port *port,
 	ret = usb_control_msg(udev, usb_sndctrlpipe(udev, 0),
 				SET_LINE_REQUEST, SET_LINE_REQUEST_TYPE,
 				0, 0, buf, 7, 100);
-	if (ret != 7) {
+	if (ret < 0) {
 		dev_err(&port->dev, "%s - failed: %d\n", __func__, ret);
-
-		if (ret > 0)
-			ret = -EIO;
-
 		return ret;
 	}
 
 	dev_dbg(&port->dev, "%s - %7ph\n", __func__, buf);
 
 	return 0;
+}
+
+static bool pl2303_termios_change(const struct ktermios *a, const struct ktermios *b)
+{
+	bool ixon_change;
+
+	ixon_change = ((a->c_iflag ^ b->c_iflag) & (IXON | IXANY)) ||
+			a->c_cc[VSTART] != b->c_cc[VSTART] ||
+			a->c_cc[VSTOP] != b->c_cc[VSTOP];
+
+	return tty_termios_hw_change(a, b) || ixon_change;
 }
 
 static void pl2303_set_termios(struct tty_struct *tty,
@@ -507,7 +577,7 @@ static void pl2303_set_termios(struct tty_struct *tty,
 	int ret;
 	u8 control;
 
-	if (old_termios && !tty_termios_hw_change(&tty->termios, old_termios))
+	if (old_termios && !pl2303_termios_change(&tty->termios, old_termios))
 		return;
 
 	buf = kzalloc(7, GFP_KERNEL);
@@ -625,6 +695,9 @@ static void pl2303_set_termios(struct tty_struct *tty,
 			pl2303_vendor_write(serial, 0x0, 0x41);
 		else
 			pl2303_vendor_write(serial, 0x0, 0x61);
+	} else if (I_IXON(tty) && !I_IXANY(tty) && START_CHAR(tty) == 0x11 &&
+			STOP_CHAR(tty) == 0x13) {
+		pl2303_vendor_write(serial, 0x0, 0xc0);
 	} else {
 		pl2303_vendor_write(serial, 0x0, 0x0);
 	}
@@ -954,7 +1027,9 @@ static struct usb_serial_driver pl2303_device = {
 		.name =		"pl2303",
 	},
 	.id_table =		id_table,
-	.num_ports =		1,
+	.num_bulk_in =		1,
+	.num_bulk_out =		1,
+	.num_interrupt_in =	0,	/* see pl2303_calc_num_ports */
 	.bulk_in_size =		256,
 	.bulk_out_size =	256,
 	.open =			pl2303_open,
@@ -970,6 +1045,7 @@ static struct usb_serial_driver pl2303_device = {
 	.process_read_urb =	pl2303_process_read_urb,
 	.read_int_callback =	pl2303_read_int_callback,
 	.probe =		pl2303_probe,
+	.calc_num_ports =	pl2303_calc_num_ports,
 	.attach =		pl2303_startup,
 	.release =		pl2303_release,
 	.port_probe =		pl2303_port_probe,
@@ -983,4 +1059,4 @@ static struct usb_serial_driver * const serial_drivers[] = {
 module_usb_serial_driver(serial_drivers, id_table);
 
 MODULE_DESCRIPTION("Prolific PL2303 USB to serial adaptor driver");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");

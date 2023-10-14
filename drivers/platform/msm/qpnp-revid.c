@@ -1,13 +1,6 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2013-2021, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -59,7 +52,21 @@ static const char *const pmic_names[] = {
 	[PM8937_SUBTYPE] = "PM8937",
 	[PM660L_SUBTYPE] = "PM660L",
 	[PM660_SUBTYPE] = "PM660",
-	[PMI8937_SUBTYPE] = "PMI8937",
+	[PMI632_SUBTYPE] = "PMI632",
+	[PM2250_SUBTYPE] = "PM2250",
+	[PM8150_SUBTYPE] = "PM8150",
+	[PM8150B_SUBTYPE] = "PM8150B",
+	[PM8150L_SUBTYPE] = "PM8150L",
+	[PM6150_SUBTYPE] = "PM6150",
+	[PM7250B_SUBTYPE] = "PM7250B",
+	[PM6350_SUBTYPE] = "PM6350",
+	[PMK8350_SUBTYPE] = "PMK8350",
+	[PMR735B_SUBTYPE] = "PMR735B",
+	[PM6125_SUBTYPE] = "PM6125",
+	[PM8008_SUBTYPE] = "PM8008",
+	[PM8010_SUBTYPE] = "PM8010",
+	[SMB1355_SUBTYPE] = "SMB1355",
+	[SMB1390_SUBTYPE] = "SMB1390",
 };
 
 struct revid_chip {
@@ -254,7 +261,6 @@ static struct platform_driver qpnp_revid_driver = {
 	.probe	= qpnp_revid_probe,
 	.driver	= {
 		.name		= QPNP_REVID_DEV_NAME,
-		.owner		= THIS_MODULE,
 		.of_match_table	= qpnp_revid_match_table,
 	},
 };

@@ -1,29 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2018, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/clk-provider.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
-#include <linux/reset-controller.h>
 
+#include "common.h"
 #include "clk-debug.h"
-
-struct clk_dummy {
-	struct clk_hw hw;
-	struct reset_controller_dev reset;
-	unsigned long rrate;
-};
 
 #define to_clk_dummy(_hw)	container_of(_hw, struct clk_dummy, hw)
 
@@ -36,7 +22,7 @@ static int dummy_clk_set_rate(struct clk_hw *hw, unsigned long rate,
 
 	dummy->rrate = rate;
 
-	pr_debug("set rate: %lu\n", rate);
+	pr_debug("%s: rate %lu\n", __func__, rate);
 
 	return 0;
 }
@@ -52,36 +38,35 @@ static unsigned long dummy_clk_recalc_rate(struct clk_hw *hw,
 {
 	struct clk_dummy *dummy = to_clk_dummy(hw);
 
-	pr_debug("clock rate: %lu\n", dummy->rrate);
+	pr_debug("%s: returning a clock rate of %lu\n",
+				__func__, dummy->rrate);
 
 	return dummy->rrate;
 }
 
-static int dummy_clk_set_flags(struct clk_hw *hw, unsigned flags)
+static int dummy_clk_set_flags(struct clk_hw *hw, unsigned int flags)
 {
 	return 0;
 }
 
-struct clk_ops clk_dummy_ops = {
+const struct clk_ops clk_dummy_ops = {
 	.set_rate = dummy_clk_set_rate,
 	.round_rate = dummy_clk_round_rate,
 	.recalc_rate = dummy_clk_recalc_rate,
 	.set_flags = dummy_clk_set_flags,
 	.debug_init = clk_debug_measure_add,
 };
-EXPORT_SYMBOL_GPL(clk_dummy_ops);
+EXPORT_SYMBOL(clk_dummy_ops);
 
 static int dummy_reset_assert(struct reset_controller_dev *rcdev,
 				unsigned long id)
 {
-	pr_debug("%s\n", __func__);
 	return 0;
 }
 
 static int dummy_reset_deassert(struct reset_controller_dev *rcdev,
 				unsigned long id)
 {
-	pr_debug("%s\n", __func__);
 	return 0;
 }
 
@@ -130,7 +115,7 @@ static struct clk *clk_register_dummy(struct device *dev, const char *name,
 	if (reset_controller_register(&dummy->reset))
 		pr_err("Failed to register reset controller for %s\n", name);
 	else
-		pr_info("Successfully registered a dummy reset controller for %s\n",
+		pr_info("Successfully registered dummy reset controller for %s\n",
 								name);
 
 	return clk;
@@ -147,14 +132,15 @@ static void of_dummy_clk_setup(struct device_node *node)
 	of_property_read_string(node, "clock-output-names", &clk_name);
 
 	clk = clk_register_dummy(NULL, clk_name, 0, node);
-	if (!IS_ERR(clk))
+	if (!IS_ERR(clk)) {
 		of_clk_add_provider(node, of_clk_src_simple_get, clk);
-	else {
+	} else {
 		pr_err("Failed to register dummy clock controller for %s\n",
 								clk_name);
 		return;
 	}
 
-	pr_info("Successfully registered dummy clock for %s\n", clk_name);
+	pr_info("Successfully registered dummy clock controller for %s\n",
+								clk_name);
 }
 CLK_OF_DECLARE(dummy_clk, "qcom,dummycc", of_dummy_clk_setup);

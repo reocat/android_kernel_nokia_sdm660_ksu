@@ -1,18 +1,9 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0 */
+/* Copyright (c) 2012-2019 The Linux Foundation. All rights reserved.
  */
 #ifndef DIAG_DCI_H
 #define DIAG_DCI_H
 
-#define MAX_DCI_CLIENTS		10
 #define DCI_PKT_RSP_CODE	0x93
 #define DCI_DELAYED_RSP_CODE	0x94
 #define DCI_CONTROL_PKT_CODE	0x9A
@@ -67,7 +58,8 @@ extern unsigned int dci_max_clients;
 #define DCI_LOCAL_PROC		0
 #define DCI_REMOTE_BASE		1
 #define DCI_MDM_PROC		DCI_REMOTE_BASE
-#define DCI_REMOTE_LAST		(DCI_REMOTE_BASE + 1)
+#define DCI_MDM_2_PROC		(DCI_REMOTE_BASE + 1)
+#define DCI_REMOTE_LAST		(DCI_REMOTE_BASE + 2)
 
 #ifndef CONFIG_DIAGFWD_BRIDGE_CODE
 #define NUM_DCI_PROC		1
@@ -176,8 +168,7 @@ struct diag_dci_peripherals_t {
 	uint16_t list;
 } __packed;
 
-/* This is used for querying DCI Log
-   or Event Mask */
+/* This is used for querying DCI Log or Event Mask */
 struct diag_log_event_stats {
 	int client_id;
 	uint16_t code;
@@ -253,7 +244,7 @@ enum {
 #define DCI_REQ_BUF_SIZE (uint32_t)(DIAG_MAX_REQ_SIZE + DCI_REQ_HDR_SIZE)
 
 #ifdef CONFIG_DEBUG_FS
-/* To collect debug information during each smd read */
+/* To collect debug information during each socket read */
 struct diag_dci_data_info {
 	unsigned long iteration;
 	int data_size;
@@ -272,7 +263,7 @@ void diag_dci_channel_init(void);
 void diag_dci_exit(void);
 int diag_dci_register_client(struct diag_dci_reg_tbl_t *reg_entry);
 int diag_dci_deinit_client(struct diag_dci_client_tbl *entry);
-void diag_dci_channel_open_work(struct work_struct *);
+void diag_dci_channel_open_work(struct work_struct *work);
 void diag_dci_notify_client(int peripheral_mask, int data, int proc);
 void diag_dci_wakeup_clients(void);
 void diag_process_apps_dci_read_data(int data_type, void *buf, int recd_bytes);
@@ -315,7 +306,7 @@ int diag_dci_set_real_time(struct diag_dci_client_tbl *entry,
 			   uint8_t real_time);
 int diag_dci_copy_health_stats(struct diag_dci_health_stats_proc *stats_proc);
 int diag_dci_write_proc(uint8_t peripheral, int pkt_type, char *buf, int len);
-void dci_drain_data(unsigned long data);
+void dci_drain_data(struct timer_list *tlist);
 
 #ifdef CONFIG_DIAGFWD_BRIDGE_CODE
 int diag_send_dci_log_mask_remote(int token);
@@ -324,6 +315,7 @@ unsigned char *dci_get_buffer_from_bridge(int token);
 int diag_dci_write_bridge(int token, unsigned char *buf, int len);
 int diag_dci_write_done_bridge(int index, unsigned char *buf, int len);
 int diag_dci_send_handshake_pkt(int index);
+int diag_dci_init_remote(void);
 #endif
 
 #endif

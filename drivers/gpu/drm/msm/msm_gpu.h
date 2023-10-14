@@ -23,11 +23,21 @@
 #include <linux/regulator/consumer.h>
 
 #include "msm_drv.h"
+#include "msm_fence.h"
 #include "msm_ringbuffer.h"
 #include "msm_snapshot.h"
 
 struct msm_gem_submit;
 struct msm_gpu_perfcntr;
+struct msm_gpu_state;
+
+struct msm_gpu_config {
+	const char *ioname;
+	const char *irqname;
+	uint64_t va_start;
+	uint64_t va_end;
+	unsigned int nr_rings;
+};
 
 #define MSM_GPU_DEFAULT_IONAME  "kgsl_3d0_reg_memory"
 #define MSM_GPU_DEFAULT_IRQNAME "kgsl_3d0_irq"
@@ -61,23 +71,23 @@ struct msm_gpu_funcs {
 	int (*hw_init)(struct msm_gpu *gpu);
 	int (*pm_suspend)(struct msm_gpu *gpu);
 	int (*pm_resume)(struct msm_gpu *gpu);
-	void (*submit)(struct msm_gpu *gpu, struct msm_gem_submit *submit);
+	void (*submit)(struct msm_gpu *gpu, struct msm_gem_submit *submit,
+			struct msm_file_private *ctx);
 	void (*flush)(struct msm_gpu *gpu, struct msm_ringbuffer *ring);
 	irqreturn_t (*irq)(struct msm_gpu *irq);
-	uint32_t (*submitted_fence)(struct msm_gpu *gpu,
-			struct msm_ringbuffer *ring);
 	struct msm_ringbuffer *(*active_ring)(struct msm_gpu *gpu);
 	void (*recover)(struct msm_gpu *gpu);
 	void (*destroy)(struct msm_gpu *gpu);
-#ifdef CONFIG_DEBUG_FS
+#if defined(CONFIG_DEBUG_FS) || defined(CONFIG_DEV_COREDUMP)
 	/* show GPU status in debugfs: */
-	void (*show)(struct msm_gpu *gpu, struct seq_file *m);
+	void (*show)(struct msm_gpu *gpu, struct msm_gpu_state *state,
+			struct drm_printer *p);
+	/* for generation specific debugfs: */
+	int (*debugfs_init)(struct msm_gpu *gpu, struct drm_minor *minor);
 #endif
-	int (*snapshot)(struct msm_gpu *gpu, struct msm_snapshot *snapshot);
-	int (*get_counter)(struct msm_gpu *gpu, u32 groupid, u32 countable,
-		u32 *lo, u32 *hi);
-	void (*put_counter)(struct msm_gpu *gpu, u32 groupid, int counterid);
-	u64 (*read_counter)(struct msm_gpu *gpu, u32 groupid, int counterid);
+	int (*gpu_busy)(struct msm_gpu *gpu, uint64_t *value);
+	struct msm_gpu_state *(*gpu_state_get)(struct msm_gpu *gpu);
+	int (*gpu_state_put)(struct msm_gpu_state *state);
 };
 
 struct msm_gpu {
@@ -114,27 +124,13 @@ struct msm_gpu {
 	int irq;
 
 	struct msm_gem_address_space *aspace;
-	struct msm_gem_address_space *secure_aspace;
 
 	/* Power Control: */
 	struct regulator *gpu_reg, *gpu_cx;
-	struct clk **grp_clks;
-	struct clk *ebi1_clk, *core_clk, *rbbmtimer_clk;
+	struct clk_bulk_data *grp_clks;
 	int nr_clocks;
-
-	uint32_t gpufreq[10];
-	uint32_t busfreq[10];
-	uint32_t nr_pwrlevels;
-	uint32_t active_level;
-
-	struct pm_qos_request pm_qos_req_dma;
-
-	struct drm_gem_object *memptrs_bo;
-
-#ifdef DOWNSTREAM_CONFIG_MSM_BUS_SCALING
-	struct msm_bus_scale_pdata *bus_scale_table;
-	uint32_t bsc;
-#endif
+	struct clk *ebi1_clk, *core_clk, *rbbmtimer_clk;
+	uint32_t fast_rate;
 
 	/* Hang and Inactivity Detection:
 	 */
@@ -144,19 +140,19 @@ struct msm_gpu {
 #define DRM_MSM_HANGCHECK_JIFFIES msecs_to_jiffies(DRM_MSM_HANGCHECK_PERIOD)
 	struct timer_list hangcheck_timer;
 	struct work_struct recover_work;
-	struct msm_snapshot *snapshot;
+
+	struct drm_gem_object *memptrs_bo;
+
+	struct {
+		struct devfreq *devfreq;
+		u64 busy_cycles;
+		ktime_t time;
+	} devfreq;
+
+	struct msm_gpu_state *crashstate;
 };
 
-struct msm_gpu_submitqueue {
-	int id;
-	u32 flags;
-	u32 prio;
-	int faults;
-	struct list_head node;
-	struct kref ref;
-};
-
-/* It turns out that all targets use the same ringbuffer size. */
+/* It turns out that all targets use the same ringbuffer size */
 #define MSM_GPU_RINGBUFFER_SZ SZ_32K
 #define MSM_GPU_RINGBUFFER_BLKSIZE 32
 
@@ -164,24 +160,14 @@ struct msm_gpu_submitqueue {
 		(AXXX_CP_RB_CNTL_BUFSZ(ilog2(MSM_GPU_RINGBUFFER_SZ / 8)) | \
 		AXXX_CP_RB_CNTL_BLKSZ(ilog2(MSM_GPU_RINGBUFFER_BLKSIZE / 8)))
 
-static inline struct msm_ringbuffer *__get_ring(struct msm_gpu *gpu, int index)
-{
-	return (index < ARRAY_SIZE(gpu->rb) ? gpu->rb[index] : NULL);
-}
-
-#define FOR_EACH_RING(gpu, ring, index) \
-	for (index = 0, ring = (gpu)->rb[0]; \
-		index < (gpu)->nr_rings && index < ARRAY_SIZE((gpu)->rb); \
-		index++, ring = __get_ring(gpu, index))
-
 static inline bool msm_gpu_active(struct msm_gpu *gpu)
 {
-	struct msm_ringbuffer *ring;
 	int i;
 
-	FOR_EACH_RING(gpu, ring, i) {
-		if (gpu->funcs->submitted_fence(gpu, ring) >
-			ring->memptrs->fence)
+	for (i = 0; i < gpu->nr_rings; i++) {
+		struct msm_ringbuffer *ring = gpu->rb[i];
+
+		if (ring->seqno > ring->memptrs->fence)
 			return true;
 	}
 
@@ -199,6 +185,47 @@ struct msm_gpu_perfcntr {
 	uint32_t sample_reg;
 	uint32_t select_val;
 	const char *name;
+};
+
+struct msm_gpu_submitqueue {
+	int id;
+	u32 flags;
+	u32 prio;
+	int faults;
+	struct list_head node;
+	struct kref ref;
+};
+
+struct msm_gpu_state_bo {
+	u64 iova;
+	size_t size;
+	void *data;
+};
+
+struct msm_gpu_state {
+	struct kref ref;
+	struct timespec64 time;
+
+	struct {
+		u64 iova;
+		u32 fence;
+		u32 seqno;
+		u32 rptr;
+		u32 wptr;
+		void *data;
+		int data_size;
+	} ring[MSM_GPU_MAX_RINGS];
+
+	int nr_registers;
+	u32 *registers;
+
+	u32 rbbm_status;
+
+	char *comm;
+	char *cmd;
+
+	int nr_bos;
+	struct msm_gpu_state_bo *bos;
 };
 
 static inline void gpu_write(struct msm_gpu *gpu, u32 reg, u32 data)
@@ -261,7 +288,8 @@ int msm_gpu_perfcntr_sample(struct msm_gpu *gpu, uint32_t *activetime,
 		uint32_t *totaltime, uint32_t ncntrs, uint32_t *cntrs);
 
 void msm_gpu_retire(struct msm_gpu *gpu);
-int msm_gpu_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit);
+void msm_gpu_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit,
+		struct msm_file_private *ctx);
 
 int msm_gpu_init(struct drm_device *drm, struct platform_device *pdev,
 		struct msm_gpu *gpu, const struct msm_gpu_funcs *funcs,
@@ -273,22 +301,38 @@ struct msm_gpu *adreno_load_gpu(struct drm_device *dev);
 void __init adreno_register(void);
 void __exit adreno_unregister(void);
 
-int msm_gpu_counter_get(struct msm_gpu *gpu, struct drm_msm_counter *data,
-	struct msm_file_private *ctx);
-
-int msm_gpu_counter_put(struct msm_gpu *gpu, struct drm_msm_counter *data,
-	struct msm_file_private *ctx);
-
-void msm_gpu_cleanup_counters(struct msm_gpu *gpu,
-	struct msm_file_private *ctx);
-
-u64 msm_gpu_counter_read(struct msm_gpu *gpu,
-		struct drm_msm_counter_read *data);
-
 static inline void msm_submitqueue_put(struct msm_gpu_submitqueue *queue)
 {
 	if (queue)
 		kref_put(&queue->ref, msm_submitqueue_destroy);
+}
+
+static inline struct msm_gpu_state *msm_gpu_crashstate_get(struct msm_gpu *gpu)
+{
+	struct msm_gpu_state *state = NULL;
+
+	mutex_lock(&gpu->dev->struct_mutex);
+
+	if (gpu->crashstate) {
+		kref_get(&gpu->crashstate->ref);
+		state = gpu->crashstate;
+	}
+
+	mutex_unlock(&gpu->dev->struct_mutex);
+
+	return state;
+}
+
+static inline void msm_gpu_crashstate_put(struct msm_gpu *gpu)
+{
+	mutex_lock(&gpu->dev->struct_mutex);
+
+	if (gpu->crashstate) {
+		if (gpu->funcs->gpu_state_put(gpu->crashstate))
+			gpu->crashstate = NULL;
+	}
+
+	mutex_unlock(&gpu->dev->struct_mutex);
 }
 
 #endif /* __MSM_GPU_H__ */

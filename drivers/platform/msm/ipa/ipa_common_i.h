@@ -1,13 +1,6 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (c) 2012-2020, 2021 The Linux Foundation. All rights reserved.
  */
 
 #include <linux/ipa_mhi.h>
@@ -15,9 +8,12 @@
 
 #ifndef _IPA_COMMON_I_H_
 #define _IPA_COMMON_I_H_
+#include <linux/errno.h>
 #include <linux/ipc_logging.h>
 #include <linux/ipa.h>
 #include <linux/ipa_uc_offload.h>
+#include <linux/ipa_wdi3.h>
+#include <linux/ipa_wigig.h>
 #include <linux/ratelimit.h>
 
 #define WARNON_RATELIMIT_BURST 1
@@ -107,6 +103,23 @@
 		ipa_dec_client_disable_clks(&log_info); \
 	} while (0)
 
+#define IPA_ACTIVE_CLIENTS_INC_EP_NO_BLOCK(client) ({\
+	int __ret = 0; \
+	do { \
+		struct ipa_active_client_logging_info log_info; \
+		IPA_ACTIVE_CLIENTS_PREP_EP(log_info, client); \
+		__ret = ipa3_inc_client_enable_clks_no_block(&log_info); \
+	} while (0); \
+	(__ret); \
+})
+
+#define IPA_ACTIVE_CLIENTS_DEC_EP_NO_BLOCK(client) \
+	do { \
+		struct ipa_active_client_logging_info log_info; \
+		IPA_ACTIVE_CLIENTS_PREP_EP(log_info, client); \
+		ipa3_dec_client_disable_clks_no_block(&log_info); \
+	} while (0)
+
 /*
  * Printing one warning message in 5 seconds if multiple warning messages
  * are coming back to back.
@@ -128,16 +141,14 @@
  * are coming back to back.
  */
 
-#define pr_err_ratelimited_ipa(fmt, ...)				\
-	printk_ratelimited_ipa(KERN_ERR pr_fmt(fmt), ##__VA_ARGS__)
-#define printk_ratelimited_ipa(fmt, ...)				\
+#define pr_err_ratelimited_ipa(fmt, args...)				\
 ({									\
 	static DEFINE_RATELIMIT_STATE(_rs,				\
 				      DEFAULT_RATELIMIT_INTERVAL,	\
 				      IPA_RATELIMIT_BURST);		\
 									\
 	if (__ratelimit(&_rs))						\
-		printk(fmt, ##__VA_ARGS__);				\
+		pr_err(fmt, ## args);					\
 })
 
 #define ipa_assert_on(condition)\
@@ -146,11 +157,13 @@ do {\
 		ipa_assert();\
 } while (0)
 
-#define IPA_CLIENT_IS_PROD(x) (x >= IPA_CLIENT_PROD && x < IPA_CLIENT_CONS)
-#define IPA_CLIENT_IS_CONS(x) (x >= IPA_CLIENT_CONS && x < IPA_CLIENT_MAX)
+#define IPA_CLIENT_IS_PROD(x) \
+	(x < IPA_CLIENT_MAX && (x & 0x1) == 0)
+#define IPA_CLIENT_IS_CONS(x) \
+	(x < IPA_CLIENT_MAX && (x & 0x1) == 1)
 
-#define IPA_GSI_CHANNEL_STOP_SLEEP_MIN_USEC (1000)
-#define IPA_GSI_CHANNEL_STOP_SLEEP_MAX_USEC (2000)
+#define IPA_GSI_CHANNEL_STOP_SLEEP_MIN_USEC (3000)
+#define IPA_GSI_CHANNEL_STOP_SLEEP_MAX_USEC (5000)
 
 enum ipa_active_client_log_type {
 	EP,
@@ -178,9 +191,6 @@ struct ipa_mem_buffer {
 	dma_addr_t phys_base;
 	u32 size;
 };
-
-#define IPA_MHI_GSI_ER_START 10
-#define IPA_MHI_GSI_ER_END 16
 
 /**
  * enum ipa3_mhi_burst_mode - MHI channel burst mode state
@@ -410,8 +420,8 @@ int ipa_setup_uc_ntn_pipes(struct ipa_ntn_conn_in_params *in,
 	ipa_notify_cb notify, void *priv, u8 hdr_len,
 	struct ipa_ntn_conn_out_params *outp);
 
-int ipa_tear_down_uc_offload_pipes(int ipa_ep_idx_ul, int ipa_ep_idx_dl);
-
+int ipa_tear_down_uc_offload_pipes(int ipa_ep_idx_ul, int ipa_ep_idx_dl,
+	struct ipa_ntn_conn_in_params *params);
 u8 *ipa_write_64(u64 w, u8 *dest);
 u8 *ipa_write_32(u32 w, u8 *dest);
 u8 *ipa_write_16(u16 hw, u8 *dest);
@@ -421,6 +431,66 @@ u8 *ipa_pad_to_32(u8 *dest);
 int ipa_ntn_uc_reg_rdyCB(void (*ipauc_ready_cb)(void *user_data),
 			      void *user_data);
 void ipa_ntn_uc_dereg_rdyCB(void);
+
+int ipa_conn_wdi_pipes(struct ipa_wdi_conn_in_params *in,
+	struct ipa_wdi_conn_out_params *out,
+	ipa_wdi_meter_notifier_cb wdi_notify);
+
+int ipa_disconn_wdi_pipes(int ipa_ep_idx_tx, int ipa_ep_idx_rx);
+
+int ipa_enable_wdi_pipes(int ipa_ep_idx_tx, int ipa_ep_idx_rx);
+
+int ipa_disable_wdi_pipes(int ipa_ep_idx_tx, int ipa_ep_idx_rx);
+
 const char *ipa_get_version_string(enum ipa_hw_type ver);
+int ipa_start_gsi_channel(u32 clnt_hdl);
+
+bool ipa_pm_is_used(void);
+
+int ipa_smmu_store_sgt(struct sg_table **out_ch_ptr,
+		struct sg_table *in_sgt_ptr);
+int ipa_smmu_free_sgt(struct sg_table **out_sgt_ptr);
+
+int ipa_ut_module_init(void);
+void ipa_ut_module_exit(void);
+
+int ipa_wigig_internal_init(
+	struct ipa_wdi_uc_ready_params *inout,
+	ipa_wigig_misc_int_cb int_notify,
+	phys_addr_t *uc_db_pa);
+
+int ipa_conn_wigig_rx_pipe_i(void *in, struct ipa_wigig_conn_out_params *out,
+	struct dentry **parent);
+
+int ipa_conn_wigig_client_i(void *in, struct ipa_wigig_conn_out_params *out,
+	ipa_notify_cb tx_notify,
+	void *priv);
+
+int ipa_wigig_uc_msi_init(
+	bool init,
+	phys_addr_t periph_baddr_pa,
+	phys_addr_t pseudo_cause_pa,
+	phys_addr_t int_gen_tx_pa,
+	phys_addr_t int_gen_rx_pa,
+	phys_addr_t dma_ep_misc_pa);
+
+int ipa_disconn_wigig_pipe_i(enum ipa_client_type client,
+	struct ipa_wigig_pipe_setup_info_smmu *pipe_smmu,
+	void *dbuff);
+
+int ipa_enable_wigig_pipe_i(enum ipa_client_type client);
+
+int ipa_disable_wigig_pipe_i(enum ipa_client_type client);
+
+int ipa_wigig_send_msg(int msg_type,
+	const char *netdev_name, u8 *mac,
+	enum ipa_client_type client, bool to_wigig);
+
+int ipa_wigig_save_regs(void);
+
+void ipa_register_client_callback(int (*client_cb)(bool is_lock),
+			bool (*teth_port_state)(void), u32 ipa_ep_idx);
+
+void ipa_deregister_client_callback(u32 ipa_ep_idx);
 
 #endif /* _IPA_COMMON_I_H_ */

@@ -1,15 +1,7 @@
-/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  */
-
 /*
  * Function and data structure declarations for SPS BAM handling.
  */
@@ -202,7 +194,7 @@ struct sps_bam {
 	/* BAM device state */
 	u32 state;
 	struct mutex lock;
-	void *base; /* BAM virtual base address */
+	void __iomem *base; /* BAM virtual base address */
 	u32 version;
 	spinlock_t isr_lock;
 	spinlock_t connection_lock;

@@ -1,13 +1,6 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __SDE_ROTATOR_DEBUG_H__
@@ -18,6 +11,9 @@
 
 #define SDE_ROT_DATA_LIMITER (-1)
 #define SDE_ROT_EVTLOG_TOUT_DATA_LIMITER (NULL)
+#define SDE_ROT_EVTLOG_PANIC		0xdead
+#define SDE_ROT_EVTLOG_FATAL		0xbad
+#define SDE_ROT_EVTLOG_ERROR		0xebad
 
 enum sde_rot_dbg_reg_dump_flag {
 	SDE_ROT_DBG_DUMP_IN_LOG = BIT(0),
@@ -38,9 +34,19 @@ enum sde_rot_dbg_evtlog_flag {
 	sde_rot_evtlog_tout_handler(false, __func__, ##__VA_ARGS__, \
 		SDE_ROT_EVTLOG_TOUT_DATA_LIMITER)
 
+#if defined(CONFIG_DEBUG_FS)
 void sde_rot_evtlog(const char *name, int line, int flag, ...);
-void sde_rot_dump_panic(void);
 void sde_rot_evtlog_tout_handler(bool queue, const char *name, ...);
+#else
+static inline
+void sde_rot_evtlog(const char *name, int line, int flag, ...)
+{
+}
+static inline
+void sde_rot_evtlog_tout_handler(bool queue, const char *name, ...)
+{
+}
+#endif
 
 struct sde_rotator_device;
 

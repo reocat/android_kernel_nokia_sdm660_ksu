@@ -248,7 +248,7 @@ static irqreturn_t daqp_interrupt(int irq, void *dev_id)
 
 	if (loop_limit <= 0) {
 		dev_warn(dev->class_dev,
-			 "loop_limit reached in daqp_interrupt()\n");
+			 "loop_limit reached in %s()\n", __func__);
 		s->async->events |= COMEDI_CB_ERROR;
 	}
 
@@ -643,7 +643,7 @@ static int daqp_ao_insn_write(struct comedi_device *dev,
 	outb(0, dev->iobase + DAQP_AUX_REG);
 
 	for (i = 0; i < insn->n; i++) {
-		unsigned val = data[i];
+		unsigned int val = data[i];
 		int ret;
 
 		/* D/A transfer rate is about 8ms */

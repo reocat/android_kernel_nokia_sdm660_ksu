@@ -39,6 +39,7 @@ struct persistent_ram_ecc_info {
 	int ecc_size;
 	int symsize;
 	int poly;
+	uint16_t *par;
 };
 
 struct persistent_ram_zone {
@@ -88,15 +89,18 @@ void ramoops_console_write_buf(const char *buf, size_t size);
  * @mem_address	physical memory address to contain ramoops
  */
 
+#define RAMOOPS_FLAG_FTRACE_PER_CPU	BIT(0)
+
 struct ramoops_platform_data {
 	unsigned long	mem_size;
-	unsigned long	mem_address;
+	phys_addr_t	mem_address;
 	unsigned int	mem_type;
 	unsigned long	record_size;
 	unsigned long	console_size;
 	unsigned long	ftrace_size;
 	unsigned long	pmsg_size;
 	int		dump_oops;
+	u32		flags;
 	struct persistent_ram_ecc_info ecc_info;
 };
 

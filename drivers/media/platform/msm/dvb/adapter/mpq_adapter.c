@@ -1,13 +1,6 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/init.h>
@@ -62,13 +55,10 @@ static int __init mpq_adapter_init(void)
 		mpq_info.interfaces[i].callback = NULL;
 	}
 
-	/* regsiter a new dvb-adapter to dvb-core */
+	/* register a new dvb-adapter to dvb-core */
 	result = dvb_register_adapter(&mpq_info.adapter,
-								  "Qualcomm DVB adapter",
-								  THIS_MODULE,
-								  NULL,
-								  adapter_nr);
-
+				      "Qualcomm Technologies, Inc. DVB adapter",
+				      THIS_MODULE, NULL, adapter_nr);
 	if (result < 0) {
 		MPQ_DVB_ERR_PRINT(
 			"%s: dvb_register_adapter failed, errno %d\n",
@@ -87,7 +77,7 @@ static void __exit mpq_adapter_exit(void)
 {
 	MPQ_DVB_DBG_PRINT("%s executed\n", __func__);
 
-	/* un-regsiter adapter from dvb-core */
+	/* un-register adapter from dvb-core */
 	dvb_unregister_adapter(&mpq_info.adapter);
 	mutex_destroy(&mpq_info.mutex);
 }

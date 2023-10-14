@@ -1,13 +1,6 @@
-/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2010-2016, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "AXI: %s(): " fmt, __func__
@@ -60,6 +53,7 @@ struct msm_bus_fabric_device *msm_bus_get_fabric_device(int fabid)
 {
 	struct device *dev;
 	struct msm_bus_fabric_device *fabric;
+
 	dev = bus_find_device(&msm_bus_type, NULL, (void *)&fabid,
 		msm_bus_device_match);
 	if (!dev)
@@ -75,6 +69,7 @@ struct msm_bus_fabric_device *msm_bus_get_fabric_device(int fabid)
 int msm_bus_fabric_device_register(struct msm_bus_fabric_device *fabdev)
 {
 	int ret = 0;
+
 	fabdev->dev.bus = &msm_bus_type;
 	fabdev->dev.release = msm_bus_release;
 	ret = dev_set_name(&fabdev->dev, fabdev->name);
@@ -112,6 +107,7 @@ static void __exit msm_bus_exit(void)
 static int __init msm_bus_init(void)
 {
 	int retval = 0;
+
 	retval = bus_register(&msm_bus_type);
 	if (retval)
 		MSM_BUS_ERR("bus_register error! %d\n",
@@ -121,5 +117,4 @@ static int __init msm_bus_init(void)
 postcore_initcall(msm_bus_init);
 module_exit(msm_bus_exit);
 MODULE_LICENSE("GPL v2");
-MODULE_VERSION("0.2");
 MODULE_ALIAS("platform:msm_bus");

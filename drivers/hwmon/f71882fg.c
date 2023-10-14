@@ -390,7 +390,7 @@ static ssize_t show_pwm_auto_point_temp(struct device *dev,
 static ssize_t store_pwm_auto_point_temp(struct device *dev,
 	struct device_attribute *devattr, const char *buf, size_t count);
 /* Sysfs misc */
-static ssize_t show_name(struct device *dev, struct device_attribute *devattr,
+static ssize_t name_show(struct device *dev, struct device_attribute *devattr,
 	char *buf);
 
 static int f71882fg_probe(struct platform_device *pdev);
@@ -404,7 +404,7 @@ static struct platform_driver f71882fg_driver = {
 	.remove		= f71882fg_remove,
 };
 
-static DEVICE_ATTR(name, S_IRUGO, show_name, NULL);
+static DEVICE_ATTR_RO(name);
 
 /*
  * Temp attr for the f71858fg, the f71858fg is special as it has its
@@ -1590,8 +1590,9 @@ static ssize_t show_temp(struct device *dev, struct device_attribute *devattr,
 		temp *= 125;
 		if (sign)
 			temp -= 128000;
-	} else
-		temp = data->temp[nr] * 1000;
+	} else {
+		temp = ((s8)data->temp[nr]) * 1000;
+	}
 
 	return sprintf(buf, "%d\n", temp);
 }
@@ -2212,7 +2213,7 @@ static ssize_t store_pwm_auto_point_temp(struct device *dev,
 	return count;
 }
 
-static ssize_t show_name(struct device *dev, struct device_attribute *devattr,
+static ssize_t name_show(struct device *dev, struct device_attribute *devattr,
 	char *buf)
 {
 	struct f71882fg_data *data = dev_get_drvdata(dev);

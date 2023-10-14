@@ -115,7 +115,7 @@ config MD_RAID10
 
 	  RAID-10 requires mdadm-1.7.0 or later, available at:
 
-	  ftp://ftp.kernel.org/pub/linux/utils/raid/mdadm/
+	  https://www.kernel.org/pub/linux/utils/raid/mdadm/
 
 	  If unsure, say Y.
 
@@ -178,7 +178,7 @@ config MD_FAULTY
 
 
 config MD_CLUSTER
-	tristate "Cluster Support for MD (EXPERIMENTAL)"
+	tristate "Cluster Support for MD"
 	depends on BLK_DEV_MD
 	depends on DLM
 	default n
@@ -188,7 +188,8 @@ config MD_CLUSTER
 	nodes in the cluster can access the MD devices simultaneously.
 
 	This brings the redundancy (and uptime) of RAID levels across the
-	nodes of the cluster.
+	nodes of the cluster. Currently, it can work with raid1 and raid10
+	(limited support).
 
 	If unsure, say N.
 
@@ -200,6 +201,7 @@ config BLK_DEV_DM_BUILTIN
 config BLK_DEV_DM
 	tristate "Device mapper support"
 	select BLK_DEV_DM_BUILTIN
+	depends on DAX || DAX=n
 	---help---
 	  Device-mapper is a low level volume manager.  It works by allowing
 	  people to specify mappings for ranges of logical sectors.  Various
@@ -240,6 +242,24 @@ config DM_BUFIO
 	 as a cache, holding recently-read blocks in memory and performing
 	 delayed writes.
 
+config DM_DEBUG_BLOCK_MANAGER_LOCKING
+       bool "Block manager locking"
+       depends on DM_BUFIO
+       ---help---
+	 Block manager locking can catch various metadata corruption issues.
+
+	 If unsure, say N.
+
+config DM_DEBUG_BLOCK_STACK_TRACING
+       bool "Keep stack trace of persistent data block lock holders"
+       depends on STACKTRACE_SUPPORT && DM_DEBUG_BLOCK_MANAGER_LOCKING
+       select STACKTRACE
+       ---help---
+	 Enable this for messages that may help debug problems with the
+	 block manager locking used by thin provisioning and caching.
+
+	 If unsure, say N.
+
 config DM_BIO_PRISON
        tristate
        depends on BLK_DEV_DM
@@ -248,6 +268,13 @@ config DM_BIO_PRISON
 	 including thin provisioning.
 
 source "drivers/md/persistent-data/Kconfig"
+
+config DM_UNSTRIPED
+       tristate "Unstriped target"
+       depends on BLK_DEV_DM
+       ---help---
+	  Unstripes I/O so it is issued solely on a single drive in a HW
+	  RAID0 or dm-striped target.
 
 config DM_CRYPT
 	tristate "Crypt target support"
@@ -267,22 +294,26 @@ config DM_CRYPT
 
 	  If unsure, say N.
 
-config DM_REQ_CRYPT
-	tristate "Req Crypt target support"
+config DM_DEFAULT_KEY
+	tristate "Default-key target support"
 	depends on BLK_DEV_DM
-	select XTS
-	select CRYPTO_XTS
-	---help---
-	  This request based device-mapper target allows you to create a device that
-	  transparently encrypts the data on it. You'll need to activate
-	  the ciphers you're going to use in the cryptoapi configuration.
-	  The DM REQ CRYPT operates on requests (bigger payloads) to utilize
-	  crypto hardware better.
+	depends on BLK_INLINE_ENCRYPTION
+	# dm-default-key doesn't require -o inlinecrypt, but it does currently
+	# rely on the inline encryption hooks being built into the kernel.
+	depends on FS_ENCRYPTION_INLINE_CRYPT
+	help
+	  This device-mapper target allows you to create a device that
+	  assigns a default encryption key to bios that aren't for the
+	  contents of an encrypted file.
 
-	  To compile this code as a module, choose M here: the module will
-	  be called dm-req-crypt.
+	  This ensures that all blocks on-disk will be encrypted with
+	  some key, without the performance hit of file contents being
+	  encrypted twice when fscrypt (File-Based Encryption) is used.
 
-	  If unsure, say N.
+	  It is only appropriate to use dm-default-key when key
+	  configuration is tightly controlled, like it is in Android,
+	  such that all fscrypt keys are at least as hard to compromise
+	  as the default key.
 
 config DM_SNAPSHOT
        tristate "Snapshot target"
@@ -312,16 +343,6 @@ config DM_CACHE
          algorithms used to select which blocks are promoted, demoted,
          cleaned etc.  It supports writeback and writethrough modes.
 
-config DM_CACHE_MQ
-       tristate "MQ Cache Policy (EXPERIMENTAL)"
-       depends on DM_CACHE
-       default y
-       ---help---
-         A cache policy that uses a multiqueue ordered by recent hit
-         count to select which blocks should be promoted and demoted.
-         This is meant to be a general purpose policy.  It prioritises
-         reads over writes.
-
 config DM_CACHE_SMQ
        tristate "Stochastic MQ Cache Policy (EXPERIMENTAL)"
        depends on DM_CACHE
@@ -334,13 +355,16 @@ config DM_CACHE_SMQ
          of less memory utilization, improved performance and increased
          adaptability in the face of changing workloads.
 
-config DM_CACHE_CLEANER
-       tristate "Cleaner Cache Policy (EXPERIMENTAL)"
-       depends on DM_CACHE
-       default y
-       ---help---
-         A simple cache policy that writes back all data to the
-         origin.  Used when decommissioning a dm-cache.
+config DM_WRITECACHE
+	tristate "Writecache target"
+	depends on BLK_DEV_DM
+	---help---
+	   The writecache target caches writes on persistent memory or SSD.
+	   It is intended for databases or other programs that need extremely
+	   low commit latency.
+
+	   The writecache target doesn't cache reads because reads are supposed
+	   to be cached in standard RAM.
 
 config DM_ERA
        tristate "Era target (EXPERIMENTAL)"
@@ -476,6 +500,30 @@ config DM_VERITY
 
 	  If unsure, say N.
 
+config DM_VERITY_HASH_PREFETCH_MIN_SIZE_128
+	bool "Prefetch size 128"
+
+config DM_VERITY_HASH_PREFETCH_MIN_SIZE
+	int "Verity hash prefetch minimum size"
+	depends on DM_VERITY
+	range 1 4096
+	default 128 if DM_VERITY_HASH_PREFETCH_MIN_SIZE_128
+	default 1
+	---help---
+	  This sets minimum number of hash blocks to prefetch for dm-verity.
+	  For devices like eMMC, having larger prefetch size like 128 can improve
+	  performance with increased memory consumption for keeping more hashes
+	  in RAM.
+
+config DM_VERITY_AVB
+	tristate "Support AVB specific verity error behavior"
+	depends on DM_VERITY
+	---help---
+	  Enables Android Verified Boot platform-specific error
+	  behavior. In particular, it will modify the vbmeta partition
+	  specified on the kernel command-line when non-transient error
+	  occurs (followed by a panic).
+
 config DM_VERITY_FEC
 	bool "Verity forward error correction support"
 	depends on DM_VERITY
@@ -518,27 +566,55 @@ config DM_LOG_WRITES
 
 	  If unsure, say N.
 
-config DM_VERITY_AVB
-	tristate "Support AVB specific verity error behavior"
-	depends on DM_VERITY
+config DM_INTEGRITY
+	tristate "Integrity target support"
+	depends on BLK_DEV_DM
+	select BLK_DEV_INTEGRITY
+	select DM_BUFIO
+	select CRYPTO
+	select ASYNC_XOR
 	---help---
-	  Enables Android Verified Boot platform-specific error
-	  behavior. In particular, it will modify the vbmeta partition
-	  specified on the kernel command-line when non-transient error
-	  occurs (followed by a panic).
+	  This device-mapper target emulates a block device that has
+	  additional per-sector tags that can be used for storing
+	  integrity information.
+
+	  This integrity target is used with the dm-crypt target to
+	  provide authenticated disk encryption or it can be used
+	  standalone.
+
+	  To compile this code as a module, choose M here: the module will
+	  be called dm-integrity.
+
+config DM_ZONED
+	tristate "Drive-managed zoned block device target support"
+	depends on BLK_DEV_DM
+	depends on BLK_DEV_ZONED
+	---help---
+	  This device-mapper target takes a host-managed or host-aware zoned
+	  block device and exposes most of its capacity as a regular block
+	  device (drive-managed zoned block device) without any write
+	  constraints. This is mainly intended for use with file systems that
+	  do not natively support zoned block devices but still want to
+	  benefit from the increased capacity offered by SMR disks. Other uses
+	  by applications using raw block devices (for example object stores)
+	  are also possible.
+
+	  To compile this code as a module, choose M here: the module will
+	  be called dm-zoned.
 
 	  If unsure, say N.
 
 config DM_ANDROID_VERITY
 	bool "Android verity target support"
+	depends on BLK_DEV_DM=y
 	depends on DM_VERITY=y
 	depends on X509_CERTIFICATE_PARSER
 	depends on SYSTEM_TRUSTED_KEYRING
-	depends on PUBLIC_KEY_ALGO_RSA
+	depends on CRYPTO_RSA
 	depends on KEYS
 	depends on ASYMMETRIC_KEY_TYPE
 	depends on ASYMMETRIC_PUBLIC_KEY_SUBTYPE
-	depends on MD_LINEAR=y
+	select DM_VERITY_HASH_PREFETCH_MIN_SIZE_128
 	---help---
 	  This device-mapper target is virtually a VERITY target. This
 	  target is setup by reading the metadata contents piggybacked
@@ -549,8 +625,8 @@ config DM_ANDROID_VERITY
 
 config DM_ANDROID_VERITY_AT_MOST_ONCE_DEFAULT_ENABLED
 	bool "Verity will validate blocks at most once"
-   depends on DM_VERITY
-   ---help---
+	depends on DM_VERITY
+	---help---
 	  Default enables at_most_once option for dm-verity
 
 	  Verify data blocks only the first time they are read from the
@@ -566,4 +642,31 @@ config DM_ANDROID_VERITY_AT_MOST_ONCE_DEFAULT_ENABLED
 	  any more after all the data blocks it covers have been verified anyway.
 
 	  If unsure, say N.
+
+config DM_BOW
+	tristate "Backup block device"
+	depends on BLK_DEV_DM
+	select DM_BUFIO
+	---help---
+	  This device-mapper target takes a device and keeps a log of all
+	  changes using free blocks identified by issuing a trim command.
+	  This can then be restored by running a command line utility,
+	  or committed by simply replacing the target.
+
+	  If unsure, say N.
+
+config DM_USER
+	tristate "Block device in userspace"
+	depends on BLK_DEV_DM
+	default y
+	help
+	  This device-mapper target allows a userspace daemon to provide the
+	  contents of a block device.  See
+	  <file:Documentation/block/dm-user.rst> for more information.
+
+	  To compile this code as a module, choose M here: the module will be
+	  called dm-user.
+
+	  If unsure, say N.
+
 endif # MD

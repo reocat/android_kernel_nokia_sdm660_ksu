@@ -38,6 +38,7 @@
 #include <linux/notifier.h>
 #include <linux/mutex.h>
 #include <linux/export.h>
+#include <linux/fs.h>
 #include <linux/completion.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -65,11 +66,11 @@ struct xenbus_watch
 	 * The event will be discarded if this callback returns false.
 	 */
 	bool (*will_handle)(struct xenbus_watch *,
-			    const char **vec, unsigned int len);
+			      const char *path, const char *token);
 
 	/* Callback (executed in a process context with no locks held). */
 	void (*callback)(struct xenbus_watch *,
-			 const char **vec, unsigned int len);
+			 const char *path, const char *token);
 };
 
 
@@ -160,6 +161,10 @@ __scanf(4, 5)
 int xenbus_scanf(struct xenbus_transaction t,
 		 const char *dir, const char *node, const char *fmt, ...);
 
+/* Read an (optional) unsigned value. */
+unsigned int xenbus_read_unsigned(const char *dir, const char *node,
+				  unsigned int default_val);
+
 /* Single printf and write: returns -errno or 0. */
 __printf(4, 5)
 int xenbus_printf(struct xenbus_transaction t,
@@ -180,16 +185,7 @@ void xs_suspend(void);
 void xs_resume(void);
 void xs_suspend_cancel(void);
 
-/* Used by xenbus_dev to borrow kernel's store connection. */
-void *xenbus_dev_request_and_reply(struct xsd_sockmsg *msg);
-
 struct work_struct;
-
-/* Prepare for domain suspend: then resume or cancel the suspend. */
-void xenbus_suspend(void);
-void xenbus_resume(void);
-void xenbus_probe(struct work_struct *);
-void xenbus_suspend_cancel(void);
 
 #define XENBUS_IS_ERR_READ(str) ({			\
 	if (!IS_ERR(str) && strlen(str) == 0) {		\
@@ -204,15 +200,15 @@ void xenbus_suspend_cancel(void);
 int xenbus_watch_path(struct xenbus_device *dev, const char *path,
 		      struct xenbus_watch *watch,
 		      bool (*will_handle)(struct xenbus_watch *,
-					  const char **, unsigned int),
+					  const char *, const char *),
 		      void (*callback)(struct xenbus_watch *,
-				       const char **, unsigned int));
+				       const char *, const char *));
 __printf(5, 6)
 int xenbus_watch_pathfmt(struct xenbus_device *dev, struct xenbus_watch *watch,
 			 bool (*will_handle)(struct xenbus_watch *,
-					     const char **, unsigned int),
+					     const char *, const char *),
 			 void (*callback)(struct xenbus_watch *,
-					  const char **, unsigned int),
+					  const char *, const char *),
 			 const char *pathfmt, ...);
 
 int xenbus_switch_state(struct xenbus_device *dev, enum xenbus_state new_state);
@@ -243,5 +239,9 @@ void xenbus_dev_fatal(struct xenbus_device *dev, int err, const char *fmt, ...);
 const char *xenbus_strstate(enum xenbus_state state);
 int xenbus_dev_is_online(struct xenbus_device *dev);
 int xenbus_frontend_closed(struct xenbus_device *dev);
+
+extern const struct file_operations xen_xenbus_fops;
+extern struct xenstore_domain_interface *xen_store_interface;
+extern int xen_store_evtchn;
 
 #endif /* _XEN_XENBUS_H */

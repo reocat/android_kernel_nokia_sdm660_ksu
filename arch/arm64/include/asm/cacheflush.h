@@ -19,6 +19,7 @@
 #ifndef __ASM_CACHEFLUSH_H
 #define __ASM_CACHEFLUSH_H
 
+#include <linux/kgdb.h>
 #include <linux/mm.h>
 
 /*
@@ -36,9 +37,13 @@
  *	Start addresses are inclusive and end addresses are exclusive; start
  *	addresses should be rounded down, end addresses up.
  *
- *	See Documentation/cachetlb.txt for more information. Please note that
+ *	See Documentation/core-api/cachetlb.rst for more information. Please note that
  *	the implementation assumes non-aliasing VIPT D-cache and (aliasing)
- *	VIPT or ASID-tagged VIVT I-cache.
+ *	VIPT I-cache.
+ *
+ *	flush_cache_all()
+ *
+ *		Unconditionally clean and invalidate the entire cache.
  *
  *	flush_cache_all()
  *
@@ -56,6 +61,12 @@
  *		- start  - virtual start address
  *		- end    - virtual end address
  *
+ *	invalidate_icache_range(start, end)
+ *
+ *		Invalidate the I-cache in the region described by start, end.
+ *		- start  - virtual start address
+ *		- end    - virtual end address
+ *
  *	__flush_cache_user_range(start, end)
  *
  *		Ensure coherency between the I-cache and the D-cache in the
@@ -70,11 +81,39 @@
  *		- size   - region size
  */
 extern void flush_cache_all(void);
-extern void flush_cache_range(struct vm_area_struct *vma, unsigned long start, unsigned long end);
-extern void flush_icache_range(unsigned long start, unsigned long end);
+extern void __flush_icache_range(unsigned long start, unsigned long end);
+extern int  invalidate_icache_range(unsigned long start, unsigned long end);
 extern void __flush_dcache_area(void *addr, size_t len);
+extern void __inval_dcache_area(void *addr, size_t len);
+extern void __clean_dcache_area_poc(void *addr, size_t len);
+extern void __clean_dcache_area_pop(void *addr, size_t len);
 extern void __clean_dcache_area_pou(void *addr, size_t len);
 extern long __flush_cache_user_range(unsigned long start, unsigned long end);
+extern void sync_icache_aliases(void *kaddr, unsigned long len);
+
+static inline void flush_icache_range(unsigned long start, unsigned long end)
+{
+	__flush_icache_range(start, end);
+
+	/*
+	 * IPI all online CPUs so that they undergo a context synchronization
+	 * event and are forced to refetch the new instructions.
+	 */
+
+	/*
+	 * KGDB performs cache maintenance with interrupts disabled, so we
+	 * will deadlock trying to IPI the secondary CPUs. In theory, we can
+	 * set CACHE_FLUSH_IS_SAFE to 0 to avoid this known issue, but that
+	 * just means that KGDB will elide the maintenance altogether! As it
+	 * turns out, KGDB uses IPIs to round-up the secondary CPUs during
+	 * the patching operation, so we don't need extra IPIs here anyway.
+	 * In which case, add a KGDB-specific bodge and return early.
+	 */
+	if (in_dbg_master())
+		return;
+
+	kick_all_cpus_sync();
+}
 
 static inline void flush_cache_mm(struct mm_struct *mm)
 {
@@ -85,18 +124,26 @@ static inline void flush_cache_page(struct vm_area_struct *vma,
 {
 }
 
+static inline void flush_cache_range(struct vm_area_struct *vma,
+				     unsigned long start, unsigned long end)
+{
+}
+
 /*
  * Cache maintenance functions used by the DMA API. No to be used directly.
  */
 extern void __dma_map_area(const void *, size_t, int);
 extern void __dma_unmap_area(const void *, size_t, int);
-extern void __dma_flush_range(const void *, const void *);
-extern void __dma_inv_range(const void *, const void *);
-extern void __dma_clean_range(const void *, const void *);
+extern void __dma_flush_area(const void *, size_t);
+extern void __dma_inv_area(const void *start, size_t size);
+extern void __dma_clean_area(const void *start, size_t size);
 
-#define dmac_flush_range __dma_flush_range
-#define dmac_inv_range __dma_inv_range
-#define dmac_clean_range __dma_clean_range
+#define dmac_flush_range(start, end) \
+	__dma_flush_area(start, (void *)(end) - (void *)(start))
+#define dmac_inv_range(start, end) \
+	__dma_inv_area(start, (void *)(end) - (void *)(start))
+#define dmac_clean_range(start, end) \
+	__dma_clean_area(start, (void *)(end) - (void *)(start))
 
 /*
  * Copy user data from/to a page which is mapped into a different
@@ -127,23 +174,17 @@ extern void copy_to_user_page(struct vm_area_struct *, struct page *,
 #define ARCH_IMPLEMENTS_FLUSH_DCACHE_PAGE 1
 extern void flush_dcache_page(struct page *);
 
-static inline void __local_flush_icache_all(void)
-{
-	asm("ic iallu");
-	dsb(nsh);
-	isb();
-}
-
 static inline void __flush_icache_all(void)
 {
+	if (cpus_have_const_cap(ARM64_HAS_CACHE_DIC))
+		return;
+
 	asm("ic	ialluis");
 	dsb(ish);
 }
 
-#define flush_dcache_mmap_lock(mapping) \
-	spin_lock_irq(&(mapping)->tree_lock)
-#define flush_dcache_mmap_unlock(mapping) \
-	spin_unlock_irq(&(mapping)->tree_lock)
+#define flush_dcache_mmap_lock(mapping)		do { } while (0)
+#define flush_dcache_mmap_unlock(mapping)	do { } while (0)
 
 /*
  * We don't appear to need to do anything here.  In fact, if we did, we'd
@@ -162,19 +203,7 @@ static inline void flush_cache_vunmap(unsigned long start, unsigned long end)
 {
 }
 
-int set_memory_ro(unsigned long addr, int numpages);
-int set_memory_rw(unsigned long addr, int numpages);
-int set_memory_x(unsigned long addr, int numpages);
-int set_memory_nx(unsigned long addr, int numpages);
-#ifdef CONFIG_KERNEL_TEXT_RDONLY
-void set_kernel_text_ro(void);
-#else
-static inline void set_kernel_text_ro(void) { }
-#endif
-
-#ifdef CONFIG_DEBUG_RODATA
-void mark_rodata_ro(void);
-#endif
+int set_memory_valid(unsigned long addr, int numpages, int enable);
 
 #ifdef CONFIG_FREE_PAGES_RDONLY
 #define mark_addr_rdonly(a)	set_memory_ro((unsigned long)a, 1);

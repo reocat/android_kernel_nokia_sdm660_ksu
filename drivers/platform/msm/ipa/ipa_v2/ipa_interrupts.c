@@ -1,13 +1,6 @@
-/* Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2014-2016, 2020, The Linux Foundation. All rights reserved.
  */
 #include <linux/interrupt.h>
 #include "ipa_i.h"
@@ -168,6 +161,7 @@ static void ipa_process_interrupts(bool isr_context)
 	u32 i = 0;
 	u32 en;
 	bool uc_irq;
+
 	en = ipa_read_reg(ipa_ctx->mmio, IPA_IRQ_EN_EE_n_ADDR(ipa_ee));
 	reg = ipa_read_reg(ipa_ctx->mmio, IPA_IRQ_STTS_EE_n_ADDR(ipa_ee));
 	IPADBG_LOW(
@@ -224,6 +218,7 @@ static void ipa_interrupt_defer(struct work_struct *work)
 static irqreturn_t ipa_isr(int irq, void *ctxt)
 {
 	unsigned long flags;
+
 	IPADBG_LOW("Enter\n");
 	/* defer interrupt handling in case IPA is not clocked on */
 	if (ipa_active_clients_trylock(&flags) == 0) {
@@ -245,16 +240,16 @@ bail:
 	return IRQ_HANDLED;
 }
 /**
-* ipa2_add_interrupt_handler() - Adds handler to an interrupt type
-* @interrupt:		Interrupt type
-* @handler:		The handler to be added
-* @deferred_flag:	whether the handler processing should be deferred in
-*			a workqueue
-* @private_data:	the client's private data
-*
-* Adds handler to an interrupt type and enable the specific bit
-* in IRQ_EN register, associated interrupt in IRQ_STTS register will be enabled
-*/
+ * ipa2_add_interrupt_handler() - Adds handler to an interrupt type
+ * @interrupt:		Interrupt type
+ * @handler:		The handler to be added
+ * @deferred_flag:	whether the handler processing should be deferred in
+ *			a workqueue
+ * @private_data:	the client's private data
+ *
+ * Adds handler to an interrupt type and enable the specific bit
+ * in IRQ_EN register, associated interrupt in IRQ_STTS register will be enabled
+ */
 int ipa2_add_interrupt_handler(enum ipa_irq_type interrupt,
 		ipa_irq_handler_t handler,
 		bool deferred_flag,
@@ -264,7 +259,7 @@ int ipa2_add_interrupt_handler(enum ipa_irq_type interrupt,
 	u32 bmsk;
 	int irq_num;
 
-	IPADBG_LOW("in ipa2_add_interrupt_handler\n");
+	IPADBG_LOW("interrupt_enum(%d)\n", interrupt);
 	if (interrupt < IPA_BAD_SNOC_ACCESS_IRQ ||
 		interrupt >= IPA_IRQ_MAX) {
 		IPAERR("invalid interrupt number %d\n", interrupt);
@@ -293,11 +288,11 @@ int ipa2_add_interrupt_handler(enum ipa_irq_type interrupt,
 }
 
 /**
-* ipa2_remove_interrupt_handler() - Removes handler to an interrupt type
-* @interrupt:		Interrupt type
-*
-* Removes the handler and disable the specific bit in IRQ_EN register
-*/
+ * ipa2_remove_interrupt_handler() - Removes handler to an interrupt type
+ * @interrupt:		Interrupt type
+ *
+ * Removes the handler and disable the specific bit in IRQ_EN register
+ */
 int ipa2_remove_interrupt_handler(enum ipa_irq_type interrupt)
 {
 	u32 val;
@@ -332,16 +327,16 @@ int ipa2_remove_interrupt_handler(enum ipa_irq_type interrupt)
 }
 
 /**
-* ipa_interrupts_init() - Initialize the IPA interrupts framework
-* @ipa_irq:	The interrupt number to allocate
-* @ee:		Execution environment
-* @ipa_dev:	The basic device structure representing the IPA driver
-*
-* - Initialize the ipa_interrupt_to_cb array
-* - Clear interrupts status
-* - Register the ipa interrupt handler - ipa_isr
-* - Enable apps processor wakeup by IPA interrupts
-*/
+ * ipa_interrupts_init() - Initialize the IPA interrupts framework
+ * @ipa_irq:	The interrupt number to allocate
+ * @ee:		Execution environment
+ * @ipa_dev:	The basic device structure representing the IPA driver
+ *
+ * - Initialize the ipa_interrupt_to_cb array
+ * - Clear interrupts status
+ * - Register the ipa interrupt handler - ipa_isr
+ * - Enable apps processor wakeup by IPA interrupts
+ */
 int ipa_interrupts_init(u32 ipa_irq, u32 ee, struct device *ipa_dev)
 {
 	int idx;

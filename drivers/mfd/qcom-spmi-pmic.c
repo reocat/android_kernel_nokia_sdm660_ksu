@@ -1,15 +1,6 @@
-/*
- * Copyright (c) 2014, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2014-2015, 2017-2019, The Linux Foundation. All rights reserved. */
+/* Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved. */
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -39,6 +30,9 @@
 #define PM8916_SUBTYPE		0x0b
 #define PM8004_SUBTYPE		0x0c
 #define PM8909_SUBTYPE		0x0d
+#define PM8998_SUBTYPE		0x14
+#define PMI8998_SUBTYPE		0x15
+#define PM8005_SUBTYPE		0x18
 
 static const struct of_device_id pmic_spmi_id_table[] = {
 	{ .compatible = "qcom,spmi-pmic", .data = (void *)COMMON_SUBTYPE },
@@ -55,6 +49,9 @@ static const struct of_device_id pmic_spmi_id_table[] = {
 	{ .compatible = "qcom,pm8916",    .data = (void *)PM8916_SUBTYPE },
 	{ .compatible = "qcom,pm8004",    .data = (void *)PM8004_SUBTYPE },
 	{ .compatible = "qcom,pm8909",    .data = (void *)PM8909_SUBTYPE },
+	{ .compatible = "qcom,pm8998",    .data = (void *)PM8998_SUBTYPE },
+	{ .compatible = "qcom,pmi8998",   .data = (void *)PMI8998_SUBTYPE },
+	{ .compatible = "qcom,pm8005",    .data = (void *)PM8005_SUBTYPE },
 	{ }
 };
 
@@ -118,26 +115,36 @@ static const struct regmap_config spmi_regmap_config = {
 	.fast_io	= true,
 };
 
+static const struct regmap_config spmi_regmap_can_sleep_config = {
+	.reg_bits	= 16,
+	.val_bits	= 8,
+	.max_register	= 0xffff,
+	.fast_io	= false,
+};
+
 static int pmic_spmi_probe(struct spmi_device *sdev)
 {
 	struct device_node *root = sdev->dev.of_node;
 	struct regmap *regmap;
 
-	regmap = devm_regmap_init_spmi_ext(sdev, &spmi_regmap_config);
+	if (of_property_read_bool(root, "qcom,can-sleep"))
+		regmap = devm_regmap_init_spmi_ext(sdev,
+						&spmi_regmap_can_sleep_config);
+	else
+		regmap = devm_regmap_init_spmi_ext(sdev, &spmi_regmap_config);
 	if (IS_ERR(regmap))
 		return PTR_ERR(regmap);
 
-	pmic_spmi_show_revid(regmap, &sdev->dev);
+	/* Only the first slave id for a PMIC contains this information */
+	if (sdev->usid % 2 == 0)
+		pmic_spmi_show_revid(regmap, &sdev->dev);
 
-	return of_platform_populate(root, NULL, NULL, &sdev->dev);
-}
-
-static void pmic_spmi_remove(struct spmi_device *sdev)
-{
-	of_platform_depopulate(&sdev->dev);
+	return devm_of_platform_populate(&sdev->dev);
 }
 
 MODULE_DEVICE_TABLE(of, pmic_spmi_id_table);
+
+static void pmic_spmi_remove(struct spmi_device *sdev) {}
 
 static struct spmi_driver pmic_spmi_driver = {
 	.probe = pmic_spmi_probe,
@@ -148,7 +155,7 @@ static struct spmi_driver pmic_spmi_driver = {
 	},
 };
 
-int __init pmic_spmi_init(void)
+static int __init pmic_spmi_init(void)
 {
 	return spmi_driver_register(&pmic_spmi_driver);
 }

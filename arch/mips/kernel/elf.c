@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2014 Imagination Technologies
- * Author: Paul Burton <paul.burton@imgtec.com>
+ * Author: Paul Burton <paul.burton@mips.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -87,6 +87,7 @@ int arch_elf_pt_proc(void *_ehdr, void *_phdr, struct file *elf,
 	bool elf32;
 	u32 flags;
 	int ret;
+	loff_t pos;
 
 	elf32 = ehdr->e32.e_ident[EI_CLASS] == ELFCLASS32;
 	flags = elf32 ? ehdr->e32.e_flags : ehdr->e64.e_flags;
@@ -108,21 +109,16 @@ int arch_elf_pt_proc(void *_ehdr, void *_phdr, struct file *elf,
 
 		if (phdr32->p_filesz < sizeof(abiflags))
 			return -EINVAL;
-
-		ret = kernel_read(elf, phdr32->p_offset,
-				  (char *)&abiflags,
-				  sizeof(abiflags));
+		pos = phdr32->p_offset;
 	} else {
 		if (phdr64->p_type != PT_MIPS_ABIFLAGS)
 			return 0;
 		if (phdr64->p_filesz < sizeof(abiflags))
 			return -EINVAL;
-
-		ret = kernel_read(elf, phdr64->p_offset,
-				  (char *)&abiflags,
-				  sizeof(abiflags));
+		pos = phdr64->p_offset;
 	}
 
+	ret = kernel_read(elf, &abiflags, sizeof(abiflags), &pos);
 	if (ret < 0)
 		return ret;
 	if (ret != sizeof(abiflags))
@@ -182,7 +178,7 @@ int arch_check_elf(void *_ehdr, bool has_interpreter, void *_interp_ehdr,
 			return -ELIBBAD;
 	}
 
-	if (!config_enabled(CONFIG_MIPS_O32_FP64_SUPPORT))
+	if (!IS_ENABLED(CONFIG_MIPS_O32_FP64_SUPPORT))
 		return 0;
 
 	fp_abi = state->fp_abi;
@@ -288,7 +284,7 @@ void mips_set_personality_fp(struct arch_elf_state *state)
 	 * not be worried about N32/N64 binaries.
 	 */
 
-	if (!config_enabled(CONFIG_MIPS_O32_FP64_SUPPORT))
+	if (!IS_ENABLED(CONFIG_MIPS_O32_FP64_SUPPORT))
 		return;
 
 	switch (state->overall_fp_mode) {
@@ -330,56 +326,8 @@ void mips_set_personality_nan(struct arch_elf_state *state)
 	}
 }
 
-static int noexec = EXSTACK_DEFAULT;
-
-/*
- * kernel parameter: noexec=on|off
- *
- * Force indicating stack and heap as non-executable or
- * executable regardless of PT_GNU_STACK entry or CPU XI
- * (execute inhibit) support. Valid valuess are: on, off.
- *
- * noexec=on:  force indicating non-executable
- *             stack and heap
- * noexec=off: force indicating executable
- *             stack and heap
- *
- * If this parameter is omitted, stack and heap will be
- * indicated non-executable or executable as they are
- * actually set up, which depends on PT_GNU_STACK entry
- * and possibly other factors (for instance, CPU XI
- * support).
- *
- * NOTE: Using noexec=on on a system without CPU XI
- * support is not recommended since there is no actual
- * HW support that provide non-executable stack/heap.
- * Use only for debugging purposes and not in a
- * production environment.
- */
-static int __init noexec_setup(char *str)
-{
-	if (!strcmp(str, "on"))
-		noexec = EXSTACK_DISABLE_X;
-	else if (!strcmp(str, "off"))
-		noexec = EXSTACK_ENABLE_X;
-	else
-		pr_err("Malformed noexec format! noexec=on|off\n");
-
-	return 1;
-}
-__setup("noexec=", noexec_setup);
-
 int mips_elf_read_implies_exec(void *elf_ex, int exstack)
 {
-	switch (noexec) {
-	case EXSTACK_DISABLE_X:
-		return 0;
-	case EXSTACK_ENABLE_X:
-		return 1;
-	default:
-		break;
-	}
-
 	if (exstack != EXSTACK_DISABLE_X) {
 		/* The binary doesn't request a non-executable stack */
 		return 1;

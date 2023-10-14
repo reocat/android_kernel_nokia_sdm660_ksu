@@ -1,16 +1,10 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/module.h>
+#include <linux/platform_device.h>
 #include "mpq_dvb_debug.h"
 #include "mpq_dmx_plugin_common.h"
 
@@ -51,7 +45,7 @@ static int mpq_sw_dmx_stop_filtering(struct dvb_demux_feed *feed)
 {
 	int ret;
 
-	MPQ_DVB_DBG_PRINT("%s(%d) executed\n", __func__, feed->pid);
+	MPQ_DVB_DBG_PRINT("%s: (pid=%d) executed\n", __func__, feed->pid);
 
 	ret = mpq_dmx_terminate_feed(feed);
 	if (ret)
@@ -83,7 +77,7 @@ static int mpq_sw_dmx_write_to_decoder(struct dvb_demux_feed *feed,
 }
 
 static int mpq_sw_dmx_set_source(struct dmx_demux *demux,
-		const dmx_source_t *src)
+		const enum dmx_source_t *src)
 {
 	int ret = -EINVAL;
 
@@ -206,8 +200,6 @@ static int mpq_sw_dmx_init(struct dvb_adapter *mpq_adapter,
 		DMX_CRC_CHECKING			|
 		DMX_TS_DESCRAMBLING;
 
-	mpq_demux->decoder_alloc_flags = ION_FLAG_CACHED;
-
 	/* Set dvb-demux "virtual" function pointers */
 	dvb_demux->priv = (void *)mpq_demux;
 	dvb_demux->filternum = MPQ_MAX_DMX_FILES;
@@ -262,14 +254,53 @@ init_failed:
 	return ret;
 }
 
+
+static int mpq_dmx_sw_plugin_probe(struct platform_device *pdev)
+{
+	return mpq_dmx_plugin_init(mpq_sw_dmx_init, pdev);
+}
+
+static int mpq_dmx_sw_plugin_remove(struct platform_device *pdev)
+{
+	mpq_dmx_plugin_exit();
+	return 0;
+}
+
+
+/*** power management ***/
+static const struct of_device_id msm_match_table[] = {
+	{.compatible = "qcom,demux"},
+	{}
+};
+
+static struct platform_driver mpq_dmx_sw_plugin_driver = {
+	.probe          = mpq_dmx_sw_plugin_probe,
+	.remove         = mpq_dmx_sw_plugin_remove,
+	.driver         = {
+		.name   = "demux",
+		.of_match_table = msm_match_table,
+	},
+};
+
+
 static int __init mpq_dmx_sw_plugin_init(void)
 {
-	return mpq_dmx_plugin_init(mpq_sw_dmx_init);
+	int rc;
+
+	/* register the driver, and check hardware */
+	rc = platform_driver_register(&mpq_dmx_sw_plugin_driver);
+	if (rc)
+		MPQ_DVB_ERR_PRINT(
+		  "%s: platform_driver_register failed: %d\n",
+		  __func__, rc);
+
+	return rc;
 }
 
 static void __exit mpq_dmx_sw_plugin_exit(void)
 {
-	mpq_dmx_plugin_exit();
+	/* delete low level driver */
+	platform_driver_unregister(&mpq_dmx_sw_plugin_driver);
 }
 
 

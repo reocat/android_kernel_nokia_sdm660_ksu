@@ -69,6 +69,17 @@ static void xprt_free_allocation(struct rpc_rqst *req)
 	kfree(req);
 }
 
+static void xprt_bc_reinit_xdr_buf(struct xdr_buf *buf)
+{
+	buf->head[0].iov_len = PAGE_SIZE;
+	buf->tail[0].iov_len = 0;
+	buf->pages = NULL;
+	buf->page_len = 0;
+	buf->flags = 0;
+	buf->len = 0;
+	buf->buflen = PAGE_SIZE;
+}
+
 static int xprt_alloc_xdr_buf(struct xdr_buf *buf, gfp_t gfp_flags)
 {
 	struct page *page;
@@ -76,13 +87,7 @@ static int xprt_alloc_xdr_buf(struct xdr_buf *buf, gfp_t gfp_flags)
 	page = alloc_page(gfp_flags);
 	if (page == NULL)
 		return -ENOMEM;
-	buf->head[0].iov_base = page_address(page);
-	buf->head[0].iov_len = PAGE_SIZE;
-	buf->tail[0].iov_base = NULL;
-	buf->tail[0].iov_len = 0;
-	buf->page_len = 0;
-	buf->len = 0;
-	buf->buflen = PAGE_SIZE;
+	xdr_buf_init(buf, page_address(page), PAGE_SIZE);
 	return 0;
 }
 
@@ -177,10 +182,10 @@ int xprt_setup_bc(struct rpc_xprt *xprt, unsigned int min_reqs)
 	/*
 	 * Add the temporary list to the backchannel preallocation list
 	 */
-	spin_lock_bh(&xprt->bc_pa_lock);
+	spin_lock(&xprt->bc_pa_lock);
 	list_splice(&tmp_list, &xprt->bc_pa_list);
 	xprt_inc_alloc_count(xprt, min_reqs);
-	spin_unlock_bh(&xprt->bc_pa_lock);
+	spin_unlock(&xprt->bc_pa_lock);
 
 	dprintk("RPC:       setup backchannel transport done\n");
 	return 0;
@@ -297,6 +302,9 @@ void xprt_free_bc_rqst(struct rpc_rqst *req)
 	 */
 	spin_lock_bh(&xprt->bc_pa_lock);
 	if (xprt_need_to_requeue(xprt)) {
+		xprt_bc_reinit_xdr_buf(&req->rq_snd_buf);
+		xprt_bc_reinit_xdr_buf(&req->rq_rcv_buf);
+		req->rq_rcv_buf.len = PAGE_SIZE;
 		list_add_tail(&req->rq_bc_pa_list, &xprt->bc_pa_list);
 		xprt->bc_alloc_count++;
 		req = NULL;
@@ -368,4 +376,3 @@ void xprt_complete_bc_request(struct rpc_rqst *req, uint32_t copied)
 	wake_up(&bc_serv->sv_cb_waitq);
 	spin_unlock(&bc_serv->sv_cb_lock);
 }
-

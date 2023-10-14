@@ -1,13 +1,6 @@
-/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
@@ -21,8 +14,9 @@
 #include "sde_rotator_base.h"
 #include "sde_rotator_core.h"
 #include "sde_rotator_dev.h"
+#include "sde_rotator_trace.h"
 
-#ifdef CONFIG_MSM_SDE_ROTATOR_EVTLOG_DEBUG
+#ifdef CONFIG_SDE_ROTATOR_EVTLOG_DEBUG
 #define SDE_EVTLOG_DEFAULT_ENABLE 1
 #else
 #define SDE_EVTLOG_DEFAULT_ENABLE 0
@@ -30,6 +24,7 @@
 #define SDE_EVTLOG_DEFAULT_PANIC 1
 #define SDE_EVTLOG_DEFAULT_REGDUMP SDE_ROT_DBG_DUMP_IN_MEM
 #define SDE_EVTLOG_DEFAULT_VBIF_DBGBUSDUMP SDE_ROT_DBG_DUMP_IN_MEM
+#define SDE_EVTLOG_DEFAULT_ROT_DBGBUSDUMP SDE_ROT_DBG_DUMP_IN_MEM
 
 /*
  * evtlog will print this number of entries when it is called through
@@ -52,6 +47,8 @@
 #define SDE_ROT_DEFAULT_BASE_REG_CNT 0x100
 #define GROUP_BYTES 4
 #define ROW_BYTES 16
+
+#define SDE_ROT_TEST_MASK(id, tp)	((id << 4) | (tp << 1) | BIT(0))
 
 static DEFINE_SPINLOCK(sde_rot_xlock);
 
@@ -86,11 +83,14 @@ struct tlog {
  * @panic_on_err - boolean indicates issue panic after EVTLOG dump
  * @enable_reg_dump - control in-log/memory dump for rotator registers
  * @enable_vbif_dbgbus_dump - control in-log/memory dump for VBIF debug bus
+ * @enable_rot_dbgbus_dump - control in-log/memroy dump for rotator debug bus
  * @evtlog_dump_work - schedule work strucutre for timeout handler
  * @work_dump_reg - storage for register dump control in schedule work
  * @work_panic - storage for panic control in schedule work
  * @work_vbif_dbgbus - storage for VBIF debug bus control in schedule work
+ * @work_rot_dbgbus - storage for rotator debug bus control in schedule work
  * @nrt_vbif_dbgbus_dump - memory buffer for VBIF debug bus dumping
+ * @rot_dbgbus_dump - memory buffer for rotator debug bus dumping
  * @reg_dump_array - memory buffer for rotator registers dumping
  */
 struct sde_rot_dbg_evtlog {
@@ -103,13 +103,87 @@ struct sde_rot_dbg_evtlog {
 	u32 panic_on_err;
 	u32 enable_reg_dump;
 	u32 enable_vbif_dbgbus_dump;
+	u32 enable_rot_dbgbus_dump;
 	struct work_struct evtlog_dump_work;
 	bool work_dump_reg;
 	bool work_panic;
 	bool work_vbif_dbgbus;
+	bool work_rot_dbgbus;
 	u32 *nrt_vbif_dbgbus_dump; /* address for the nrt vbif debug bus dump */
+	u32 *rot_dbgbus_dump;
 	u32 *reg_dump_array[SDE_ROT_DEBUG_BASE_MAX];
 } sde_rot_dbg_evtlog;
+
+static void sde_rot_dump_debug_bus(u32 bus_dump_flag, u32 **dump_mem)
+{
+	struct sde_rot_data_type *mdata = sde_rot_get_mdata();
+	bool in_log, in_mem;
+	u32 *dump_addr = NULL;
+	u32 status = 0;
+	struct sde_rot_debug_bus *head;
+	phys_addr_t phys = 0;
+	int i;
+	u32 offset;
+	void __iomem *base;
+
+	in_log = (bus_dump_flag & SDE_ROT_DBG_DUMP_IN_LOG);
+	in_mem = (bus_dump_flag & SDE_ROT_DBG_DUMP_IN_MEM);
+	base = mdata->sde_io.base;
+
+	if (!base || !mdata->rot_dbg_bus || !mdata->rot_dbg_bus_size)
+		return;
+
+	pr_info("======== SDE Rotator Debug bus DUMP =========\n");
+
+	if (in_mem) {
+		if (!(*dump_mem))
+			*dump_mem = dma_alloc_coherent(&mdata->pdev->dev,
+				mdata->rot_dbg_bus_size * 4 * sizeof(u32),
+				&phys, GFP_KERNEL);
+
+		if (*dump_mem) {
+			dump_addr = *dump_mem;
+			pr_info("%s: start_addr:0x%pK end_addr:0x%pK\n",
+				__func__, dump_addr,
+				dump_addr + (u32)mdata->rot_dbg_bus_size * 16);
+		} else {
+			in_mem = false;
+			pr_err("dump_mem: allocation fails\n");
+		}
+	}
+
+	sde_smmu_ctrl(1);
+
+	for (i = 0; i < mdata->rot_dbg_bus_size; i++) {
+		head = mdata->rot_dbg_bus + i;
+		writel_relaxed(SDE_ROT_TEST_MASK(head->block_id, head->test_id),
+				base + head->wr_addr);
+		wmb(); /* make sure test bits were written */
+
+		offset = head->wr_addr + 0x4;
+
+		status = readl_relaxed(base + offset);
+
+		if (in_log)
+			pr_err("waddr=0x%x blk=%d tst=%d val=0x%x\n",
+				head->wr_addr, head->block_id, head->test_id,
+				status);
+
+		if (dump_addr && in_mem) {
+			dump_addr[i*4]     = head->wr_addr;
+			dump_addr[i*4 + 1] = head->block_id;
+			dump_addr[i*4 + 2] = head->test_id;
+			dump_addr[i*4 + 3] = status;
+		}
+
+		/* Disable debug bus once we are done */
+		writel_relaxed(0, base + head->wr_addr);
+	}
+
+	sde_smmu_ctrl(0);
+
+	pr_info("========End Debug bus=========\n");
+}
 
 /*
  * sde_rot_evtlog_is_enabled - helper function for checking EVTLOG
@@ -341,7 +415,12 @@ static void sde_rot_dump_reg_all(void)
 		head = &regdump[i];
 
 		if (head->access == SDE_ROT_REGDUMP_WRITE) {
-			writel_relaxed(1, mdata->sde_io.base + head->offset);
+			if (head->len != 1) {
+				SDEROT_ERR("invalid write len %u\n", head->len);
+				continue;
+			}
+			writel_relaxed(head->value,
+					mdata->sde_io.base + head->offset);
 			/* Make sure write go through */
 			wmb();
 		} else {
@@ -416,7 +495,7 @@ static ssize_t sde_rot_evtlog_dump_entry(char *evtlog_buf,
 	prev_log = &sde_rot_dbg_evtlog.logs[(sde_rot_dbg_evtlog.first - 1) %
 		SDE_ROT_EVTLOG_ENTRY];
 
-	off = snprintf((evtlog_buf + off), (evtlog_buf_size - off), "%s:%-4d",
+	off = scnprintf((evtlog_buf + off), (evtlog_buf_size - off), "%s:%-4d",
 		log->name, log->line);
 
 	if (off < SDE_ROT_EVTLOG_BUF_ALIGN) {
@@ -425,15 +504,15 @@ static ssize_t sde_rot_evtlog_dump_entry(char *evtlog_buf,
 		off = SDE_ROT_EVTLOG_BUF_ALIGN;
 	}
 
-	off += snprintf((evtlog_buf + off), (evtlog_buf_size - off),
+	off += scnprintf((evtlog_buf + off), (evtlog_buf_size - off),
 		"=>[%-8d:%-11llu:%9llu][%-4d]:", sde_rot_dbg_evtlog.first,
 		log->time, (log->time - prev_log->time), log->pid);
 
 	for (i = 0; i < log->data_cnt; i++)
-		off += snprintf((evtlog_buf + off), (evtlog_buf_size - off),
+		off += scnprintf((evtlog_buf + off), (evtlog_buf_size - off),
 			"%x ", log->data[i]);
 
-	off += snprintf((evtlog_buf + off), (evtlog_buf_size - off), "\n");
+	off += scnprintf((evtlog_buf + off), (evtlog_buf_size - off), "\n");
 
 	spin_unlock_irqrestore(&sde_rot_xlock, flags);
 
@@ -449,7 +528,7 @@ static void sde_rot_evtlog_dump_all(void)
 
 	while (__sde_rot_evtlog_dump_calc_range()) {
 		sde_rot_evtlog_dump_entry(evtlog_buf, SDE_ROT_EVTLOG_BUF_MAX);
-		pr_info("%s", evtlog_buf);
+		pr_info("%s\n", evtlog_buf);
 	}
 }
 
@@ -496,26 +575,6 @@ static ssize_t sde_rot_evtlog_dump_read(struct file *file, char __user *buff,
 }
 
 /*
- * sde_rot_evtlog_dump_write - debugfs write handler for evtlog dump
- * @file: file handler
- * @user_buf: user buffer content from debugfs
- * @count: size of user buffer
- * @ppos: position offset of user buffer
- */
-static ssize_t sde_rot_evtlog_dump_write(struct file *file,
-	const char __user *user_buf, size_t count, loff_t *ppos)
-{
-	sde_rot_evtlog_dump_all();
-
-	sde_rot_dump_reg_all();
-
-	if (sde_rot_dbg_evtlog.panic_on_err)
-		panic("evtlog_dump_write");
-
-	return count;
-}
-
-/*
  * sde_rot_evtlog_dump_helper - helper function for evtlog dump
  * @dead: boolean indicates panic after dump
  * @panic_name: Panic signature name show up in log
@@ -523,17 +582,25 @@ static ssize_t sde_rot_evtlog_dump_write(struct file *file,
  * @dump_vbif_debug_bus: boolean indicates VBIF debug bus dump
  */
 static void sde_rot_evtlog_dump_helper(bool dead, const char *panic_name,
-	bool dump_rot, bool dump_vbif_debug_bus)
+	bool dump_rot, bool dump_vbif_debug_bus, bool dump_rot_debug_bus)
 {
 	sde_rot_evtlog_dump_all();
 
-	if (dump_rot)
-		sde_rot_dump_reg_all();
+	if (dump_rot_debug_bus)
+		sde_rot_dump_debug_bus(
+				sde_rot_dbg_evtlog.enable_rot_dbgbus_dump,
+				&sde_rot_dbg_evtlog.rot_dbgbus_dump);
 
 	if (dump_vbif_debug_bus)
 		sde_rot_dump_vbif_debug_bus(
 				sde_rot_dbg_evtlog.enable_vbif_dbgbus_dump,
 				&sde_rot_dbg_evtlog.nrt_vbif_dbgbus_dump);
+
+	/*
+	 * Rotator registers always dump last
+	 */
+	if (dump_rot)
+		sde_rot_dump_reg_all();
 
 	if (dead)
 		panic(panic_name);
@@ -549,18 +616,8 @@ static void sde_rot_evtlog_debug_work(struct work_struct *work)
 		sde_rot_dbg_evtlog.work_panic,
 		"evtlog_workitem",
 		sde_rot_dbg_evtlog.work_dump_reg,
-		sde_rot_dbg_evtlog.work_vbif_dbgbus);
-}
-
-/*
- * sde_rot_dump_panic - Issue evtlog dump and generic panic
- */
-void sde_rot_dump_panic(void)
-{
-	sde_rot_evtlog_dump_all();
-	sde_rot_dump_reg_all();
-
-	panic("sde_rotator");
+		sde_rot_dbg_evtlog.work_vbif_dbgbus,
+		sde_rot_dbg_evtlog.work_rot_dbgbus);
 }
 
 /*
@@ -574,6 +631,7 @@ void sde_rot_evtlog_tout_handler(bool queue, const char *name, ...)
 	bool dead = false;
 	bool dump_rot = false;
 	bool dump_vbif_dbgbus = false;
+	bool dump_rot_dbgbus = false;
 	char *blk_name = NULL;
 	va_list args;
 
@@ -595,6 +653,9 @@ void sde_rot_evtlog_tout_handler(bool queue, const char *name, ...)
 		if (!strcmp(blk_name, "vbif_dbg_bus"))
 			dump_vbif_dbgbus = true;
 
+		if (!strcmp(blk_name, "rot_dbg_bus"))
+			dump_rot_dbgbus = true;
+
 		if (!strcmp(blk_name, "panic"))
 			dead = true;
 	}
@@ -605,10 +666,11 @@ void sde_rot_evtlog_tout_handler(bool queue, const char *name, ...)
 		sde_rot_dbg_evtlog.work_panic = dead;
 		sde_rot_dbg_evtlog.work_dump_reg = dump_rot;
 		sde_rot_dbg_evtlog.work_vbif_dbgbus = dump_vbif_dbgbus;
+		sde_rot_dbg_evtlog.work_rot_dbgbus = dump_rot_dbgbus;
 		schedule_work(&sde_rot_dbg_evtlog.evtlog_dump_work);
 	} else {
 		sde_rot_evtlog_dump_helper(dead, name, dump_rot,
-			dump_vbif_dbgbus);
+			dump_vbif_dbgbus, dump_rot_dbgbus);
 	}
 }
 
@@ -650,6 +712,8 @@ void sde_rot_evtlog(const char *name, int line, int flag, ...)
 	sde_rot_dbg_evtlog.curr =
 		(sde_rot_dbg_evtlog.curr + 1) % SDE_ROT_EVTLOG_ENTRY;
 	sde_rot_dbg_evtlog.last++;
+
+	trace_sde_rot_evtlog(name, line, log->data_cnt, log->data);
 
 	spin_unlock_irqrestore(&sde_rot_xlock, flags);
 }
@@ -700,7 +764,7 @@ static int sde_rotator_stat_show(struct seq_file *s, void *data)
 					start_time));
 
 		seq_printf(s,
-			"s:%d sq:%lld dq:%lld fe:%lld q:%lld c:%lld fl:%lld d:%lld sdq:%lld ddq:%lld t:%lld oht:%lld\n",
+			"s:%d sq:%lld dq:%lld fe:%lld q:%lld c:%lld st:%lld fl:%lld d:%lld sdq:%lld ddq:%lld t:%lld oht:%lld\n",
 			i,
 			ktime_to_us(ktime_sub(ts[SDE_ROTATOR_TS_FENCE],
 					ts[SDE_ROTATOR_TS_SRCQB])),
@@ -710,8 +774,10 @@ static int sde_rotator_stat_show(struct seq_file *s, void *data)
 					ts[SDE_ROTATOR_TS_FENCE])),
 			ktime_to_us(ktime_sub(ts[SDE_ROTATOR_TS_COMMIT],
 					ts[SDE_ROTATOR_TS_QUEUE])),
-			ktime_to_us(ktime_sub(ts[SDE_ROTATOR_TS_FLUSH],
+			ktime_to_us(ktime_sub(ts[SDE_ROTATOR_TS_START],
 					ts[SDE_ROTATOR_TS_COMMIT])),
+			ktime_to_us(ktime_sub(ts[SDE_ROTATOR_TS_FLUSH],
+					ts[SDE_ROTATOR_TS_START])),
 			ktime_to_us(ktime_sub(ts[SDE_ROTATOR_TS_DONE],
 					ts[SDE_ROTATOR_TS_FLUSH])),
 			ktime_to_us(ktime_sub(ts[SDE_ROTATOR_TS_RETIRE],
@@ -835,9 +901,16 @@ static int sde_rotator_base_create_debugfs(
 		struct sde_rot_data_type *mdata,
 		struct dentry *debugfs_root)
 {
-	if (!debugfs_create_u32("iommu_ref_cnt", S_IRUGO,
+	if (!debugfs_create_u32("iommu_ref_cnt", 0444,
 			debugfs_root, &mdata->iommu_ref_cnt)) {
 		SDEROT_WARN("failed to create debugfs iommu ref cnt\n");
+		return -EINVAL;
+	}
+
+	mdata->clk_always_on = false;
+	if (!debugfs_create_bool("clk_always_on", 0644,
+			debugfs_root, &mdata->clk_always_on)) {
+		SDEROT_WARN("failed to create debugfs clk_always_on\n");
 		return -EINVAL;
 	}
 
@@ -855,21 +928,27 @@ static int sde_rotator_core_create_debugfs(
 {
 	int ret;
 
-	if (!debugfs_create_u32("hwacquire_timeout", S_IRUGO | S_IWUSR,
+	if (!debugfs_create_u32("hwacquire_timeout", 0644,
 			debugfs_root, &mgr->hwacquire_timeout)) {
 		SDEROT_WARN("failed to create debugfs hw acquire timeout\n");
 		return -EINVAL;
 	}
 
-	if (!debugfs_create_u32("ppc_numer", S_IRUGO | S_IWUSR,
+	if (!debugfs_create_u32("ppc_numer", 0644,
 			debugfs_root, &mgr->pixel_per_clk.numer)) {
 		SDEROT_WARN("failed to create debugfs ppc numerator\n");
 		return -EINVAL;
 	}
 
-	if (!debugfs_create_u32("ppc_denom", S_IRUGO | S_IWUSR,
+	if (!debugfs_create_u32("ppc_denom", 0644,
 			debugfs_root, &mgr->pixel_per_clk.denom)) {
 		SDEROT_WARN("failed to create debugfs ppc denominator\n");
+		return -EINVAL;
+	}
+
+	if (!debugfs_create_u64("enable_bw_vote", 0644,
+			debugfs_root, &mgr->enable_bw_vote)) {
+		SDEROT_WARN("failed to create enable_bw_vote\n");
 		return -EINVAL;
 	}
 
@@ -884,7 +963,6 @@ static int sde_rotator_core_create_debugfs(
 static const struct file_operations sde_rot_evtlog_fops = {
 	.open = sde_rot_evtlog_dump_open,
 	.read = sde_rot_evtlog_dump_read,
-	.write = sde_rot_evtlog_dump_write,
 };
 
 static int sde_rotator_evtlog_create_debugfs(
@@ -918,12 +996,16 @@ static int sde_rotator_evtlog_create_debugfs(
 			    &sde_rot_dbg_evtlog.enable_reg_dump);
 	debugfs_create_u32("vbif_dbgbus_dump", 0644, sde_rot_dbg_evtlog.evtlog,
 			    &sde_rot_dbg_evtlog.enable_vbif_dbgbus_dump);
+	debugfs_create_u32("rot_dbgbus_dump", 0644, sde_rot_dbg_evtlog.evtlog,
+			    &sde_rot_dbg_evtlog.enable_rot_dbgbus_dump);
 
 	sde_rot_dbg_evtlog.evtlog_enable = SDE_EVTLOG_DEFAULT_ENABLE;
 	sde_rot_dbg_evtlog.panic_on_err = SDE_EVTLOG_DEFAULT_PANIC;
 	sde_rot_dbg_evtlog.enable_reg_dump = SDE_EVTLOG_DEFAULT_REGDUMP;
 	sde_rot_dbg_evtlog.enable_vbif_dbgbus_dump =
 		SDE_EVTLOG_DEFAULT_VBIF_DBGBUSDUMP;
+	sde_rot_dbg_evtlog.enable_rot_dbgbus_dump =
+		SDE_EVTLOG_DEFAULT_ROT_DBGBUSDUMP;
 
 	pr_info("evtlog_status: enable:%d, panic:%d, dump:%d\n",
 			sde_rot_dbg_evtlog.evtlog_enable,
@@ -947,15 +1029,15 @@ static int sde_rotator_perf_create_debugfs(
 	}
 
 	rot_dev->min_rot_clk = 0;
-	debugfs_create_u32("min_rot_clk", S_IRUGO | S_IWUSR,
+	debugfs_create_u32("min_rot_clk", 0644,
 			rot_dev->perf_root, &rot_dev->min_rot_clk);
 
 	rot_dev->min_bw = 0;
-	debugfs_create_u32("min_bw", S_IRUGO | S_IWUSR,
+	debugfs_create_u32("min_bw", 0644,
 			rot_dev->perf_root, &rot_dev->min_bw);
 
 	rot_dev->min_overhead_us = 0;
-	debugfs_create_u32("min_overhead_us", S_IRUGO | S_IWUSR,
+	debugfs_create_u32("min_overhead_us", 0644,
 			rot_dev->perf_root, &rot_dev->min_overhead_us);
 
 	return 0;
@@ -1061,7 +1143,7 @@ static ssize_t sde_rotator_debug_base_offset_read(struct file *file,
 		return 0;	/* the end */
 
 	mutex_lock(&dbg->buflock);
-	len = snprintf(buf, sizeof(buf), "0x%08zx %zx\n", dbg->off, dbg->cnt);
+	len = scnprintf(buf, sizeof(buf), "0x%08zx %zx\n", dbg->off, dbg->cnt);
 	mutex_unlock(&dbg->buflock);
 
 	if (len < 0 || len >= sizeof(buf))
@@ -1108,18 +1190,29 @@ static ssize_t sde_rotator_debug_base_reg_write(struct file *file,
 	mutex_lock(&dbg->buflock);
 
 	/* Enable Clock for register access */
+	sde_rot_mgr_lock(dbg->mgr);
+	if (!sde_rotator_resource_ctrl_enabled(dbg->mgr)) {
+		SDEROT_WARN("resource ctrl is not enabled\n");
+		sde_rot_mgr_unlock(dbg->mgr);
+		goto debug_write_error;
+	}
 	sde_rotator_clk_ctrl(dbg->mgr, true);
 
 	writel_relaxed(data, dbg->base + off);
 
 	/* Disable Clock after register access */
 	sde_rotator_clk_ctrl(dbg->mgr, false);
+	sde_rot_mgr_unlock(dbg->mgr);
 
 	mutex_unlock(&dbg->buflock);
 
 	SDEROT_DBG("addr=%zx data=%x\n", off, data);
 
 	return count;
+
+debug_write_error:
+	mutex_unlock(&dbg->buflock);
+	return 0;
 }
 
 static ssize_t sde_rotator_debug_base_reg_read(struct file *file,
@@ -1159,6 +1252,12 @@ static ssize_t sde_rotator_debug_base_reg_read(struct file *file,
 		tot = 0;
 
 		/* Enable clock for register access */
+		sde_rot_mgr_lock(dbg->mgr);
+		if (!sde_rotator_resource_ctrl_enabled(dbg->mgr)) {
+			SDEROT_WARN("resource ctrl is not enabled\n");
+			sde_rot_mgr_unlock(dbg->mgr);
+			goto debug_read_error;
+		}
 		sde_rotator_clk_ctrl(dbg->mgr, true);
 
 		for (cnt = dbg->cnt; cnt > 0; cnt -= ROW_BYTES) {
@@ -1178,6 +1277,7 @@ static ssize_t sde_rotator_debug_base_reg_read(struct file *file,
 		}
 		/* Disable clock after register access */
 		sde_rotator_clk_ctrl(dbg->mgr, false);
+		sde_rot_mgr_unlock(dbg->mgr);
 
 		dbg->buf_len = tot;
 	}
@@ -1247,7 +1347,7 @@ int sde_rotator_debug_register_base(struct sde_rotator_device *rot_dev,
 
 	if (name) {
 		if (strcmp(name, "sde"))
-			prefix_len = snprintf(dbgname, sizeof(dbgname), "%s_",
+			prefix_len = scnprintf(dbgname, sizeof(dbgname), "%s_",
 					name);
 		else
 			/*
@@ -1307,35 +1407,49 @@ struct dentry *sde_rotator_create_debugfs(
 		return NULL;
 	}
 
-	if (!debugfs_create_file("stats", S_IRUGO | S_IWUSR,
+	if (!debugfs_create_file("stats", 0644,
 		debugfs_root, rot_dev, &sde_rotator_stat_ops)) {
 		SDEROT_ERR("fail create debugfs stats\n");
 		debugfs_remove_recursive(debugfs_root);
 		return NULL;
 	}
 
-	if (!debugfs_create_file("raw", S_IRUGO | S_IWUSR,
+	if (!debugfs_create_file("raw", 0644,
 		debugfs_root, rot_dev, &sde_rotator_raw_ops)) {
 		SDEROT_ERR("fail create debugfs raw\n");
 		debugfs_remove_recursive(debugfs_root);
 		return NULL;
 	}
 
-	if (!debugfs_create_u32("fence_timeout", S_IRUGO | S_IWUSR,
+	if (!debugfs_create_u32("fence_timeout", 0644,
 			debugfs_root, &rot_dev->fence_timeout)) {
 		SDEROT_ERR("fail create fence_timeout\n");
 		debugfs_remove_recursive(debugfs_root);
 		return NULL;
 	}
 
-	if (!debugfs_create_u32("streamoff_timeout", S_IRUGO | S_IWUSR,
+	if (!debugfs_create_u32("open_timeout", 0644,
+			debugfs_root, &rot_dev->open_timeout)) {
+		SDEROT_ERR("fail create open_timeout\n");
+		debugfs_remove_recursive(debugfs_root);
+		return NULL;
+	}
+
+	if (!debugfs_create_u32("disable_syscache", 0644,
+			debugfs_root, &rot_dev->disable_syscache)) {
+		SDEROT_ERR("fail create disable_syscache\n");
+		debugfs_remove_recursive(debugfs_root);
+		return NULL;
+	}
+
+	if (!debugfs_create_u32("streamoff_timeout", 0644,
 			debugfs_root, &rot_dev->streamoff_timeout)) {
 		SDEROT_ERR("fail create streamoff_timeout\n");
 		debugfs_remove_recursive(debugfs_root);
 		return NULL;
 	}
 
-	if (!debugfs_create_u32("early_submit", S_IRUGO | S_IWUSR,
+	if (!debugfs_create_u32("early_submit", 0644,
 			debugfs_root, &rot_dev->early_submit)) {
 		SDEROT_ERR("fail create early_submit\n");
 		debugfs_remove_recursive(debugfs_root);

@@ -1,14 +1,5 @@
-/* Copyright (c) 2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2018-2020, The Linux Foundation. All rights reserved. */
 
 #include <net/genetlink.h>
 #include <net/cnss_nl.h>
@@ -66,6 +57,8 @@ static const struct nla_policy cld80211_policy[CLD80211_ATTR_MAX + 1] = {
 				 .len = CLD80211_MAX_NL_DATA },
 	[CLD80211_ATTR_META_DATA] = { .type = NLA_BINARY,
 				 .len = CLD80211_MAX_NL_DATA },
+	[CLD80211_ATTR_CMD] = { .type = NLA_U32 },
+	[CLD80211_ATTR_CMD_TAG_DATA] = { .type = NLA_NESTED },
 };
 
 static int cld80211_pre_doit(const struct genl_ops *ops, struct sk_buff *skb,
@@ -85,8 +78,7 @@ static int cld80211_pre_doit(const struct genl_ops *ops, struct sk_buff *skb,
 }
 
 /* The netlink family */
-static struct genl_family cld80211_fam = {
-	.id = GENL_ID_GENERATE,
+static struct genl_family cld80211_fam __ro_after_init = {
 	.name = CLD80211_GENL_NAME,
 	.hdrsize = 0,			/* no private header */
 	.version = 1,			/* no particular meaning now */
@@ -94,6 +86,11 @@ static struct genl_family cld80211_fam = {
 	.netnsok = true,
 	.pre_doit = cld80211_pre_doit,
 	.post_doit = NULL,
+	.module = THIS_MODULE,
+	.ops = nl_ops,
+	.n_ops = ARRAY_SIZE(nl_ops),
+	.mcgrps = nl_mcgrps,
+	.n_mcgrps = ARRAY_SIZE(nl_mcgrps),
 };
 
 int register_cld_cmd_cb(u8 cmd_id, cld80211_cb func, void *cb_ctx)
@@ -174,8 +171,7 @@ static int __cld80211_init(void)
 		nl_ops[i].policy = cld80211_policy;
 	}
 
-	err = genl_register_family_with_ops_groups(&cld80211_fam, nl_ops,
-						   nl_mcgrps);
+	err = genl_register_family(&cld80211_fam);
 	if (err) {
 		pr_err("CLD80211: Failed to register cld80211 family: %d\n",
 		       err);

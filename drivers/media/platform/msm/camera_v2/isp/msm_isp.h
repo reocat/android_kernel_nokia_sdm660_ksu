@@ -1,4 +1,5 @@
-/* Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,9 +20,6 @@
 #include <linux/io.h>
 #include <linux/list.h>
 #include <linux/delay.h>
-#ifdef CONFIG_MSM_AVTIMER
-#include <linux/avtimer_kernel.h>
-#endif
 #include <media/v4l2-subdev.h>
 #include <media/msmb_isp.h>
 #include <linux/msm-bus.h>
@@ -87,7 +85,8 @@ enum msm_isp_irq_operation {
 };
 
 /* This struct is used to save/track SOF info for some INTF.
- * e.g. used in Master-Slave mode */
+ * e.g. used in Master-Slave mode
+ */
 struct msm_vfe_sof_info {
 	uint32_t timestamp_ms;
 	uint32_t mono_timestamp_ms;
@@ -133,6 +132,8 @@ struct msm_isp_timestamp {
 	struct timeval vt_time;
 	/*Wall clock for userspace event*/
 	struct timeval event_time;
+	/* event time in nanosec*/
+	uint64_t buf_time_ns;
 };
 
 struct msm_vfe_irq_ops {
@@ -155,10 +156,12 @@ struct msm_vfe_irq_ops {
 		struct msm_isp_timestamp *ts);
 	void (*process_axi_irq)(struct vfe_device *vfe_dev,
 		uint32_t irq_status0, uint32_t irq_status1,
+		uint32_t dual_irq_status,
 		uint32_t pingpong_status,
 		struct msm_isp_timestamp *ts);
 	void (*process_stats_irq)(struct vfe_device *vfe_dev,
 		uint32_t irq_status0, uint32_t irq_status1,
+		uint32_t dual_irq_status,
 		uint32_t pingpong_status,
 		struct msm_isp_timestamp *ts);
 	void (*config_irq)(struct vfe_device *vfe_dev,
@@ -166,6 +169,11 @@ struct msm_vfe_irq_ops {
 		enum msm_isp_irq_operation);
 	void (*preprocess_camif_irq)(struct vfe_device *vfe_dev,
 		uint32_t irq_status0);
+	void (*dual_config_irq)(struct vfe_device *vfe_dev,
+		uint32_t irq_status0, uint32_t irq_status1,
+		enum msm_isp_irq_operation);
+	void (*clear_dual_irq_status)(struct vfe_device *vfe_dev,
+		uint32_t *dual_irq_status0);
 };
 
 struct msm_vfe_axi_ops {
@@ -337,6 +345,9 @@ struct msm_vfe_platform_ops {
 		struct msm_isp_bandwidth_mgr *isp_bandwidth_mgr);
 	int (*update_bw)(struct msm_isp_bandwidth_mgr *isp_bandwidth_mgr);
 	void (*deinit_bw_mgr)(struct msm_isp_bandwidth_mgr *isp_bandwidth_mgr);
+	void (*set_dual_vfe_mode)(struct vfe_device *vfe_dev);
+	void (*clear_dual_vfe_mode)(struct vfe_device *vfe_dev);
+	int (*get_dual_sync_platform_data)(struct vfe_device *vfe_dev);
 };
 
 struct msm_vfe_ops {
@@ -606,6 +617,7 @@ struct msm_vfe_tasklet_queue_cmd {
 	uint32_t vfeInterruptStatus0;
 	uint32_t vfeInterruptStatus1;
 	uint32_t vfe_pingpong_status;
+	uint32_t dualvfeInterruptstatus;
 	struct msm_isp_timestamp ts;
 	uint8_t cmd_used;
 	struct vfe_device *vfe_dev;
@@ -834,6 +846,8 @@ struct vfe_device {
 	uint32_t dual_vfe_enable;
 	unsigned long page_fault_addr;
 	uint32_t vfe_hw_limit;
+	uint32_t dual_vfe_sync_mode;
+	uint32_t dual_vfe_sync_enable;
 
 	/* Debug variables */
 	int dump_reg;
@@ -841,10 +855,10 @@ struct vfe_device {
 	uint64_t msm_isp_last_overflow_ab;
 	uint64_t msm_isp_last_overflow_ib;
 	struct msm_isp_ub_info *ub_info;
-	uint32_t isp_sof_debug;
-	uint32_t isp_raw0_debug;
-	uint32_t isp_raw1_debug;
-	uint32_t isp_raw2_debug;
+	int32_t isp_sof_debug;
+	int32_t isp_raw0_debug;
+	int32_t isp_raw1_debug;
+	int32_t isp_raw2_debug;
 
 	/* irq info */
 	uint32_t irq0_mask;
@@ -855,8 +869,17 @@ struct vfe_device {
 	/* total bandwidth per vfe */
 	uint64_t total_bandwidth;
 	struct isp_kstate *isp_page;
+
+	/* Dual VFE IRQ CAMSS Info*/
+	void __iomem *camss_base;
+	struct resource *dual_vfe_irq;
+	bool dual_isp_sync_irq_enabled;
 	/* irq info */
+	uint32_t dual_irq_mask;
 	uint32_t irq_sof_id;
+
+	/* nano sec timestamp */
+	uint32_t nanosec_ts_enable;
 };
 
 struct vfe_parent_device {
@@ -866,8 +889,6 @@ struct vfe_parent_device {
 	struct platform_device *child_list[VFE_SD_HW_MAX];
 	struct msm_vfe_common_subdev *common_sd;
 };
-
 int vfe_hw_probe(struct platform_device *pdev);
 void msm_isp_update_last_overflow_ab_ib(struct vfe_device *vfe_dev);
-
 #endif

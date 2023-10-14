@@ -1,29 +1,23 @@
-/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2013-2021, The Linux Foundation. All rights reserved. */
 
 #ifndef __MDSS_PLL_H
 #define __MDSS_PLL_H
 
-#include <linux/mdss_io_util.h>
 #include <linux/clk-provider.h>
 #include <linux/io.h>
 #include <linux/clk.h>
 #include <linux/clkdev.h>
 #include <linux/regmap.h>
-
 #include "../clk-regmap.h"
 #include "../clk-regmap-divider.h"
 #include "../clk-regmap-mux.h"
-#include <dt-bindings/clock/mdss-pll-clk.h>
+
+#if defined(CONFIG_DRM)
+#include <linux/sde_io_util.h>
+#else
+#include <linux/mdss_io_util.h>
+#endif
 
 #define MDSS_PLL_REG_W(base, offset, data)	\
 				writel_relaxed((data), (base) + (offset))
@@ -37,31 +31,40 @@
 		writel_relaxed(PLL_CALC_DATA(addr0, addr1, data0, data1), \
 			(base) + (offset))
 
+#define upper_8_bit(x) ((((x) >> 2) & 0x100) >> 8)
+
 enum {
-	MDSS_DSI_PLL_8996,
-	MDSS_DSI_PLL_8998,
-	MDSS_DP_PLL_8998,
-	MDSS_DP_PLL_SDM660,
-	MDSS_DP_PLL_SDM630,
-	MDSS_HDMI_PLL_8996,
-	MDSS_HDMI_PLL_8996_V2,
-	MDSS_HDMI_PLL_8996_V3,
-	MDSS_HDMI_PLL_8996_V3_1_8,
-	MDSS_HDMI_PLL_8998,
+	MDSS_DSI_PLL_10NM,
+	MDSS_DP_PLL_10NM,
+	MDSS_DSI_PLL_7NM,
+	MDSS_DSI_PLL_7NM_V2,
+	MDSS_DP_PLL_7NM,
+	MDSS_DSI_PLL_28LPM,
+	MDSS_DSI_PLL_14NM,
+	MDSS_DP_PLL_14NM,
+	MDSS_HDMI_PLL_28LPM,
+	MDSS_DSI_PLL_12NM,
 	MDSS_UNKNOWN_PLL,
 };
 
 enum {
 	MDSS_PLL_TARGET_8996,
 	MDSS_PLL_TARGET_SDM660,
-	MDSS_PLL_TARGET_SDM630,
 };
 
 #define DFPS_MAX_NUM_OF_FRAME_RATES 16
+#ifdef CONFIG_FB_MSM_MDSS
+#define PLL_TRIM_CODES_SIZE 2
+#else
+#define PLL_TRIM_CODES_SIZE 3
+#endif
 
 struct dfps_pll_codes {
 	uint32_t pll_codes_1;
 	uint32_t pll_codes_2;
+#ifndef CONFIG_FB_MSM_MDSS
+	uint32_t pll_codes_3;
+#endif
 };
 
 struct dfps_codes_info {
@@ -86,6 +89,8 @@ struct mdss_pll_resources {
 	 */
 	void __iomem	*pll_base;
 	void __iomem	*phy_base;
+	void __iomem	*ln_tx0_base;
+	void __iomem	*ln_tx1_base;
 	void __iomem	*gdsc_base;
 	void __iomem	*dyn_pll_base;
 
@@ -99,6 +104,13 @@ struct mdss_pll_resources {
 	 * suspend/resume scenario. Cached the vco rate for such plls.
 	 */
 	unsigned long	vco_cached_rate;
+	u32		cached_cfg0;
+	u32		cached_cfg1;
+	u32		cached_outdiv;
+
+	u32		cached_postdiv1;
+	u32		cached_postdiv3;
+	u32		cached_vreg_cfg;
 
 	/* dsi/edp/hmdi pll interface type */
 	u32		pll_interface_type;
@@ -134,11 +146,12 @@ struct mdss_pll_resources {
 	 * feature is disabled.
 	 */
 	bool		handoff_resources;
+	bool		cont_splash_enabled;
 
 	/*
 	 * caching the pll trim codes in the case of dynamic refresh
 	 */
-	int		cache_pll_trim_codes[2];
+	int		cache_pll_trim_codes[PLL_TRIM_CODES_SIZE];
 
 	/*
 	 * for maintaining the status of saving trim codes
@@ -180,6 +193,11 @@ struct mdss_pll_resources {
 	 */
 	struct dfps_info *dfps;
 
+	/*
+	 * for cases where dfps trigger happens before first
+	 * suspend/resume and handoff is not finished.
+	 */
+	bool dfps_trigger;
 };
 
 struct mdss_pll_vco_calc {
@@ -195,13 +213,21 @@ struct mdss_pll_vco_calc {
 
 static inline bool is_gdsc_disabled(struct mdss_pll_resources *pll_res)
 {
+	bool ret = false;
+
 	if (!pll_res->gdsc_base) {
 		WARN(1, "gdsc_base register is not defined\n");
 		return true;
 	}
-
-	return ((readl_relaxed(pll_res->gdsc_base + 0x4) & BIT(31)) &&
+	if ((pll_res->target_id == MDSS_PLL_TARGET_SDM660) ||
+			(pll_res->pll_interface_type == MDSS_DSI_PLL_28LPM) ||
+			(pll_res->pll_interface_type == MDSS_DSI_PLL_12NM))
+		ret = ((readl_relaxed(pll_res->gdsc_base + 0x4) & BIT(31)) &&
 		(!(readl_relaxed(pll_res->gdsc_base) & BIT(0)))) ? false : true;
+	else
+		ret = readl_relaxed(pll_res->gdsc_base) & BIT(31) ?
+			false : true;
+	return ret;
 }
 
 static inline int mdss_pll_div_prepare(struct clk_hw *hw)
@@ -209,7 +235,20 @@ static inline int mdss_pll_div_prepare(struct clk_hw *hw)
 	struct clk_hw *parent_hw = clk_hw_get_parent(hw);
 	/* Restore the divider's value */
 	return hw->init->ops->set_rate(hw, clk_hw_get_rate(hw),
-					clk_hw_get_rate(parent_hw));
+				clk_hw_get_rate(parent_hw));
+}
+
+static inline int mdss_set_mux_sel(void *context, unsigned int reg,
+					unsigned int val)
+{
+	return 0;
+}
+
+static inline int mdss_get_mux_sel(void *context, unsigned int reg,
+					unsigned int *val)
+{
+	*val = 0;
+	return 0;
 }
 
 int mdss_pll_resource_enable(struct mdss_pll_resources *pll_res, bool enable);
@@ -222,6 +261,8 @@ void mdss_pll_util_resource_release(struct platform_device *pdev,
 int mdss_pll_util_resource_enable(struct mdss_pll_resources *pll_res,
 								bool enable);
 int mdss_pll_util_resource_parse(struct platform_device *pdev,
+				struct mdss_pll_resources *pll_res);
+void mdss_pll_util_parse_dt_dfps(struct platform_device *pdev,
 				struct mdss_pll_resources *pll_res);
 struct dss_vreg *mdss_pll_get_mp_by_reg_name(struct mdss_pll_resources *pll_res
 		, char *name);

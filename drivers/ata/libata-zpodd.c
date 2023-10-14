@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/libata.h>
 #include <linux/cdrom.h>
 #include <linux/pm_runtime.h>
@@ -188,8 +189,7 @@ void zpodd_enable_run_wake(struct ata_device *dev)
 	sdev_disable_disk_events(dev->sdev);
 
 	zpodd->powered_off = true;
-	device_set_run_wake(&dev->tdev, true);
-	acpi_pm_device_run_wake(&dev->tdev, true);
+	acpi_pm_set_device_wakeup(&dev->tdev, true);
 }
 
 /* Disable runtime wake capability if it is enabled */
@@ -197,10 +197,8 @@ void zpodd_disable_run_wake(struct ata_device *dev)
 {
 	struct zpodd *zpodd = dev->zpodd;
 
-	if (zpodd->powered_off) {
-		acpi_pm_device_run_wake(&dev->tdev, false);
-		device_set_run_wake(&dev->tdev, false);
-	}
+	if (zpodd->powered_off)
+		acpi_pm_set_device_wakeup(&dev->tdev, false);
 }
 
 /*

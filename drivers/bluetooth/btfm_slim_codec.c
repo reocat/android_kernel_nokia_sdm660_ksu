@@ -1,14 +1,8 @@
-/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
+
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -19,23 +13,24 @@
 #include <linux/slimbus/slimbus.h>
 #include <linux/ratelimit.h>
 #include <linux/slab.h>
+#include <linux/errno.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
 #include <sound/soc-dapm.h>
 #include <sound/tlv.h>
-#include <btfm_slim.h>
+#include "btfm_slim.h"
 
 static int bt_soc_enable_status;
+int btfm_feedback_ch_setting;
 
-
-static int btfm_slim_codec_write(struct snd_soc_codec *codec, unsigned int reg,
-	unsigned int value)
+static int btfm_slim_codec_write(struct snd_soc_component *codec,
+			unsigned int reg, unsigned int value)
 {
 	return 0;
 }
 
-static unsigned int btfm_slim_codec_read(struct snd_soc_codec *codec,
+static unsigned int btfm_slim_codec_read(struct snd_soc_component *codec,
 				unsigned int reg)
 {
 	return 0;
@@ -54,24 +49,40 @@ static int bt_soc_status_put(struct snd_kcontrol *kcontrol,
 	return 1;
 }
 
+static int btfm_get_feedback_ch_setting(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = btfm_feedback_ch_setting;
+	return 1;
+}
+
+static int btfm_put_feedback_ch_setting(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	btfm_feedback_ch_setting = ucontrol->value.integer.value[0];
+	return 1;
+}
+
 static const struct snd_kcontrol_new status_controls[] = {
 	SOC_SINGLE_EXT("BT SOC status", 0, 0, 1, 0,
 			bt_soc_status_get,
-			bt_soc_status_put)
-
+			bt_soc_status_put),
+	SOC_SINGLE_EXT("BT set feedback channel", 0, 0, 1, 0,
+	btfm_get_feedback_ch_setting,
+	btfm_put_feedback_ch_setting)
 };
 
 
-static int btfm_slim_codec_probe(struct snd_soc_codec *codec)
+static int btfm_slim_codec_probe(struct snd_soc_component *codec)
 {
-	snd_soc_add_codec_controls(codec, status_controls,
+	snd_soc_add_component_controls(codec, status_controls,
 				   ARRAY_SIZE(status_controls));
 	return 0;
 }
 
-static int btfm_slim_codec_remove(struct snd_soc_codec *codec)
+static void btfm_slim_codec_remove(struct snd_soc_component *codec)
 {
-	return 0;
+
 }
 
 static int btfm_slim_dai_startup(struct snd_pcm_substream *substream,
@@ -145,13 +156,14 @@ static int btfm_slim_dai_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-int btfm_slim_dai_prepare(struct snd_pcm_substream *substream,
+static int btfm_slim_dai_prepare(struct snd_pcm_substream *substream,
 	struct snd_soc_dai *dai)
 {
 	int i, ret = -EINVAL;
 	struct btfmslim *btfmslim = dai->dev->platform_data;
 	struct btfmslim_ch *ch;
 	uint8_t rxport, grp = false, nchan = 1;
+
 	bt_soc_enable_status = 0;
 
 	BTFMSLIM_DBG("dai->name: %s, dai->id: %d, dai->rate: %d", dai->name,
@@ -198,6 +210,11 @@ int btfm_slim_dai_prepare(struct snd_pcm_substream *substream,
 	/* save the enable channel status */
 	if (ret == 0)
 		bt_soc_enable_status = 1;
+
+	if (ret == -EISCONN) {
+		BTFMSLIM_ERR("channel opened without closing, return success");
+		ret = 0;
+	}
 	return ret;
 }
 
@@ -313,6 +330,8 @@ static int btfm_slim_dai_get_channel_map(struct snd_soc_dai *dai,
 	}
 
 	do {
+		if (!ch)
+			return -EINVAL;
 		for (i = 0; (i < BTFM_SLIM_NUM_CODEC_DAIS) && (ch->id !=
 			BTFM_SLIM_NUM_CODEC_DAIS) && (ch->id != dai->id);
 			ch++, i++)
@@ -325,7 +344,8 @@ static int btfm_slim_dai_get_channel_map(struct snd_soc_dai *dai,
 				dai->id);
 			return -EINVAL;
 		}
-
+		if (!slot)
+			return -EINVAL;
 		*(slot + j) = ch->ch;
 		BTFMSLIM_DBG("id:%d, port:%d, ch:%d, slot: %d", ch->id,
 			ch->port, ch->ch, *(slot + j));
@@ -368,9 +388,11 @@ static struct snd_soc_dai_driver btfmslim_dai[] = {
 		.capture = {
 			.stream_name = "SCO TX Capture",
 			/* 8 KHz or 16 KHz */
-			.rates = SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000,
+			.rates = SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000
+				| SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000
+				| SNDRV_PCM_RATE_88200 | SNDRV_PCM_RATE_96000,
 			.formats = SNDRV_PCM_FMTBIT_S16_LE, /* 16 bits */
-			.rate_max = 16000,
+			.rate_max = 96000,
 			.rate_min = 8000,
 			.channels_min = 1,
 			.channels_max = 1,
@@ -382,10 +404,12 @@ static struct snd_soc_dai_driver btfmslim_dai[] = {
 		.id = BTFM_BT_SCO_A2DP_SLIM_RX,
 		.playback = {
 			.stream_name = "SCO A2DP RX Playback",
+			/* 8/16/44.1/48/88.2/96 Khz */
 			.rates = SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000
-				| SNDRV_PCM_RATE_48000, /* 8 or 16 or 48 Khz*/
+				| SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000
+				| SNDRV_PCM_RATE_88200 | SNDRV_PCM_RATE_96000,
 			.formats = SNDRV_PCM_FMTBIT_S16_LE, /* 16 bits */
-			.rate_max = 48000,
+			.rate_max = 96000,
 			.rate_min = 8000,
 			.channels_min = 1,
 			.channels_max = 1,
@@ -408,7 +432,7 @@ static struct snd_soc_dai_driver btfmslim_dai[] = {
 	},
 };
 
-static struct snd_soc_codec_driver btfmslim_codec = {
+static const struct snd_soc_component_driver btfmslim_codec = {
 	.probe	= btfm_slim_codec_probe,
 	.remove	= btfm_slim_codec_remove,
 	.read	= btfm_slim_codec_read,
@@ -421,13 +445,20 @@ int btfm_slim_register_codec(struct device *dev)
 
 	BTFMSLIM_DBG("");
 	/* Register Codec driver */
-	ret = snd_soc_register_codec(dev, &btfmslim_codec,
+	ret = snd_soc_register_component(dev, &btfmslim_codec,
 		btfmslim_dai, ARRAY_SIZE(btfmslim_dai));
 
 	if (ret)
 		BTFMSLIM_ERR("failed to register codec (%d)", ret);
 
 	return ret;
+}
+
+void btfm_slim_unregister_codec(struct device *dev)
+{
+	BTFMSLIM_DBG("");
+	/* Unregister Codec driver */
+	snd_soc_unregister_component(dev);
 }
 
 MODULE_DESCRIPTION("BTFM Slimbus Codec driver");

@@ -138,8 +138,10 @@ enum CountryCode {
 	CTRY_MACEDONIA = 807,
 	CTRY_MALAYSIA = 458,
 	CTRY_MALTA = 470,
+	CTRY_MAURITIUS = 480,
 	CTRY_MEXICO = 484,
 	CTRY_MONACO = 492,
+	CTRY_MONTENEGRO = 499,
 	CTRY_MOROCCO = 504,
 	CTRY_NEPAL = 524,
 	CTRY_NETHERLANDS = 528,
@@ -256,6 +258,7 @@ enum CountryCode {
 
 bool ath_is_world_regd(struct ath_regulatory *reg);
 bool ath_is_49ghz_allowed(u16 redomain);
+u16 ath_regd_find_country_by_name(char *alpha2);
 int ath_regd_init(struct ath_regulatory *reg, struct wiphy *wiphy,
 		  void (*reg_notifier)(struct wiphy *wiphy,
 				       struct regulatory_request *request));

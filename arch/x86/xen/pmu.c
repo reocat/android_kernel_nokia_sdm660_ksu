@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/types.h>
 #include <linux/interrupt.h>
 
@@ -11,7 +12,7 @@
 #include "pmu.h"
 
 /* x86_pmu.handle_irq definition */
-#include "../kernel/cpu/perf_event.h"
+#include "../events/perf_event.h"
 
 #define XENPMU_IRQ_PROCESSING    1
 struct xenpmu {
@@ -504,10 +505,7 @@ irqreturn_t xen_pmu_irq_handler(int irq, void *dev_id)
 	return ret;
 }
 
-bool is_xen_pmu(int cpu)
-{
-	return (get_xenpmu_data() != NULL);
-}
+bool is_xen_pmu;
 
 void xen_pmu_init(int cpu)
 {
@@ -518,7 +516,7 @@ void xen_pmu_init(int cpu)
 
 	BUILD_BUG_ON(sizeof(struct xen_pmu_data) > PAGE_SIZE);
 
-	if (xen_hvm_domain())
+	if (xen_hvm_domain() || (cpu != 0 && !is_xen_pmu))
 		return;
 
 	xenpmu_data = (struct xen_pmu_data *)get_zeroed_page(GFP_KERNEL);
@@ -539,7 +537,8 @@ void xen_pmu_init(int cpu)
 	per_cpu(xenpmu_shared, cpu).xenpmu_data = xenpmu_data;
 	per_cpu(xenpmu_shared, cpu).flags = 0;
 
-	if (cpu == 0) {
+	if (!is_xen_pmu) {
+		is_xen_pmu = true;
 		perf_register_guest_info_callbacks(&xen_guest_cbs);
 		xen_pmu_arch_init();
 	}
@@ -547,8 +546,11 @@ void xen_pmu_init(int cpu)
 	return;
 
 fail:
-	pr_warn_once("Could not initialize VPMU for cpu %d, error %d\n",
-		cpu, err);
+	if (err == -EOPNOTSUPP || err == -ENOSYS)
+		pr_info_once("VPMU disabled by hypervisor.\n");
+	else
+		pr_info_once("Could not initialize VPMU for cpu %d, error %d\n",
+			cpu, err);
 	free_pages((unsigned long)xenpmu_data, 0);
 }
 

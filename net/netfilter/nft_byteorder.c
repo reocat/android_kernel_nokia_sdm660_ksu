@@ -8,6 +8,7 @@
  * Development of this code funded by Astaro AG (http://www.astaro.com/)
  */
 
+#include <asm/unaligned.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -18,8 +19,8 @@
 #include <net/netfilter/nf_tables.h>
 
 struct nft_byteorder {
-	enum nft_registers	sreg:8;
-	enum nft_registers	dreg:8;
+	u8			sreg;
+	u8			dreg;
 	enum nft_byteorder_ops	op:8;
 	u8			len;
 	u8			size;
@@ -32,22 +33,41 @@ static void nft_byteorder_eval(const struct nft_expr *expr,
 	const struct nft_byteorder *priv = nft_expr_priv(expr);
 	u32 *src = &regs->data[priv->sreg];
 	u32 *dst = &regs->data[priv->dreg];
-	union { u32 u32; u16 u16; } *s, *d;
+	u16 *s16, *d16;
 	unsigned int i;
 
-	s = (void *)src;
-	d = (void *)dst;
+	s16 = (void *)src;
+	d16 = (void *)dst;
 
 	switch (priv->size) {
+	case 8: {
+		u64 src64;
+
+		switch (priv->op) {
+		case NFT_BYTEORDER_NTOH:
+			for (i = 0; i < priv->len / 8; i++) {
+				src64 = get_unaligned((u64 *)&src[i]);
+				put_unaligned_be64(src64, &dst[i]);
+			}
+			break;
+		case NFT_BYTEORDER_HTON:
+			for (i = 0; i < priv->len / 8; i++) {
+				src64 = get_unaligned_be64(&src[i]);
+				put_unaligned(src64, (u64 *)&dst[i]);
+			}
+			break;
+		}
+		break;
+	}
 	case 4:
 		switch (priv->op) {
 		case NFT_BYTEORDER_NTOH:
 			for (i = 0; i < priv->len / 4; i++)
-				d[i].u32 = ntohl((__force __be32)s[i].u32);
+				dst[i] = ntohl((__force __be32)src[i]);
 			break;
 		case NFT_BYTEORDER_HTON:
 			for (i = 0; i < priv->len / 4; i++)
-				d[i].u32 = (__force __u32)htonl(s[i].u32);
+				dst[i] = (__force __u32)htonl(src[i]);
 			break;
 		}
 		break;
@@ -55,11 +75,11 @@ static void nft_byteorder_eval(const struct nft_expr *expr,
 		switch (priv->op) {
 		case NFT_BYTEORDER_NTOH:
 			for (i = 0; i < priv->len / 2; i++)
-				d[i].u16 = ntohs((__force __be16)s[i].u16);
+				d16[i] = ntohs((__force __be16)s16[i]);
 			break;
 		case NFT_BYTEORDER_HTON:
 			for (i = 0; i < priv->len / 2; i++)
-				d[i].u16 = (__force __u16)htons(s[i].u16);
+				d16[i] = (__force __u16)htons(s16[i]);
 			break;
 		}
 		break;
@@ -79,6 +99,7 @@ static int nft_byteorder_init(const struct nft_ctx *ctx,
 			      const struct nlattr * const tb[])
 {
 	struct nft_byteorder *priv = nft_expr_priv(expr);
+	u32 size, len;
 	int err;
 
 	if (tb[NFTA_BYTEORDER_SREG] == NULL ||
@@ -97,24 +118,35 @@ static int nft_byteorder_init(const struct nft_ctx *ctx,
 		return -EINVAL;
 	}
 
-	priv->size = ntohl(nla_get_be32(tb[NFTA_BYTEORDER_SIZE]));
+	err = nft_parse_u32_check(tb[NFTA_BYTEORDER_SIZE], U8_MAX, &size);
+	if (err < 0)
+		return err;
+
+	priv->size = size;
+
 	switch (priv->size) {
 	case 2:
 	case 4:
+	case 8:
 		break;
 	default:
 		return -EINVAL;
 	}
 
-	priv->sreg = nft_parse_register(tb[NFTA_BYTEORDER_SREG]);
-	priv->len  = ntohl(nla_get_be32(tb[NFTA_BYTEORDER_LEN]));
-	err = nft_validate_register_load(priv->sreg, priv->len);
+	err = nft_parse_u32_check(tb[NFTA_BYTEORDER_LEN], U8_MAX, &len);
 	if (err < 0)
 		return err;
 
-	priv->dreg = nft_parse_register(tb[NFTA_BYTEORDER_DREG]);
-	return nft_validate_register_store(ctx, priv->dreg, NULL,
-					   NFT_DATA_VALUE, priv->len);
+	priv->len = len;
+
+	err = nft_parse_register_load(tb[NFTA_BYTEORDER_SREG], &priv->sreg,
+				      priv->len);
+	if (err < 0)
+		return err;
+
+	return nft_parse_register_store(ctx, tb[NFTA_BYTEORDER_DREG],
+					&priv->dreg, NULL, NFT_DATA_VALUE,
+					priv->len);
 }
 
 static int nft_byteorder_dump(struct sk_buff *skb, const struct nft_expr *expr)
@@ -137,7 +169,6 @@ nla_put_failure:
 	return -1;
 }
 
-static struct nft_expr_type nft_byteorder_type;
 static const struct nft_expr_ops nft_byteorder_ops = {
 	.type		= &nft_byteorder_type,
 	.size		= NFT_EXPR_SIZE(sizeof(struct nft_byteorder)),
@@ -146,20 +177,10 @@ static const struct nft_expr_ops nft_byteorder_ops = {
 	.dump		= nft_byteorder_dump,
 };
 
-static struct nft_expr_type nft_byteorder_type __read_mostly = {
+struct nft_expr_type nft_byteorder_type __read_mostly = {
 	.name		= "byteorder",
 	.ops		= &nft_byteorder_ops,
 	.policy		= nft_byteorder_policy,
 	.maxattr	= NFTA_BYTEORDER_MAX,
 	.owner		= THIS_MODULE,
 };
-
-int __init nft_byteorder_module_init(void)
-{
-	return nft_register_expr(&nft_byteorder_type);
-}
-
-void nft_byteorder_module_exit(void)
-{
-	nft_unregister_expr(&nft_byteorder_type);
-}

@@ -197,7 +197,7 @@ static const struct clk_ops hi6220_stub_clk_ops = {
 static int hi6220_stub_clk_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct clk_init_data init;
+	struct clk_init_data init = {};
 	struct hi6220_stub_clk *stub_clk;
 	struct clk *clk;
 	struct device_node *np = pdev->dev.of_node;
@@ -235,7 +235,7 @@ static int hi6220_stub_clk_probe(struct platform_device *pdev)
 	init.name = "acpu0";
 	init.ops = &hi6220_stub_clk_ops;
 	init.num_parents = 0;
-	init.flags = CLK_IS_ROOT;
+	init.flags = 0;
 
 	clk = devm_clk_register(dev, &stub_clk->hw);
 	if (IS_ERR(clk))

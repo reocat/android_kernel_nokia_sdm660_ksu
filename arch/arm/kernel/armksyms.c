@@ -87,10 +87,11 @@ EXPORT_SYMBOL(__raw_writesl);
 EXPORT_SYMBOL(strchr);
 EXPORT_SYMBOL(strrchr);
 EXPORT_SYMBOL(memset);
+EXPORT_SYMBOL(__memset32);
+EXPORT_SYMBOL(__memset64);
 EXPORT_SYMBOL(memcpy);
 EXPORT_SYMBOL(memmove);
 EXPORT_SYMBOL(memchr);
-EXPORT_SYMBOL(__memzero);
 
 EXPORT_SYMBOL(mmioset);
 EXPORT_SYMBOL(mmiocpy);
@@ -166,9 +167,6 @@ EXPORT_SYMBOL(_find_next_bit_be);
 #endif
 
 #ifdef CONFIG_FUNCTION_TRACER
-#ifdef CONFIG_OLD_MCOUNT
-EXPORT_SYMBOL(mcount);
-#endif
 EXPORT_SYMBOL(__gnu_mcount_nc);
 #endif
 
@@ -178,6 +176,6 @@ EXPORT_SYMBOL(__pv_offset);
 #endif
 
 #ifdef CONFIG_HAVE_ARM_SMCCC
-EXPORT_SYMBOL(arm_smccc_smc);
-EXPORT_SYMBOL(arm_smccc_hvc);
+EXPORT_SYMBOL(__arm_smccc_smc);
+EXPORT_SYMBOL(__arm_smccc_hvc);
 #endif

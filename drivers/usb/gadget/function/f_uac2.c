@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * f_uac2.c -- USB Audio Class 2.0 Function
  *
  * Copyright (C) 2011
  *    Yadwinder Singh (yadi.brar01@gmail.com)
  *    Jaswinder Singh (jaswinder.singh@linaro.org)
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include <linux/usb/audio.h>
@@ -17,6 +13,9 @@
 
 #include "u_audio.h"
 #include "u_uac2.h"
+
+/* Keep everyone on toes */
+#define USB_XFERS	8
 
 /*
  * The driver implements a simple UAC_2 topology.
@@ -168,7 +167,7 @@ static struct uac2_input_terminal_descriptor usb_out_it_desc = {
 	.bAssocTerminal = 0,
 	.bCSourceID = USB_OUT_CLK_ID,
 	.iChannelNames = 0,
-	.bmControls = (CONTROL_RDWR << COPY_CTRL),
+	.bmControls = cpu_to_le16(CONTROL_RDWR << COPY_CTRL),
 };
 
 /* Input Terminal for I/O-In */
@@ -178,11 +177,11 @@ static struct uac2_input_terminal_descriptor io_in_it_desc = {
 
 	.bDescriptorSubtype = UAC_INPUT_TERMINAL,
 	.bTerminalID = IO_IN_IT_ID,
-	.wTerminalType = cpu_to_le16(UAC_INPUT_TERMINAL_UNDEFINED),
+	.wTerminalType = cpu_to_le16(UAC_INPUT_TERMINAL_MICROPHONE),
 	.bAssocTerminal = 0,
 	.bCSourceID = USB_IN_CLK_ID,
 	.iChannelNames = 0,
-	.bmControls = (CONTROL_RDWR << COPY_CTRL),
+	.bmControls = cpu_to_le16(CONTROL_RDWR << COPY_CTRL),
 };
 
 /* Ouput Terminal for USB_IN */
@@ -196,7 +195,7 @@ static struct uac2_output_terminal_descriptor usb_in_ot_desc = {
 	.bAssocTerminal = 0,
 	.bSourceID = IO_IN_IT_ID,
 	.bCSourceID = USB_IN_CLK_ID,
-	.bmControls = (CONTROL_RDWR << COPY_CTRL),
+	.bmControls = cpu_to_le16(CONTROL_RDWR << COPY_CTRL),
 };
 
 /* Ouput Terminal for I/O-Out */
@@ -206,11 +205,11 @@ static struct uac2_output_terminal_descriptor io_out_ot_desc = {
 
 	.bDescriptorSubtype = UAC_OUTPUT_TERMINAL,
 	.bTerminalID = IO_OUT_OT_ID,
-	.wTerminalType = cpu_to_le16(UAC_OUTPUT_TERMINAL_UNDEFINED),
+	.wTerminalType = cpu_to_le16(UAC_OUTPUT_TERMINAL_SPEAKER),
 	.bAssocTerminal = 0,
 	.bSourceID = USB_OUT_IT_ID,
 	.bCSourceID = USB_OUT_CLK_ID,
-	.bmControls = (CONTROL_RDWR << COPY_CTRL),
+	.bmControls = cpu_to_le16(CONTROL_RDWR << COPY_CTRL),
 };
 
 static struct uac2_ac_header_descriptor ac_hdr_desc = {
@@ -220,9 +219,10 @@ static struct uac2_ac_header_descriptor ac_hdr_desc = {
 	.bDescriptorSubtype = UAC_MS_HEADER,
 	.bcdADC = cpu_to_le16(0x200),
 	.bCategory = UAC2_FUNCTION_IO_BOX,
-	.wTotalLength = sizeof in_clk_src_desc + sizeof out_clk_src_desc
-			 + sizeof usb_out_it_desc + sizeof io_in_it_desc
-			+ sizeof usb_in_ot_desc + sizeof io_out_ot_desc,
+	.wTotalLength = cpu_to_le16(sizeof in_clk_src_desc
+			+ sizeof out_clk_src_desc + sizeof usb_out_it_desc
+			+ sizeof io_in_it_desc + sizeof usb_in_ot_desc
+			+ sizeof io_out_ot_desc),
 	.bmControls = 0,
 };
 
@@ -277,7 +277,7 @@ static struct usb_endpoint_descriptor fs_epout_desc = {
 	.bDescriptorType = USB_DT_ENDPOINT,
 
 	.bEndpointAddress = USB_DIR_OUT,
-	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_ASYNC,
+	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_SYNC,
 	/* .wMaxPacketSize = DYNAMIC */
 	.bInterval = 1,
 };
@@ -286,9 +286,16 @@ static struct usb_endpoint_descriptor hs_epout_desc = {
 	.bLength = USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType = USB_DT_ENDPOINT,
 
-	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_ASYNC,
+	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_SYNC,
 	/* .wMaxPacketSize = DYNAMIC */
 	.bInterval = 4,
+};
+
+static struct usb_ss_ep_comp_descriptor ss_epout_comp_desc = {
+	 .bLength =		 sizeof(ss_epout_comp_desc),
+	 .bDescriptorType =	 USB_DT_SS_ENDPOINT_COMP,
+
+	 .wBytesPerInterval =	cpu_to_le16(1024),
 };
 
 /* CS AS ISO OUT Endpoint */
@@ -354,7 +361,7 @@ static struct usb_endpoint_descriptor fs_epin_desc = {
 	.bDescriptorType = USB_DT_ENDPOINT,
 
 	.bEndpointAddress = USB_DIR_IN,
-	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_ASYNC,
+	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_SYNC,
 	/* .wMaxPacketSize = DYNAMIC */
 	.bInterval = 1,
 };
@@ -363,9 +370,16 @@ static struct usb_endpoint_descriptor hs_epin_desc = {
 	.bLength = USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType = USB_DT_ENDPOINT,
 
-	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_ASYNC,
+	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_SYNC,
 	/* .wMaxPacketSize = DYNAMIC */
 	.bInterval = 4,
+};
+
+static struct usb_ss_ep_comp_descriptor ss_epin_comp_desc = {
+	 .bLength =		 sizeof(ss_epin_comp_desc),
+	 .bDescriptorType =	 USB_DT_SS_ENDPOINT_COMP,
+
+	 .wBytesPerInterval =	cpu_to_le16(1024),
 };
 
 /* CS AS ISO IN Endpoint */
@@ -436,6 +450,38 @@ static struct usb_descriptor_header *hs_audio_desc[] = {
 	(struct usb_descriptor_header *)&as_in_hdr_desc,
 	(struct usb_descriptor_header *)&as_in_fmt1_desc,
 	(struct usb_descriptor_header *)&hs_epin_desc,
+	(struct usb_descriptor_header *)&as_iso_in_desc,
+	NULL,
+};
+
+static struct usb_descriptor_header *ss_audio_desc[] = {
+	(struct usb_descriptor_header *)&iad_desc,
+	(struct usb_descriptor_header *)&std_ac_if_desc,
+
+	(struct usb_descriptor_header *)&ac_hdr_desc,
+	(struct usb_descriptor_header *)&in_clk_src_desc,
+	(struct usb_descriptor_header *)&out_clk_src_desc,
+	(struct usb_descriptor_header *)&usb_out_it_desc,
+	(struct usb_descriptor_header *)&io_in_it_desc,
+	(struct usb_descriptor_header *)&usb_in_ot_desc,
+	(struct usb_descriptor_header *)&io_out_ot_desc,
+
+	(struct usb_descriptor_header *)&std_as_out_if0_desc,
+	(struct usb_descriptor_header *)&std_as_out_if1_desc,
+
+	(struct usb_descriptor_header *)&as_out_hdr_desc,
+	(struct usb_descriptor_header *)&as_out_fmt1_desc,
+	(struct usb_descriptor_header *)&hs_epout_desc,
+	(struct usb_descriptor_header *)&ss_epout_comp_desc,
+	(struct usb_descriptor_header *)&as_iso_out_desc,
+
+	(struct usb_descriptor_header *)&std_as_in_if0_desc,
+	(struct usb_descriptor_header *)&std_as_in_if1_desc,
+
+	(struct usb_descriptor_header *)&as_in_hdr_desc,
+	(struct usb_descriptor_header *)&as_in_fmt1_desc,
+	(struct usb_descriptor_header *)&hs_epin_desc,
+	(struct usb_descriptor_header *)&ss_epin_comp_desc,
 	(struct usb_descriptor_header *)&as_iso_in_desc,
 	NULL,
 };
@@ -548,6 +594,7 @@ afunc_bind(struct usb_configuration *cfg, struct usb_function *fn)
 	iad_desc.bFirstInterface = ret;
 
 	std_ac_if_desc.bInterfaceNumber = ret;
+	iad_desc.bFirstInterface = ret;
 	uac2->ac_intf = ret;
 	uac2->ac_alt = 0;
 
@@ -612,15 +659,18 @@ afunc_bind(struct usb_configuration *cfg, struct usb_function *fn)
 		return -ENODEV;
 	}
 
-	agdev->in_ep_maxpsize = max(fs_epin_desc.wMaxPacketSize,
-					hs_epin_desc.wMaxPacketSize);
-	agdev->out_ep_maxpsize = max(fs_epout_desc.wMaxPacketSize,
-					hs_epout_desc.wMaxPacketSize);
+	agdev->in_ep_maxpsize = max_t(u16,
+				le16_to_cpu(fs_epin_desc.wMaxPacketSize),
+				le16_to_cpu(hs_epin_desc.wMaxPacketSize));
+	agdev->out_ep_maxpsize = max_t(u16,
+				le16_to_cpu(fs_epout_desc.wMaxPacketSize),
+				le16_to_cpu(hs_epout_desc.wMaxPacketSize));
 
 	hs_epout_desc.bEndpointAddress = fs_epout_desc.bEndpointAddress;
 	hs_epin_desc.bEndpointAddress = fs_epin_desc.bEndpointAddress;
 
-	ret = usb_assign_descriptors(fn, fs_audio_desc, hs_audio_desc, NULL);
+	ret = usb_assign_descriptors(fn, fs_audio_desc, hs_audio_desc,
+					ss_audio_desc, ss_audio_desc);
 	if (ret)
 		return ret;
 
@@ -960,7 +1010,7 @@ static struct configfs_attribute *f_uac2_attrs[] = {
 	NULL,
 };
 
-static struct config_item_type f_uac2_func_type = {
+static const struct config_item_type f_uac2_func_type = {
 	.ct_item_ops	= &f_uac2_item_ops,
 	.ct_attrs	= f_uac2_attrs,
 	.ct_owner	= THIS_MODULE,
@@ -1048,6 +1098,19 @@ static struct usb_function *afunc_alloc(struct usb_function_instance *fi)
 }
 
 DECLARE_USB_FUNCTION_INIT(uac2, afunc_alloc_inst, afunc_alloc);
+
+static int afunc_init(void)
+{
+	return usb_function_register(&uac2usb_func);
+}
+module_init(afunc_init);
+
+static void __exit afunc_exit(void)
+{
+	usb_function_unregister(&uac2usb_func);
+}
+module_exit(afunc_exit);
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Yadwinder Singh");
 MODULE_AUTHOR("Jaswinder Singh");

@@ -16,8 +16,6 @@
 #include <asm/cacheflush.h>
 #include <asm/inst.h>
 
-#ifdef HAVE_JUMP_LABEL
-
 /*
  * Define parameters for the standard MIPS and the microMIPS jump
  * instruction encoding respectively:
@@ -58,7 +56,6 @@ void arch_jump_label_transform(struct jump_entry *e,
 		insn.word = 0; /* nop */
 	}
 
-	get_online_cpus();
 	mutex_lock(&text_mutex);
 	if (IS_ENABLED(CONFIG_CPU_MICROMIPS)) {
 		insn_p->halfword[0] = insn.word >> 16;
@@ -70,7 +67,4 @@ void arch_jump_label_transform(struct jump_entry *e,
 			   (unsigned long)insn_p + sizeof(*insn_p));
 
 	mutex_unlock(&text_mutex);
-	put_online_cpus();
 }
-
-#endif /* HAVE_JUMP_LABEL */

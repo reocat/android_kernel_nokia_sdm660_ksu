@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/mm.h>
@@ -5,24 +6,24 @@
 #include <linux/page_ext.h>
 #include <linux/poison.h>
 #include <linux/ratelimit.h>
+#include <linux/kasan.h>
 
 static bool want_page_poisoning __read_mostly
 		= IS_ENABLED(CONFIG_PAGE_POISONING_ENABLE_DEFAULT);
 
-static int early_page_poison_param(char *buf)
+static int __init early_page_poison_param(char *buf)
 {
 	if (!buf)
 		return -EINVAL;
-
-	if (strcmp(buf, "on") == 0)
-		want_page_poisoning = true;
-	else if (strcmp(buf, "off") == 0)
-		want_page_poisoning = false;
-
-	return 0;
+	return strtobool(buf, &want_page_poisoning);
 }
 early_param("page_poison", early_page_poison_param);
 
+/**
+ * page_poisoning_enabled - check if page poisoning is enabled
+ *
+ * Return true if page poisoning is enabled, or false if not.
+ */
 bool page_poisoning_enabled(void)
 {
 	/*
@@ -35,12 +36,16 @@ bool page_poisoning_enabled(void)
 		(!IS_ENABLED(CONFIG_ARCH_SUPPORTS_DEBUG_PAGEALLOC) &&
 		debug_pagealloc_enabled()));
 }
+EXPORT_SYMBOL_GPL(page_poisoning_enabled);
 
 static void poison_page(struct page *page)
 {
 	void *addr = kmap_atomic(page);
 
+	/* KASAN still think the page is in-use, so skip it. */
+	kasan_disable_current();
 	memset(addr, PAGE_POISON, PAGE_SIZE);
+	kasan_enable_current();
 	kunmap_atomic(addr);
 }
 

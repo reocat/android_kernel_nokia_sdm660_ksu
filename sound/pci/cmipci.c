@@ -48,7 +48,7 @@ MODULE_SUPPORTED_DEVICE("{{C-Media,CMI8738},"
 		"{C-Media,CMI8338A},"
 		"{C-Media,CMI8338B}}");
 
-#if defined(CONFIG_GAMEPORT) || (defined(MODULE) && defined(CONFIG_GAMEPORT_MODULE))
+#if IS_REACHABLE(CONFIG_GAMEPORT)
 #define SUPPORT_JOYSTICK 1
 #endif
 
@@ -68,14 +68,14 @@ module_param_array(id, charp, NULL, 0444);
 MODULE_PARM_DESC(id, "ID string for C-Media PCI soundcard.");
 module_param_array(enable, bool, NULL, 0444);
 MODULE_PARM_DESC(enable, "Enable C-Media PCI soundcard.");
-module_param_array(mpu_port, long, NULL, 0444);
+module_param_hw_array(mpu_port, long, ioport, NULL, 0444);
 MODULE_PARM_DESC(mpu_port, "MPU-401 port.");
-module_param_array(fm_port, long, NULL, 0444);
+module_param_hw_array(fm_port, long, ioport, NULL, 0444);
 MODULE_PARM_DESC(fm_port, "FM port.");
 module_param_array(soft_ac3, bool, NULL, 0444);
 MODULE_PARM_DESC(soft_ac3, "Software-conversion of raw SPDIF packets (model 033 only).");
 #ifdef SUPPORT_JOYSTICK
-module_param_array(joystick_port, int, NULL, 0444);
+module_param_hw_array(joystick_port, int, ioport, NULL, 0444);
 MODULE_PARM_DESC(joystick_port, "Joystick port address.");
 #endif
 
@@ -315,7 +315,6 @@ MODULE_PARM_DESC(joystick_port, "Joystick port address.");
 #define CM_MICGAINZ		0x01	/* mic boost */
 #define CM_MICGAINZ_SHIFT	0
 
-#define CM_REG_MIXER3		0x24
 #define CM_REG_AUX_VOL		0x26
 #define CM_VAUXL_MASK		0xf0
 #define CM_VAUXR_MASK		0x0f
@@ -719,18 +718,18 @@ static int snd_cmipci_hw_free(struct snd_pcm_substream *substream)
 /*
  */
 
-static unsigned int hw_channels[] = {1, 2, 4, 6, 8};
-static struct snd_pcm_hw_constraint_list hw_constraints_channels_4 = {
+static const unsigned int hw_channels[] = {1, 2, 4, 6, 8};
+static const struct snd_pcm_hw_constraint_list hw_constraints_channels_4 = {
 	.count = 3,
 	.list = hw_channels,
 	.mask = 0,
 };
-static struct snd_pcm_hw_constraint_list hw_constraints_channels_6 = {
+static const struct snd_pcm_hw_constraint_list hw_constraints_channels_6 = {
 	.count = 4,
 	.list = hw_channels,
 	.mask = 0,
 };
-static struct snd_pcm_hw_constraint_list hw_constraints_channels_8 = {
+static const struct snd_pcm_hw_constraint_list hw_constraints_channels_8 = {
 	.count = 5,
 	.list = hw_channels,
 	.mask = 0,
@@ -1045,7 +1044,7 @@ static int snd_cmipci_spdif_default_put(struct snd_kcontrol *kcontrol,
 	return change;
 }
 
-static struct snd_kcontrol_new snd_cmipci_spdif_default =
+static const struct snd_kcontrol_new snd_cmipci_spdif_default =
 {
 	.iface =	SNDRV_CTL_ELEM_IFACE_PCM,
 	.name =		SNDRV_CTL_NAME_IEC958("",PLAYBACK,DEFAULT),
@@ -1072,7 +1071,7 @@ static int snd_cmipci_spdif_mask_get(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
-static struct snd_kcontrol_new snd_cmipci_spdif_mask =
+static const struct snd_kcontrol_new snd_cmipci_spdif_mask =
 {
 	.access =	SNDRV_CTL_ELEM_ACCESS_READ,
 	.iface =	SNDRV_CTL_ELEM_IFACE_PCM,
@@ -1119,7 +1118,7 @@ static int snd_cmipci_spdif_stream_put(struct snd_kcontrol *kcontrol,
 	return change;
 }
 
-static struct snd_kcontrol_new snd_cmipci_spdif_stream =
+static const struct snd_kcontrol_new snd_cmipci_spdif_stream =
 {
 	.access =	SNDRV_CTL_ELEM_ACCESS_READWRITE | SNDRV_CTL_ELEM_ACCESS_INACTIVE,
 	.iface =	SNDRV_CTL_ELEM_IFACE_PCM,
@@ -1139,7 +1138,7 @@ static int save_mixer_state(struct cmipci *cm)
 		struct snd_ctl_elem_value *val;
 		unsigned int i;
 
-		val = kmalloc(sizeof(*val), GFP_ATOMIC);
+		val = kmalloc(sizeof(*val), GFP_KERNEL);
 		if (!val)
 			return -ENOMEM;
 		for (i = 0; i < CM_SAVED_MIXERS; i++) {
@@ -1477,7 +1476,7 @@ static irqreturn_t snd_cmipci_interrupt(int irq, void *dev_id)
  */
 
 /* playback on channel A */
-static struct snd_pcm_hardware snd_cmipci_playback =
+static const struct snd_pcm_hardware snd_cmipci_playback =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER | SNDRV_PCM_INFO_PAUSE |
@@ -1497,7 +1496,7 @@ static struct snd_pcm_hardware snd_cmipci_playback =
 };
 
 /* capture on channel B */
-static struct snd_pcm_hardware snd_cmipci_capture =
+static const struct snd_pcm_hardware snd_cmipci_capture =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER | SNDRV_PCM_INFO_PAUSE |
@@ -1517,7 +1516,7 @@ static struct snd_pcm_hardware snd_cmipci_capture =
 };
 
 /* playback on channel B - stereo 16bit only? */
-static struct snd_pcm_hardware snd_cmipci_playback2 =
+static const struct snd_pcm_hardware snd_cmipci_playback2 =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER | SNDRV_PCM_INFO_PAUSE |
@@ -1537,7 +1536,7 @@ static struct snd_pcm_hardware snd_cmipci_playback2 =
 };
 
 /* spdif playback on channel A */
-static struct snd_pcm_hardware snd_cmipci_playback_spdif =
+static const struct snd_pcm_hardware snd_cmipci_playback_spdif =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER | SNDRV_PCM_INFO_PAUSE |
@@ -1557,7 +1556,7 @@ static struct snd_pcm_hardware snd_cmipci_playback_spdif =
 };
 
 /* spdif playback on channel A (32bit, IEC958 subframes) */
-static struct snd_pcm_hardware snd_cmipci_playback_iec958_subframe =
+static const struct snd_pcm_hardware snd_cmipci_playback_iec958_subframe =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER | SNDRV_PCM_INFO_PAUSE |
@@ -1577,7 +1576,7 @@ static struct snd_pcm_hardware snd_cmipci_playback_iec958_subframe =
 };
 
 /* spdif capture on channel B */
-static struct snd_pcm_hardware snd_cmipci_capture_spdif =
+static const struct snd_pcm_hardware snd_cmipci_capture_spdif =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER | SNDRV_PCM_INFO_PAUSE |
@@ -1597,9 +1596,9 @@ static struct snd_pcm_hardware snd_cmipci_capture_spdif =
 	.fifo_size =		0,
 };
 
-static unsigned int rate_constraints[] = { 5512, 8000, 11025, 16000, 22050,
+static const unsigned int rate_constraints[] = { 5512, 8000, 11025, 16000, 22050,
 			32000, 44100, 48000, 88200, 96000, 128000 };
-static struct snd_pcm_hw_constraint_list hw_constraints_rates = {
+static const struct snd_pcm_hw_constraint_list hw_constraints_rates = {
 		.count = ARRAY_SIZE(rate_constraints),
 		.list = rate_constraints,
 		.mask = 0,
@@ -1838,7 +1837,7 @@ static int snd_cmipci_capture_spdif_close(struct snd_pcm_substream *substream)
 /*
  */
 
-static struct snd_pcm_ops snd_cmipci_playback_ops = {
+static const struct snd_pcm_ops snd_cmipci_playback_ops = {
 	.open =		snd_cmipci_playback_open,
 	.close =	snd_cmipci_playback_close,
 	.ioctl =	snd_pcm_lib_ioctl,
@@ -1849,7 +1848,7 @@ static struct snd_pcm_ops snd_cmipci_playback_ops = {
 	.pointer =	snd_cmipci_playback_pointer,
 };
 
-static struct snd_pcm_ops snd_cmipci_capture_ops = {
+static const struct snd_pcm_ops snd_cmipci_capture_ops = {
 	.open =		snd_cmipci_capture_open,
 	.close =	snd_cmipci_capture_close,
 	.ioctl =	snd_pcm_lib_ioctl,
@@ -1860,7 +1859,7 @@ static struct snd_pcm_ops snd_cmipci_capture_ops = {
 	.pointer =	snd_cmipci_capture_pointer,
 };
 
-static struct snd_pcm_ops snd_cmipci_playback2_ops = {
+static const struct snd_pcm_ops snd_cmipci_playback2_ops = {
 	.open =		snd_cmipci_playback2_open,
 	.close =	snd_cmipci_playback2_close,
 	.ioctl =	snd_pcm_lib_ioctl,
@@ -1871,7 +1870,7 @@ static struct snd_pcm_ops snd_cmipci_playback2_ops = {
 	.pointer =	snd_cmipci_capture_pointer,	/* channel B */
 };
 
-static struct snd_pcm_ops snd_cmipci_playback_spdif_ops = {
+static const struct snd_pcm_ops snd_cmipci_playback_spdif_ops = {
 	.open =		snd_cmipci_playback_spdif_open,
 	.close =	snd_cmipci_playback_spdif_close,
 	.ioctl =	snd_pcm_lib_ioctl,
@@ -1882,7 +1881,7 @@ static struct snd_pcm_ops snd_cmipci_playback_spdif_ops = {
 	.pointer =	snd_cmipci_playback_pointer,
 };
 
-static struct snd_pcm_ops snd_cmipci_capture_spdif_ops = {
+static const struct snd_pcm_ops snd_cmipci_capture_spdif_ops = {
 	.open =		snd_cmipci_capture_spdif_open,
 	.close =	snd_cmipci_capture_spdif_close,
 	.ioctl =	snd_pcm_lib_ioctl,
@@ -3295,20 +3294,23 @@ static int snd_cmipci_probe(struct pci_dev *pci,
 		break;
 	}
 
-	if ((err = snd_cmipci_create(card, pci, dev, &cm)) < 0) {
-		snd_card_free(card);
-		return err;
-	}
+	err = snd_cmipci_create(card, pci, dev, &cm);
+	if (err < 0)
+		goto free_card;
+
 	card->private_data = cm;
 
-	if ((err = snd_card_register(card)) < 0) {
-		snd_card_free(card);
-		return err;
-	}
+	err = snd_card_register(card);
+	if (err < 0)
+		goto free_card;
+
 	pci_set_drvdata(pci, card);
 	dev++;
 	return 0;
 
+free_card:
+	snd_card_free(card);
+	return err;
 }
 
 static void snd_cmipci_remove(struct pci_dev *pci)
@@ -3323,7 +3325,7 @@ static void snd_cmipci_remove(struct pci_dev *pci)
  */
 static unsigned char saved_regs[] = {
 	CM_REG_FUNCTRL1, CM_REG_CHFORMAT, CM_REG_LEGACY_CTRL, CM_REG_MISC_CTRL,
-	CM_REG_MIXER0, CM_REG_MIXER1, CM_REG_MIXER2, CM_REG_MIXER3, CM_REG_PLL,
+	CM_REG_MIXER0, CM_REG_MIXER1, CM_REG_MIXER2, CM_REG_AUX_VOL, CM_REG_PLL,
 	CM_REG_CH0_FRAME1, CM_REG_CH0_FRAME2,
 	CM_REG_CH1_FRAME1, CM_REG_CH1_FRAME2, CM_REG_EXT_MISC,
 	CM_REG_INT_STATUS, CM_REG_INT_HLDCLR, CM_REG_FUNCTRL0,

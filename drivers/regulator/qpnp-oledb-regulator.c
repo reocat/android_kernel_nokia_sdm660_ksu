@@ -1,13 +1,6 @@
-/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"OLEDB: %s: " fmt, __func__
@@ -274,12 +267,11 @@ static int qpnp_oledb_write(struct qpnp_oledb *oledb, u16 address, u8 *val,
 
 static int qpnp_oledb_regulator_enable(struct regulator_dev *rdev)
 {
+	struct qpnp_oledb *oledb  = rdev_get_drvdata(rdev);
 	int rc = 0;
 	u8 val = 0;
 
-	struct qpnp_oledb *oledb  = rdev_get_drvdata(rdev);
-
-	if (oledb->lab_sc_detected == true) {
+	if (oledb->lab_sc_detected) {
 		pr_info("Short circuit detected: Disabled OLEDB rail\n");
 		return 0;
 	}
@@ -702,22 +694,147 @@ static int qpnp_oledb_init_fast_precharge(struct qpnp_oledb *oledb)
 	return rc;
 }
 
-static int qpnp_oledb_hw_init(struct qpnp_oledb *oledb)
+static int qpnp_oledb_warmup_delay_config(struct qpnp_oledb *oledb)
 {
-	int rc, i = 0;
-	u8 val = 0, mask = 0;
-	u16 current_voltage;
+	int rc, i;
+	u8 val;
 
-	if (oledb->default_voltage != -EINVAL) {
-		val = (oledb->default_voltage - OLEDB_VOUT_MIN_MV) /
-					 OLEDB_VOUT_STEP_MV;
-		rc = qpnp_oledb_write(oledb, oledb->base +
-					OLEDB_VOUT_DEFAULT, &val, 1);
+	if (oledb->warmup_delay != -EINVAL) {
+		for (i = 0; i < ARRAY_SIZE(oledb_warmup_dly_ns); i++) {
+			if (oledb->warmup_delay == oledb_warmup_dly_ns[i])
+				break;
+		}
+		val = i;
+		rc = qpnp_oledb_masked_write(oledb,
+				oledb->base + OLEDB_BIAS_GEN_WARMUP_DELAY,
+				OLEDB_BIAS_GEN_WARMUP_DELAY_MASK, val);
 		if (rc < 0) {
-			pr_err("Failed to write VOUT_DEFAULT rc=%d\n", rc);
+			pr_err("Failed to write WARMUP_DELAY rc=%d\n", rc);
 			return rc;
 		}
+	} else {
+		rc = qpnp_oledb_read(oledb, oledb->base +
+				 OLEDB_BIAS_GEN_WARMUP_DELAY, &val, 1);
+		if (rc < 0) {
+			pr_err("Failed to read WARMUP_DELAY rc=%d\n", rc);
+			return rc;
+		}
+		oledb->warmup_delay = oledb_warmup_dly_ns[val];
 	}
+
+	return rc;
+}
+
+static int qpnp_oledb_current_limit_config(struct qpnp_oledb *oledb)
+{
+	int rc, i;
+	u8 val;
+
+	if (oledb->peak_curr_limit == -EINVAL)
+		return 0;
+
+	for (i = 0; i < ARRAY_SIZE(oledb_peak_curr_limit_ma); i++) {
+		if (oledb->peak_curr_limit == oledb_peak_curr_limit_ma[i])
+			break;
+	}
+
+	val = i;
+	rc = qpnp_oledb_write(oledb, oledb->base + OLEDB_ILIM_NFET, &val, 1);
+	if (rc < 0)
+		pr_err("Failed to write ILIM_NEFT rc=%d\n", rc);
+
+	return rc;
+}
+
+static int qpnp_oledb_sc_config(struct qpnp_oledb *oledb)
+{
+	int rc;
+	u8 val, mask;
+
+	if (oledb->sc_en == -EINVAL)
+		return 0;
+
+	val = oledb->sc_en ? OLEDB_ENABLE_SC_DETECTION_BIT : 0;
+	mask = OLEDB_ENABLE_SC_DETECTION_BIT;
+	if (oledb->sc_dbnc_time != -EINVAL) {
+		val |= SHORT_CIRCUIT_DEBOUNCE_TIME_TO_VAL(oledb->sc_dbnc_time);
+		mask |= OLEDB_DBNC_PRECHARGE_MASK;
+	}
+
+	rc = qpnp_oledb_write(oledb, oledb->base + OLEDB_SHORT_PROTECT, &val,
+				1);
+	if (rc < 0)
+		pr_err("Failed to write SHORT_PROTECT rc=%d\n", rc);
+
+	return rc;
+}
+
+static int qpnp_oledb_init_voltage_config(struct qpnp_oledb *oledb)
+{
+	int rc;
+	u8 val;
+
+	if (oledb->current_voltage < OLEDB_VOUT_MIN_MV) {
+		pr_err("current_voltage %d is less than min_volt %d\n",
+		    oledb->current_voltage, OLEDB_VOUT_MIN_MV);
+		return -EINVAL;
+	}
+
+	val = DIV_ROUND_UP(oledb->current_voltage - OLEDB_VOUT_MIN_MV,
+				OLEDB_VOUT_STEP_MV);
+	rc = qpnp_oledb_write(oledb, oledb->base + OLEDB_VOUT_PGM, &val, 1);
+	if (rc < 0)
+		pr_err("Failed to write VOUT_PGM rc=%d\n", rc);
+
+	return rc;
+}
+
+static int qpnp_oledb_default_voltage_config(struct qpnp_oledb *oledb)
+{
+	int rc;
+	u8 val;
+
+	if (oledb->default_voltage == -EINVAL)
+		return 0;
+
+	if (oledb->default_voltage < OLEDB_VOUT_MIN_MV) {
+		pr_err("default_voltage %d is less than min_volt %d\n",
+		    oledb->default_voltage, OLEDB_VOUT_MIN_MV);
+		return -EINVAL;
+	}
+
+	val = (oledb->default_voltage - OLEDB_VOUT_MIN_MV) / OLEDB_VOUT_STEP_MV;
+	rc = qpnp_oledb_write(oledb, oledb->base + OLEDB_VOUT_DEFAULT, &val, 1);
+	if (rc < 0)
+		pr_err("Failed to write VOUT_DEFAULT rc=%d\n", rc);
+
+	return rc;
+}
+
+static int qpnp_oledb_swire_config(struct qpnp_oledb *oledb, bool en)
+{
+	int rc;
+	u8 val, mask;
+
+	mask = OLEDB_EN_SWIRE_PD_UPD_BIT | OLEDB_EN_SWIRE_VOUT_UPD_BIT;
+	val = en ? mask : 0;
+	rc = qpnp_oledb_masked_write(oledb, oledb->base + OLEDB_SWIRE_CONTROL,
+					mask, val);
+	if (rc < 0)
+		pr_err("Failed to write SWIRE_CONTROL rc=%d\n", rc);
+
+	return rc;
+}
+
+static int qpnp_oledb_hw_init(struct qpnp_oledb *oledb)
+{
+	int rc;
+	u8 val = 0;
+	u16 current_voltage;
+
+	rc = qpnp_oledb_default_voltage_config(oledb);
+	if (rc < 0)
+		return rc;
 
 	rc = qpnp_oledb_read(oledb, oledb->base + OLEDB_MODULE_ENABLE,
 				&oledb->mod_enable, 1);
@@ -743,49 +860,13 @@ static int qpnp_oledb_hw_init(struct qpnp_oledb *oledb)
 	 */
 	if (!((oledb->ext_pinctl_state & OLEDB_EXT_PIN_CTL_BIT)
 				|| oledb->mod_enable)) {
-		if (oledb->warmup_delay != -EINVAL) {
-			for (i = 0; i < ARRAY_SIZE(oledb_warmup_dly_ns); i++) {
-				if (oledb->warmup_delay ==
-							oledb_warmup_dly_ns[i])
-					break;
-			}
-			val = i;
-			rc = qpnp_oledb_masked_write(oledb,
-				oledb->base + OLEDB_BIAS_GEN_WARMUP_DELAY,
-				OLEDB_BIAS_GEN_WARMUP_DELAY_MASK, val);
-			if (rc < 0) {
-				pr_err("Failed to write WARMUP_DELAY rc=%d\n",
-									rc);
-				return rc;
-			}
-		} else {
-			rc = qpnp_oledb_read(oledb, oledb->base +
-					 OLEDB_BIAS_GEN_WARMUP_DELAY,
-					&val, 1);
-			if (rc < 0) {
-				pr_err("Failed to read WARMUP_DELAY rc=%d\n",
-									rc);
-				return rc;
-			}
-			oledb->warmup_delay = oledb_warmup_dly_ns[val];
-		}
+		rc = qpnp_oledb_warmup_delay_config(oledb);
+		if (rc < 0)
+			return rc;
 
-		if (oledb->peak_curr_limit != -EINVAL) {
-			for (i = 0; i < ARRAY_SIZE(oledb_peak_curr_limit_ma);
-									i++) {
-				if (oledb->peak_curr_limit ==
-						oledb_peak_curr_limit_ma[i])
-					break;
-			}
-			val = i;
-			rc = qpnp_oledb_write(oledb,
-					oledb->base + OLEDB_ILIM_NFET,
-					&val, 1);
-			if (rc < 0) {
-				pr_err("Failed to write ILIM_NEFT rc=%d\n", rc);
-				return rc;
-			}
-		}
+		rc = qpnp_oledb_current_limit_config(oledb);
+		if (rc < 0)
+			return rc;
 
 		if (oledb->pd_ctl != -EINVAL) {
 			val = oledb->pd_ctl;
@@ -797,23 +878,9 @@ static int qpnp_oledb_hw_init(struct qpnp_oledb *oledb)
 			}
 		}
 
-		if (oledb->sc_en != -EINVAL) {
-			val = oledb->sc_en ? OLEDB_ENABLE_SC_DETECTION_BIT : 0;
-			mask = OLEDB_ENABLE_SC_DETECTION_BIT;
-			if (oledb->sc_dbnc_time != -EINVAL) {
-				val |= SHORT_CIRCUIT_DEBOUNCE_TIME_TO_VAL(
-							oledb->sc_dbnc_time);
-				mask |= OLEDB_DBNC_PRECHARGE_MASK;
-			}
-
-			rc = qpnp_oledb_write(oledb, oledb->base +
-					OLEDB_SHORT_PROTECT, &val, 1);
-			if (rc < 0) {
-				pr_err("Failed to write SHORT_PROTECT rc=%d\n",
-									rc);
-				return rc;
-			}
-		}
+		rc = qpnp_oledb_sc_config(oledb);
+		if (rc < 0)
+			return rc;
 
 		rc = qpnp_oledb_init_nlimit(oledb);
 		if (rc < 0)
@@ -832,11 +899,7 @@ static int qpnp_oledb_hw_init(struct qpnp_oledb *oledb)
 			return rc;
 
 		if (oledb->swire_control) {
-			val = OLEDB_EN_SWIRE_PD_UPD_BIT |
-				OLEDB_EN_SWIRE_VOUT_UPD_BIT;
-			rc = qpnp_oledb_masked_write(oledb, oledb->base +
-				OLEDB_SWIRE_CONTROL, OLEDB_EN_SWIRE_PD_UPD_BIT |
-				OLEDB_EN_SWIRE_VOUT_UPD_BIT, val);
+			rc = qpnp_oledb_swire_config(oledb, true);
 			if (rc < 0)
 				return rc;
 		}
@@ -884,15 +947,9 @@ static int qpnp_oledb_hw_init(struct qpnp_oledb *oledb)
 
 			oledb->mod_enable = true;
 			if (oledb->pbs_control) {
-				rc = qpnp_oledb_masked_write(oledb,
-				oledb->base + OLEDB_SWIRE_CONTROL,
-				OLEDB_EN_SWIRE_PD_UPD_BIT |
-				OLEDB_EN_SWIRE_VOUT_UPD_BIT, 0);
-				if (rc < 0) {
-					pr_err("Failed to write SWIRE_CTL rc=%d\n",
-									rc);
+				rc = qpnp_oledb_swire_config(oledb, false);
+				if (rc < 0)
 					return rc;
-				}
 			}
 		}
 
@@ -902,20 +959,9 @@ static int qpnp_oledb_hw_init(struct qpnp_oledb *oledb)
 		if (oledb->current_voltage == -EINVAL) {
 			oledb->current_voltage = current_voltage;
 		} else if (!oledb->swire_control) {
-			if (oledb->current_voltage < OLEDB_VOUT_MIN_MV) {
-				pr_err("current_voltage %d is less than min_volt %d\n",
-				    oledb->current_voltage, OLEDB_VOUT_MIN_MV);
-				return -EINVAL;
-			}
-			val = DIV_ROUND_UP(oledb->current_voltage -
-					OLEDB_VOUT_MIN_MV, OLEDB_VOUT_STEP_MV);
-			rc = qpnp_oledb_write(oledb, oledb->base +
-						OLEDB_VOUT_PGM, &val, 1);
-			if (rc < 0) {
-				pr_err("Failed to write VOUT_PGM rc=%d\n",
-									rc);
+			rc = qpnp_oledb_init_voltage_config(oledb);
+			if (rc < 0)
 				return rc;
-			}
 		}
 
 		oledb->mod_enable = true;

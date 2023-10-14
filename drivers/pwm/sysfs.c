@@ -26,6 +26,7 @@
 struct pwm_export {
 	struct device child;
 	struct pwm_device *pwm;
+	struct mutex lock;
 };
 
 static struct pwm_export *child_to_pwm_export(struct device *child)
@@ -45,15 +46,20 @@ static ssize_t period_show(struct device *child,
 			   char *buf)
 {
 	const struct pwm_device *pwm = child_to_pwm_device(child);
+	struct pwm_state state;
 
-	return sprintf(buf, "%u\n", pwm_get_period(pwm));
+	pwm_get_state(pwm, &state);
+
+	return sprintf(buf, "%llu\n", state.period);
 }
 
 static ssize_t period_store(struct device *child,
 			    struct device_attribute *attr,
 			    const char *buf, size_t size)
 {
-	struct pwm_device *pwm = child_to_pwm_device(child);
+	struct pwm_export *export = child_to_pwm_export(child);
+	struct pwm_device *pwm = export->pwm;
+	struct pwm_state state;
 	unsigned int val;
 	int ret;
 
@@ -61,7 +67,11 @@ static ssize_t period_store(struct device *child,
 	if (ret)
 		return ret;
 
-	ret = pwm_config(pwm, pwm_get_duty_cycle(pwm), val);
+	mutex_lock(&export->lock);
+	pwm_get_state(pwm, &state);
+	state.period = val;
+	ret = pwm_apply_state(pwm, &state);
+	mutex_unlock(&export->lock);
 
 	return ret ? : size;
 }
@@ -71,15 +81,20 @@ static ssize_t duty_cycle_show(struct device *child,
 			       char *buf)
 {
 	const struct pwm_device *pwm = child_to_pwm_device(child);
+	struct pwm_state state;
 
-	return sprintf(buf, "%u\n", pwm_get_duty_cycle(pwm));
+	pwm_get_state(pwm, &state);
+
+	return sprintf(buf, "%llu\n", state.duty_cycle);
 }
 
 static ssize_t duty_cycle_store(struct device *child,
 				struct device_attribute *attr,
 				const char *buf, size_t size)
 {
-	struct pwm_device *pwm = child_to_pwm_device(child);
+	struct pwm_export *export = child_to_pwm_export(child);
+	struct pwm_device *pwm = export->pwm;
+	struct pwm_state state;
 	unsigned int val;
 	int ret;
 
@@ -87,7 +102,11 @@ static ssize_t duty_cycle_store(struct device *child,
 	if (ret)
 		return ret;
 
-	ret = pwm_config(pwm, val, pwm_get_period(pwm));
+	mutex_lock(&export->lock);
+	pwm_get_state(pwm, &state);
+	state.duty_cycle = val;
+	ret = pwm_apply_state(pwm, &state);
+	mutex_unlock(&export->lock);
 
 	return ret ? : size;
 }
@@ -97,33 +116,46 @@ static ssize_t enable_show(struct device *child,
 			   char *buf)
 {
 	const struct pwm_device *pwm = child_to_pwm_device(child);
+	struct pwm_state state;
 
-	return sprintf(buf, "%d\n", pwm_is_enabled(pwm));
+	pwm_get_state(pwm, &state);
+
+	return sprintf(buf, "%d\n", state.enabled);
 }
 
 static ssize_t enable_store(struct device *child,
 			    struct device_attribute *attr,
 			    const char *buf, size_t size)
 {
-	struct pwm_device *pwm = child_to_pwm_device(child);
+	struct pwm_export *export = child_to_pwm_export(child);
+	struct pwm_device *pwm = export->pwm;
+	struct pwm_state state;
 	int val, ret;
 
 	ret = kstrtoint(buf, 0, &val);
 	if (ret)
 		return ret;
 
+	mutex_lock(&export->lock);
+
+	pwm_get_state(pwm, &state);
+
 	switch (val) {
 	case 0:
-		pwm_disable(pwm);
+		state.enabled = false;
 		break;
 	case 1:
-		ret = pwm_enable(pwm);
+		state.enabled = true;
 		break;
 	default:
 		ret = -EINVAL;
-		break;
+		goto unlock;
 	}
 
+	ret = pwm_apply_state(pwm, &state);
+
+unlock:
+	mutex_unlock(&export->lock);
 	return ret ? : size;
 }
 
@@ -133,8 +165,11 @@ static ssize_t polarity_show(struct device *child,
 {
 	const struct pwm_device *pwm = child_to_pwm_device(child);
 	const char *polarity = "unknown";
+	struct pwm_state state;
 
-	switch (pwm_get_polarity(pwm)) {
+	pwm_get_state(pwm, &state);
+
+	switch (state.polarity) {
 	case PWM_POLARITY_NORMAL:
 		polarity = "normal";
 		break;
@@ -151,8 +186,10 @@ static ssize_t polarity_store(struct device *child,
 			      struct device_attribute *attr,
 			      const char *buf, size_t size)
 {
-	struct pwm_device *pwm = child_to_pwm_device(child);
+	struct pwm_export *export = child_to_pwm_export(child);
+	struct pwm_device *pwm = export->pwm;
 	enum pwm_polarity polarity;
+	struct pwm_state state;
 	int ret;
 
 	if (sysfs_streq(buf, "normal"))
@@ -162,7 +199,74 @@ static ssize_t polarity_store(struct device *child,
 	else
 		return -EINVAL;
 
-	ret = pwm_set_polarity(pwm, polarity);
+	mutex_lock(&export->lock);
+	pwm_get_state(pwm, &state);
+	state.polarity = polarity;
+	ret = pwm_apply_state(pwm, &state);
+	mutex_unlock(&export->lock);
+
+	return ret ? : size;
+}
+
+static ssize_t capture_show(struct device *child,
+			    struct device_attribute *attr,
+			    char *buf)
+{
+	struct pwm_device *pwm = child_to_pwm_device(child);
+	struct pwm_capture result;
+	int ret;
+
+	ret = pwm_capture(pwm, &result, jiffies_to_msecs(HZ));
+	if (ret)
+		return ret;
+
+	return sprintf(buf, "%llu %llu\n", result.period, result.duty_cycle);
+}
+
+static ssize_t output_type_show(struct device *child,
+			     struct device_attribute *attr,
+			     char *buf)
+{
+	const struct pwm_device *pwm = child_to_pwm_device(child);
+	const char *output_type = "unknown";
+	struct pwm_state state;
+
+	pwm_get_state(pwm, &state);
+	switch (state.output_type) {
+	case PWM_OUTPUT_FIXED:
+		output_type = "fixed";
+		break;
+	case PWM_OUTPUT_MODULATED:
+		output_type = "modulated";
+		break;
+	default:
+		break;
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%s\n", output_type);
+}
+
+static ssize_t output_type_store(struct device *child,
+			      struct device_attribute *attr,
+			      const char *buf, size_t size)
+{
+	struct pwm_export *export = child_to_pwm_export(child);
+	struct pwm_device *pwm = export->pwm;
+	struct pwm_state state;
+	int ret = -EINVAL;
+
+	mutex_lock(&export->lock);
+	pwm_get_state(pwm, &state);
+	if (sysfs_streq(buf, "fixed"))
+		state.output_type = PWM_OUTPUT_FIXED;
+	else if (sysfs_streq(buf, "modulated"))
+		state.output_type = PWM_OUTPUT_MODULATED;
+	else
+		goto unlock;
+
+	ret = pwm_apply_state(pwm, &state);
+unlock:
+	mutex_unlock(&export->lock);
 
 	return ret ? : size;
 }
@@ -171,12 +275,16 @@ static DEVICE_ATTR_RW(period);
 static DEVICE_ATTR_RW(duty_cycle);
 static DEVICE_ATTR_RW(enable);
 static DEVICE_ATTR_RW(polarity);
+static DEVICE_ATTR_RO(capture);
+static DEVICE_ATTR_RW(output_type);
 
 static struct attribute *pwm_attrs[] = {
 	&dev_attr_period.attr,
 	&dev_attr_duty_cycle.attr,
 	&dev_attr_enable.attr,
 	&dev_attr_polarity.attr,
+	&dev_attr_capture.attr,
+	&dev_attr_output_type.attr,
 	NULL
 };
 ATTRIBUTE_GROUPS(pwm);
@@ -203,6 +311,7 @@ static int pwm_export_child(struct device *parent, struct pwm_device *pwm)
 	}
 
 	export->pwm = pwm;
+	mutex_init(&export->lock);
 
 	export->child.release = pwm_export_release;
 	export->child.parent = parent;
@@ -213,7 +322,8 @@ static int pwm_export_child(struct device *parent, struct pwm_device *pwm)
 	ret = device_register(&export->child);
 	if (ret) {
 		clear_bit(PWMF_EXPORTED, &pwm->flags);
-		kfree(export);
+		put_device(&export->child);
+		export = NULL;
 		return ret;
 	}
 

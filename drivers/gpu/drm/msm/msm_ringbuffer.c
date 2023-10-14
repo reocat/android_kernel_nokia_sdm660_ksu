@@ -19,9 +19,10 @@
 #include "msm_gpu.h"
 
 struct msm_ringbuffer *msm_ringbuffer_new(struct msm_gpu *gpu, int id,
-		struct msm_memptrs *memptrs, uint64_t memptrs_iova)
+		void *memptrs, uint64_t memptrs_iova)
 {
 	struct msm_ringbuffer *ring;
+	char name[32];
 	int ret;
 
 	/* We assume everwhere that MSM_GPU_RINGBUFFER_SZ is a power of 2 */
@@ -35,40 +36,47 @@ struct msm_ringbuffer *msm_ringbuffer_new(struct msm_gpu *gpu, int id,
 
 	ring->gpu = gpu;
 	ring->id = id;
-	ring->bo = msm_gem_new(gpu->dev, MSM_GPU_RINGBUFFER_SZ,
-			MSM_BO_WC);
-	if (IS_ERR(ring->bo)) {
-		ret = PTR_ERR(ring->bo);
-		ring->bo = NULL;
+	/* Pass NULL for the iova pointer - we will map it later */
+	ring->start = msm_gem_kernel_new(gpu->dev, MSM_GPU_RINGBUFFER_SZ,
+		MSM_BO_WC, gpu->aspace, &ring->bo, NULL);
+
+	if (IS_ERR(ring->start)) {
+		ret = PTR_ERR(ring->start);
+		ring->start = 0;
 		goto fail;
 	}
-
-	ring->memptrs = memptrs;
-	ring->memptrs_iova = memptrs_iova;
-
-
-	ring->start = msm_gem_vaddr(ring->bo);
 	ring->end   = ring->start + (MSM_GPU_RINGBUFFER_SZ >> 2);
 	ring->next  = ring->start;
 	ring->cur   = ring->start;
 
+	ring->memptrs = memptrs;
+	ring->memptrs_iova = memptrs_iova;
+
 	INIT_LIST_HEAD(&ring->submits);
 	spin_lock_init(&ring->lock);
+
+	snprintf(name, sizeof(name), "gpu-ring-%d", ring->id);
+
+	ring->fctx = msm_fence_context_alloc(gpu->dev, name);
 
 	return ring;
 
 fail:
-	if (ring)
-		msm_ringbuffer_destroy(ring);
+	msm_ringbuffer_destroy(ring);
 	return ERR_PTR(ret);
 }
 
 void msm_ringbuffer_destroy(struct msm_ringbuffer *ring)
 {
-	if (ring && ring->bo) {
-		msm_gem_put_iova(ring->bo, ring->gpu->aspace);
-		drm_gem_object_unreference_unlocked(ring->bo);
-	}
+	if (IS_ERR_OR_NULL(ring))
+		return;
 
+	msm_fence_context_free(ring->fctx);
+
+	if (ring->bo) {
+		msm_gem_put_iova(ring->bo, ring->gpu->aspace);
+		msm_gem_put_vaddr(ring->bo);
+		drm_gem_object_put_unlocked(ring->bo);
+	}
 	kfree(ring);
 }

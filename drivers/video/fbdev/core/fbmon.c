@@ -620,7 +620,7 @@ static struct fb_videomode *fb_create_modedb(unsigned char *edid, int *dbsize,
 	int num = 0, i, first = 1;
 	int ver, rev;
 
-	mode = kzalloc(50 * sizeof(struct fb_videomode), GFP_KERNEL);
+	mode = kcalloc(50, sizeof(struct fb_videomode), GFP_KERNEL);
 	if (mode == NULL)
 		return NULL;
 
@@ -671,7 +671,7 @@ static struct fb_videomode *fb_create_modedb(unsigned char *edid, int *dbsize,
 	}
 
 	*dbsize = num;
-	m = kmalloc(num * sizeof(struct fb_videomode), GFP_KERNEL);
+	m = kmalloc_array(num, sizeof(struct fb_videomode), GFP_KERNEL);
 	if (!m)
 		return mode;
 	memmove(m, mode, num * sizeof(struct fb_videomode));
@@ -1388,8 +1388,8 @@ int of_get_fb_videomode(struct device_node *np, struct fb_videomode *fb,
 	if (ret)
 		return ret;
 
-	pr_debug("%s: got %dx%d display mode from %s\n",
-		of_node_full_name(np), vm.hactive, vm.vactive, np->name);
+	pr_debug("%pOF: got %dx%d display mode from %s\n",
+		np, vm.hactive, vm.vactive, np->name);
 	dump_fb_videomode(fb);
 
 	return 0;
@@ -1405,7 +1405,6 @@ int fb_parse_edid(unsigned char *edid, struct fb_var_screeninfo *var)
 }
 void fb_edid_to_monspecs(unsigned char *edid, struct fb_monspecs *specs)
 {
-	specs = NULL;
 }
 void fb_destroy_modedb(struct fb_videomode *modedb)
 {

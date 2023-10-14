@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -31,22 +23,30 @@ DECLARE_WORK(swap_work, swap_fn);
 
 /* User knob to enable/disable process reclaim feature */
 static int enable_process_reclaim;
-module_param_named(enable_process_reclaim, enable_process_reclaim, int,
-	S_IRUGO | S_IWUSR);
+module_param_named(enable_process_reclaim, enable_process_reclaim, int, 0644);
 
 /* The max number of pages tried to be reclaimed in a single run */
 int per_swap_size = SWAP_CLUSTER_MAX * 32;
-module_param_named(per_swap_size, per_swap_size, int, S_IRUGO | S_IWUSR);
+module_param_named(per_swap_size, per_swap_size, int, 0644);
+
+/* The per task max number of nomap pages to be reclaimed */
+int tsk_nomap_swap_sz;
+module_param_named(tsk_nomap_swap_sz, tsk_nomap_swap_sz, int, 0644);
 
 int reclaim_avg_efficiency;
-module_param_named(reclaim_avg_efficiency, reclaim_avg_efficiency,
-			int, S_IRUGO);
+module_param_named(reclaim_avg_efficiency, reclaim_avg_efficiency, int, 0444);
+
+static unsigned long reclaimed_anon;
+module_param_named(reclaimed_anon, reclaimed_anon, ulong, 0444);
+
+static unsigned long reclaimed_nomap;
+module_param_named(reclaimed_nomap, reclaimed_nomap, ulong, 0444);
 
 /* The vmpressure region where process reclaim operates */
 static unsigned long pressure_min = 50;
 static unsigned long pressure_max = 90;
-module_param_named(pressure_min, pressure_min, ulong, S_IRUGO | S_IWUSR);
-module_param_named(pressure_max, pressure_max, ulong, S_IRUGO | S_IWUSR);
+module_param_named(pressure_min, pressure_min, ulong, 0644);
+module_param_named(pressure_max, pressure_max, ulong, 0644);
 
 /*
  * Scheduling process reclaim workqueue unecessarily
@@ -58,10 +58,10 @@ module_param_named(pressure_max, pressure_max, ulong, S_IRUGO | S_IWUSR);
  * efficincy used as theshold for this.
  */
 static int swap_eff_win = 2;
-module_param_named(swap_eff_win, swap_eff_win, int, S_IRUGO | S_IWUSR);
+module_param_named(swap_eff_win, swap_eff_win, int, 0644);
 
 static int swap_opt_eff = 50;
-module_param_named(swap_opt_eff, swap_opt_eff, int, S_IRUGO | S_IWUSR);
+module_param_named(swap_opt_eff, swap_opt_eff, int, 0644);
 
 static atomic_t skip_reclaim = ATOMIC_INIT(0);
 /* Not atomic since only a single instance of swap_fn run at a time */
@@ -112,13 +112,16 @@ static void swap_fn(struct work_struct *work)
 	struct selected_task selected[MAX_SWAP_TASKS] = {{0, 0, 0},};
 	int si = 0;
 	int i;
-	int tasksize;
+	int tasksize = 0;
 	int total_sz = 0;
 	short min_score_adj = 360;
 	int total_scan = 0;
 	int total_reclaimed = 0;
 	int nr_to_reclaim;
 	int efficiency;
+
+	if (!tsk_nomap_swap_sz && !per_swap_size)
+		return;
 
 	rcu_read_lock();
 	for_each_process(tsk) {
@@ -141,7 +144,11 @@ static void swap_fn(struct work_struct *work)
 			continue;
 		}
 
-		tasksize = get_mm_counter(p->mm, MM_ANONPAGES);
+		if (per_swap_size)
+			tasksize = get_mm_counter(p->mm, MM_ANONPAGES);
+		else if (tsk_nomap_swap_sz)
+			tasksize = get_mm_rss(p->mm);
+
 		task_unlock(p);
 
 		if (tasksize <= 0)
@@ -179,6 +186,9 @@ static void swap_fn(struct work_struct *work)
 	rcu_read_unlock();
 
 	while (si--) {
+		if (!per_swap_size)
+			goto nomap;
+
 		nr_to_reclaim =
 			(selected[si].tasksize * per_swap_size) / total_sz;
 		/* scan atleast a page */
@@ -193,6 +203,15 @@ static void swap_fn(struct work_struct *work)
 				nr_to_reclaim);
 		total_scan += rp.nr_scanned;
 		total_reclaimed += rp.nr_reclaimed;
+		reclaimed_anon += rp.nr_reclaimed;
+nomap:
+		if (tsk_nomap_swap_sz)
+			nr_to_reclaim = tsk_nomap_swap_sz;
+		rp = reclaim_task_nomap(selected[si].p, nr_to_reclaim);
+		total_scan += rp.nr_scanned;
+		total_reclaimed += rp.nr_reclaimed;
+		reclaimed_nomap += rp.nr_reclaimed;
+
 		put_task_struct(selected[si].p);
 	}
 

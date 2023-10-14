@@ -1,13 +1,6 @@
-/* Copyright (c) 2016, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  */
 
 #undef TRACE_SYSTEM
@@ -35,7 +28,7 @@ TRACE_EVENT(scm_call_start,
 	TP_fast_assign(
 		__entry->x0		= x0;
 		__entry->arginfo	= p->arginfo;
-		memcpy(__entry->args, p->args, MAX_SCM_ARGS);
+		memcpy(__entry->args, p->args, sizeof(__entry->args));
 		__entry->x5		= p->x5;
 	),
 
@@ -56,7 +49,7 @@ TRACE_EVENT(scm_call_end,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->ret, p->ret, MAX_SCM_RETS);
+		memcpy(__entry->ret, p->ret, sizeof(__entry->ret));
 	),
 
 	TP_printk("ret: %#llx, %#llx, %#llx",

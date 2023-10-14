@@ -1,3 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Copyright (c) 2017, 2019, The Linux Foundation. All rights reserved.
+ */
 #ifndef _UAPI_COMPAT_QSEECOM_H_
 #define _UAPI_COMPAT_QSEECOM_H_
 
@@ -86,7 +90,7 @@ struct compat_qseecom_send_resp_req {
  * @img_len - Length of the .mdt + .b00 +..+.bxx images files in bytes
  * @ion_fd - Ion file descriptor used when allocating memory.
  * @img_name - Name of the image.
-*/
+ */
 struct compat_qseecom_load_img_req {
 	compat_ulong_t mdt_len; /* in */
 	compat_ulong_t img_len; /* in */
@@ -331,4 +335,3 @@ extern long compat_qseecom_ioctl(struct file *file,
 
 #endif
 #endif /* _UAPI_COMPAT_QSEECOM_H_ */
-

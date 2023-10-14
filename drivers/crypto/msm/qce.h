@@ -1,17 +1,9 @@
-/* Qualcomm Crypto Engine driver API
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * QTI Crypto Engine driver API
  *
- * Copyright (c) 2010-2015, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2010-2019, The Linux Foundation. All rights reserved.
  */
-
 
 #ifndef __CRYPTO_MSM_QCE_H
 #define __CRYPTO_MSM_QCE_H
@@ -34,6 +26,10 @@
 
 #define AES_CE_BLOCK_SIZE		16
 
+/* SHA1/256 supports 2 AUTH_BYTECNT REGISTER */
+/* SHA384/512 supports 4 AUTH_BYTECNT REGISTER */
+#define	AUTH_BYTECNT_REG_NUMBER		4
+
 /* key size in bytes */
 #define HMAC_KEY_SIZE			(SHA1_DIGESTSIZE)    /* hmac-sha1 */
 #define SHA_HMAC_KEY_SIZE		64
@@ -55,6 +51,12 @@
 /* Maximum Nonce bytes  */
 #define MAX_NONCE  16
 
+/* Crypto clock control flags */
+#define QCE_CLK_ENABLE_FIRST		1
+#define QCE_BW_REQUEST_FIRST		2
+#define QCE_CLK_DISABLE_FIRST		3
+#define QCE_BW_REQUEST_RESET_FIRST	4
+
 typedef void (*qce_comp_func_ptr_t)(void *areq,
 		unsigned char *icv, unsigned char *iv, int ret);
 
@@ -73,6 +75,10 @@ enum qce_hash_alg_enum {
 	QCE_HASH_SHA1_HMAC   = 2,
 	QCE_HASH_SHA256_HMAC = 3,
 	QCE_HASH_AES_CMAC = 4,
+	QCE_HASH_SHA384 = 5,
+	QCE_HASH_SHA512 = 6,
+	QCE_HASH_SHA384_HMAC = 7,
+	QCE_HASH_SHA512_HMAC = 8,
 	QCE_HASH_LAST
 };
 
@@ -123,6 +129,7 @@ struct ce_hw_support {
 	bool use_sw_hmac_algo;
 	bool use_sw_aes_ccm_algo;
 	bool clk_mgmt_sus_res;
+	bool req_bw_before_clk;
 	unsigned int ce_device;
 	unsigned int ce_hw_instance;
 	unsigned int max_request;

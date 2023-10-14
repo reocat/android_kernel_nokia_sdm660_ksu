@@ -1,4 +1,6 @@
-/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2015-2016, 2018-2020, The Linux Foundation.
+ * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -59,7 +61,7 @@ enum msm_jpegdma_plane_type {
  * struct msm_jpegdma_format - Dma format.
  * @name: Format name.
  * @fourcc: v4l2 fourcc code.
- * @depth: Number of bits per pixel.
+ * @depth: Number of bits per pix.
  * @num_planes: number of planes.
  * @colplane_h: Color plane horizontal subsample.
  * @colplane_v: Color plane vertical subsample.
@@ -232,7 +234,7 @@ struct msm_jpegdma_buf_handle {
 	int fd;
 	struct msm_jpegdma_device *dma;
 	unsigned long size;
-	ion_phys_addr_t addr;
+	dma_addr_t addr;
 };
 
 /*

@@ -1,20 +1,10 @@
-/* Copyright (c) 2008-2020, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2008-2018, 2020-2021, The Linux Foundation. All rights reserved. */
 
 #ifndef MDSS_FB_H
 #define MDSS_FB_H
 
-#include <linux/msm_ion.h>
+#include <linux/ion.h>
 #include <linux/list.h>
 #include <linux/msm_mdp_ext.h>
 #include <linux/types.h>
@@ -171,11 +161,12 @@ struct disp_info_notify {
 struct msm_sync_pt_data {
 	char *fence_name;
 	u32 acq_fen_cnt;
-	struct sync_fence *acq_fen[MDP_MAX_FENCE_FD];
+	struct mdss_fence *acq_fen[MDP_MAX_FENCE_FD];
 	u32 temp_fen_cnt;
-	struct sync_fence *temp_fen[MDP_MAX_FENCE_FD];
+	struct mdss_fence *temp_fen[MDP_MAX_FENCE_FD];
 
-	struct sw_sync_timeline *timeline;
+	struct mdss_timeline *timeline;
+	struct mdss_timeline *timeline_retire;
 	int timeline_value;
 	u32 threshold;
 	u32 retire_threshold;
@@ -186,7 +177,7 @@ struct msm_sync_pt_data {
 	struct mutex sync_mutex;
 	struct notifier_block notifier;
 
-	struct sync_fence *(*get_retire_fence)
+	struct mdss_fence *(*get_retire_fence)
 		(struct msm_sync_pt_data *sync_pt_data);
 };
 
@@ -236,6 +227,8 @@ struct msm_mdp_interface {
 	int (*pp_release_fnc)(struct msm_fb_data_type *mfd);
 	void (*signal_retire_fence)(struct msm_fb_data_type *mfd,
 					int retire_cnt);
+	int (*enable_panel_disable_mode)(struct msm_fb_data_type *mfd,
+		bool disable_panel);
 	void *private1;
 };
 
@@ -292,7 +285,6 @@ struct msm_fb_data_type {
 	int op_enable;
 	u32 fb_imgType;
 	int panel_reconfig;
-	int force_null_commit;
 	u32 panel_orientation;
 
 	u32 dst_format;
@@ -312,8 +304,8 @@ struct msm_fb_data_type {
 	u32 calib_mode;
 	u32 calib_mode_bl;
 	u32 ad_bl_level;
-	u32 bl_level;
-	int bl_extn_level;
+	u64 bl_level;
+	u64 bl_extn_level;
 	u32 bl_scale;
 	u32 unset_bl_level;
 	bool allow_bl_update;
@@ -321,6 +313,7 @@ struct msm_fb_data_type {
 	u32 bl_level_usr;
 	struct mutex bl_lock;
 	struct mutex mdss_sysfs_lock;
+	struct mutex sd_lock;
 	bool ipc_resume;
 
 	struct platform_device *pdev;
@@ -355,8 +348,6 @@ struct msm_fb_data_type {
 
 	u32 dcm_state;
 	struct list_head file_list;
-	struct ion_client *fb_ion_client;
-	struct ion_handle *fb_ion_handle;
 	struct dma_buf *fbmem_buf;
 	struct dma_buf_attachment *fb_attachment;
 	struct sg_table *fb_table;
@@ -380,6 +371,7 @@ struct msm_fb_data_type {
 static inline void mdss_fb_update_notify_update(struct msm_fb_data_type *mfd)
 {
 	int needs_complete = 0;
+
 	mutex_lock(&mfd->update.lock);
 	mfd->update.value = mfd->update.type;
 	needs_complete = mfd->update.value == NOTIFY_TYPE_UPDATE;
@@ -387,9 +379,7 @@ static inline void mdss_fb_update_notify_update(struct msm_fb_data_type *mfd)
 	if (needs_complete) {
 		complete(&mfd->update.comp);
 		mutex_lock(&mfd->no_update.lock);
-		if (mfd->no_update.timer.function)
-			del_timer(&(mfd->no_update.timer));
-
+		del_timer(&(mfd->no_update.timer));
 		mfd->no_update.timer.expires = jiffies + (2 * HZ);
 		add_timer(&mfd->no_update.timer);
 		mutex_unlock(&mfd->no_update.lock);
@@ -465,7 +455,7 @@ void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl);
 void mdss_fb_update_backlight(struct msm_fb_data_type *mfd);
 int mdss_fb_wait_for_fence(struct msm_sync_pt_data *sync_pt_data);
 void mdss_fb_signal_timeline(struct msm_sync_pt_data *sync_pt_data);
-struct sync_fence *mdss_fb_sync_get_fence(struct sw_sync_timeline *timeline,
+struct mdss_fence *mdss_fb_sync_get_fence(struct mdss_timeline *timeline,
 				const char *fence_name, int val);
 int mdss_fb_register_mdp_instance(struct msm_mdp_interface *mdp);
 int mdss_fb_dcm(struct msm_fb_data_type *mfd, int req_state);
@@ -485,4 +475,7 @@ void mdss_panelinfo_to_fb_var(struct mdss_panel_info *pinfo,
 						struct fb_var_screeninfo *var);
 void mdss_fb_calc_fps(struct msm_fb_data_type *mfd);
 void mdss_fb_idle_pc(struct msm_fb_data_type *mfd);
+extern struct dma_buf *ion_alloc(size_t len, unsigned int heap_id_mask,
+							unsigned int flags);
+
 #endif /* MDSS_FB_H */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,6 +19,41 @@
 
 #include <linux/tracepoint.h>
 
+#define UFS_LINK_STATES			\
+	EM(UIC_LINK_OFF_STATE)		\
+	EM(UIC_LINK_ACTIVE_STATE)	\
+	EMe(UIC_LINK_HIBERN8_STATE)
+
+#define UFS_PWR_MODES			\
+	EM(UFS_ACTIVE_PWR_MODE)		\
+	EM(UFS_SLEEP_PWR_MODE)		\
+	EMe(UFS_POWERDOWN_PWR_MODE)
+
+#define UFSCHD_CLK_GATING_STATES	\
+	EM(CLKS_OFF)			\
+	EM(CLKS_ON)			\
+	EM(REQ_CLKS_OFF)		\
+	EMe(REQ_CLKS_ON)
+
+/* Enums require being exported to userspace, for user tool parsing */
+#undef EM
+#undef EMe
+#define EM(a)	TRACE_DEFINE_ENUM(a);
+#define EMe(a)	TRACE_DEFINE_ENUM(a);
+
+UFS_LINK_STATES;
+UFS_PWR_MODES;
+UFSCHD_CLK_GATING_STATES;
+
+/*
+ * Now redefine the EM() and EMe() macros to map the enums to the strings
+ * that will be printed in the output.
+ */
+#undef EM
+#undef EMe
+#define EM(a)	{ a, #a },
+#define EMe(a)	{ a, #a }
+
 DECLARE_EVENT_CLASS(ufshcd_state_change_template,
 	TP_PROTO(const char *dev_name, int state),
 
@@ -35,7 +70,8 @@ DECLARE_EVENT_CLASS(ufshcd_state_change_template,
 	),
 
 	TP_printk("%s: state changed to %s",
-		__get_str(dev_name), __entry->state ? "ON" : "OFF")
+		__get_str(dev_name),
+		__print_symbolic(__entry->state, UFSCHD_CLK_GATING_STATES))
 );
 
 DEFINE_EVENT_PRINT(ufshcd_state_change_template, ufshcd_clk_gating,
@@ -158,14 +194,8 @@ DECLARE_EVENT_CLASS(ufshcd_template,
 		"%s: took %lld usecs, dev_state: %s, link_state: %s, err %d",
 		__get_str(dev_name),
 		__entry->usecs,
-		__print_symbolic(__entry->dev_state,
-			{ UFS_ACTIVE_PWR_MODE, "ACTIVE" },
-			{ UFS_SLEEP_PWR_MODE, "SLEEP" },
-			{ UFS_POWERDOWN_PWR_MODE, "POWERDOWN" }),
-		__print_symbolic(__entry->link_state,
-			{ UIC_LINK_OFF_STATE, "LINK_OFF" },
-			{ UIC_LINK_ACTIVE_STATE, "LINK_ACTIVE" },
-			{ UIC_LINK_HIBERN8_STATE, "LINK_HIBERN8" }),
+		__print_symbolic(__entry->dev_state, UFS_PWR_MODES),
+		__print_symbolic(__entry->link_state, UFS_LINK_STATES),
 		__entry->err
 	)
 );
@@ -225,10 +255,37 @@ TRACE_EVENT(ufshcd_command,
 	),
 
 	TP_printk(
-		"%s: %s: tag: %u, DB: 0x%x, size: %d, IS: %u, LBA: %llu, opcode: 0x%x",
-		__get_str(str), __get_str(dev_name), __entry->tag,
-		__entry->doorbell, __entry->transfer_len,
-		__entry->intr, __entry->lba, (u32)__entry->opcode
+		"%s: %14s: tag: %-2u cmd: 0x%-2x lba: %-9llu size: %-7d DB: 0x%-8x IS: 0x%x",
+		__get_str(dev_name), __get_str(str), __entry->tag,
+		(u32)__entry->opcode, __entry->lba, __entry->transfer_len,
+		__entry->doorbell, __entry->intr
+	)
+);
+
+TRACE_EVENT(ufshcd_upiu,
+	TP_PROTO(const char *dev_name, const char *str, void *hdr, void *tsf),
+
+	TP_ARGS(dev_name, str, hdr, tsf),
+
+	TP_STRUCT__entry(
+		__string(dev_name, dev_name)
+		__string(str, str)
+		__array(unsigned char, hdr, 12)
+		__array(unsigned char, tsf, 16)
+	),
+
+	TP_fast_assign(
+		__assign_str(dev_name, dev_name);
+		__assign_str(str, str);
+		memcpy(__entry->hdr, hdr, sizeof(__entry->hdr));
+		memcpy(__entry->tsf, tsf, sizeof(__entry->tsf));
+	),
+
+	TP_printk(
+		"%s: %s: HDR:%s, CDB:%s",
+		__get_str(str), __get_str(dev_name),
+		__print_hex(__entry->hdr, sizeof(__entry->hdr)),
+		__print_hex(__entry->tsf, sizeof(__entry->tsf))
 	)
 );
 

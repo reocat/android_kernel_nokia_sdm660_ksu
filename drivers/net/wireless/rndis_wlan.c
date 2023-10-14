@@ -479,7 +479,7 @@ struct rndis_wlan_private {
  */
 static int rndis_change_virtual_intf(struct wiphy *wiphy,
 					struct net_device *dev,
-					enum nl80211_iftype type, u32 *flags,
+					enum nl80211_iftype type,
 					struct vif_params *params);
 
 static int rndis_scan(struct wiphy *wiphy,
@@ -712,8 +712,8 @@ static int rndis_query_oid(struct usbnet *dev, u32 oid, void *data, int *len)
 		struct rndis_query	*get;
 		struct rndis_query_c	*get_c;
 	} u;
-	int ret, buflen;
-	int resplen, respoffs, copylen;
+	int ret;
+	size_t buflen, resplen, respoffs, copylen;
 
 	buflen = *len + sizeof(*u.get);
 	if (buflen < CONTROL_BUFFER_SIZE)
@@ -748,22 +748,15 @@ static int rndis_query_oid(struct usbnet *dev, u32 oid, void *data, int *len)
 
 		if (respoffs > buflen) {
 			/* Device returned data offset outside buffer, error. */
-			netdev_dbg(dev->net, "%s(%s): received invalid "
-				"data offset: %d > %d\n", __func__,
-				oid_to_string(oid), respoffs, buflen);
+			netdev_dbg(dev->net,
+				   "%s(%s): received invalid data offset: %zu > %zu\n",
+				   __func__, oid_to_string(oid), respoffs, buflen);
 
 			ret = -EINVAL;
 			goto exit_unlock;
 		}
 
-		if ((resplen + respoffs) > buflen) {
-			/* Device would have returned more data if buffer would
-			 * have been big enough. Copy just the bits that we got.
-			 */
-			copylen = buflen - respoffs;
-		} else {
-			copylen = resplen;
-		}
+		copylen = min(resplen, buflen - respoffs);
 
 		if (copylen > *len)
 			copylen = *len;
@@ -1857,7 +1850,7 @@ error:
  */
 static int rndis_change_virtual_intf(struct wiphy *wiphy,
 					struct net_device *dev,
-					enum nl80211_iftype type, u32 *flags,
+					enum nl80211_iftype type,
 					struct vif_params *params)
 {
 	struct rndis_wlan_private *priv = wiphy_priv(wiphy);
@@ -2134,6 +2127,7 @@ static void rndis_get_scan_results(struct work_struct *work)
 	struct rndis_wlan_private *priv =
 		container_of(work, struct rndis_wlan_private, scan_work.work);
 	struct usbnet *usbdev = priv->usbdev;
+	struct cfg80211_scan_info info = {};
 	int ret;
 
 	netdev_dbg(usbdev->net, "get_scan_results\n");
@@ -2143,7 +2137,8 @@ static void rndis_get_scan_results(struct work_struct *work)
 
 	ret = rndis_check_bssid_list(usbdev, NULL, NULL);
 
-	cfg80211_scan_done(priv->scan_request, ret < 0);
+	info.aborted = ret < 0;
+	cfg80211_scan_done(priv->scan_request, &info);
 
 	priv->scan_request = NULL;
 }
@@ -2478,7 +2473,7 @@ static void rndis_fill_station_info(struct usbnet *usbdev,
 	ret = rndis_query_oid(usbdev, RNDIS_OID_GEN_LINK_SPEED, &linkspeed, &len);
 	if (ret == 0) {
 		sinfo->txrate.legacy = le32_to_cpu(linkspeed) / 1000;
-		sinfo->filled |= BIT(NL80211_STA_INFO_TX_BITRATE);
+		sinfo->filled |= BIT_ULL(NL80211_STA_INFO_TX_BITRATE);
 	}
 
 	len = sizeof(rssi);
@@ -2486,7 +2481,7 @@ static void rndis_fill_station_info(struct usbnet *usbdev,
 			      &rssi, &len);
 	if (ret == 0) {
 		sinfo->signal = level_to_qual(le32_to_cpu(rssi));
-		sinfo->filled |= BIT(NL80211_STA_INFO_SIGNAL);
+		sinfo->filled |= BIT_ULL(NL80211_STA_INFO_SIGNAL);
 	}
 }
 
@@ -2828,15 +2823,22 @@ static void rndis_wlan_do_link_up_work(struct usbnet *usbdev)
 	}
 
 	if (priv->infra_mode == NDIS_80211_INFRA_INFRA) {
-		if (!roamed)
+		if (!roamed) {
 			cfg80211_connect_result(usbdev->net, bssid, req_ie,
 						req_ie_len, resp_ie,
 						resp_ie_len, 0, GFP_KERNEL);
-		else
-			cfg80211_roamed(usbdev->net,
-					get_current_channel(usbdev, NULL),
-					bssid, req_ie, req_ie_len,
-					resp_ie, resp_ie_len, GFP_KERNEL);
+		} else {
+			struct cfg80211_roam_info roam_info = {
+				.channel = get_current_channel(usbdev, NULL),
+				.bssid = bssid,
+				.req_ie = req_ie,
+				.req_ie_len = req_ie_len,
+				.resp_ie = resp_ie,
+				.resp_ie_len = resp_ie_len,
+			};
+
+			cfg80211_roamed(usbdev->net, &roam_info, GFP_KERNEL);
+		}
 	} else if (priv->infra_mode == NDIS_80211_INFRA_ADHOC)
 		cfg80211_ibss_joined(usbdev->net, bssid,
 				     get_current_channel(usbdev, NULL),
@@ -3187,7 +3189,7 @@ static void rndis_do_cqm(struct usbnet *usbdev, s32 rssi)
 		return;
 
 	priv->last_cqm_event_rssi = rssi;
-	cfg80211_cqm_rssi_notify(usbdev->net, event, GFP_KERNEL);
+	cfg80211_cqm_rssi_notify(usbdev->net, event, rssi, GFP_KERNEL);
 }
 
 #define DEVICE_POLLER_JIFFIES (HZ)
@@ -3392,6 +3394,7 @@ static const struct net_device_ops rndis_wlan_netdev_ops = {
 	.ndo_stop		= usbnet_stop,
 	.ndo_start_xmit		= usbnet_start_xmit,
 	.ndo_tx_timeout		= usbnet_tx_timeout,
+	.ndo_get_stats64	= usbnet_get_stats64,
 	.ndo_set_mac_address 	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_rx_mode	= rndis_wlan_set_multicast_list,
@@ -3580,7 +3583,11 @@ static int rndis_wlan_stop(struct usbnet *usbdev)
 	flush_workqueue(priv->workqueue);
 
 	if (priv->scan_request) {
-		cfg80211_scan_done(priv->scan_request, true);
+		struct cfg80211_scan_info info = {
+			.aborted = true,
+		};
+
+		cfg80211_scan_done(priv->scan_request, &info);
 		priv->scan_request = NULL;
 	}
 
