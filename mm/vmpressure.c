@@ -24,10 +24,7 @@
 #include <linux/printk.h>
 #include <linux/notifier.h>
 #include <linux/init.h>
-<<<<<<< HEAD
 #include <linux/module.h>
-=======
->>>>>>> 12a1795554df (mm: vmpressure: allow in-kernel clients to subscribe for events)
 #include <linux/vmpressure.h>
 
 /*
@@ -55,18 +52,6 @@ static unsigned long vmpressure_win = SWAP_CLUSTER_MAX * 16;
 static const unsigned int vmpressure_level_med = 60;
 static const unsigned int vmpressure_level_critical = 95;
 
-<<<<<<< HEAD
-static unsigned long vmpressure_scale_max = 100;
-module_param_named(vmpressure_scale_max, vmpressure_scale_max,
-			ulong, S_IRUGO | S_IWUSR);
-
-/* vmpressure values >= this will be scaled based on allocstalls */
-static unsigned long allocstall_threshold = 70;
-module_param_named(allocstall_threshold, allocstall_threshold,
-			ulong, S_IRUGO | S_IWUSR);
-
-=======
->>>>>>> 12a1795554df (mm: vmpressure: allow in-kernel clients to subscribe for events)
 static struct vmpressure global_vmpressure;
 BLOCKING_NOTIFIER_HEAD(vmpressure_notifier);
 
@@ -179,22 +164,6 @@ out:
 		 scanned, reclaimed);
 
 	return pressure;
-<<<<<<< HEAD
-}
-
-static unsigned long vmpressure_account_stall(unsigned long pressure,
-				unsigned long stall, unsigned long scanned)
-{
-	unsigned long scale;
-
-	if (pressure < allocstall_threshold)
-		return pressure;
-
-	scale = ((vmpressure_scale_max - pressure) * stall) / scanned;
-
-	return pressure + scale;
-=======
->>>>>>> 12a1795554df (mm: vmpressure: allow in-kernel clients to subscribe for events)
 }
 
 struct vmpressure_event {
@@ -307,41 +276,11 @@ void vmpressure_memcg(gfp_t gfp, struct mem_cgroup *memcg,
 	schedule_work(&vmpr->work);
 }
 
-<<<<<<< HEAD
-void calculate_vmpressure_win(void)
-{
-	long x;
-
-	x = global_page_state(NR_FILE_PAGES) -
-			global_page_state(NR_SHMEM) -
-			total_swapcache_pages() +
-			global_page_state(NR_FREE_PAGES);
-	if (x < 1)
-		x = 1;
-	/*
-	 * For low (free + cached), vmpressure window should be
-	 * small, and high for higher values of (free + cached).
-	 * But it should not be linear as well. This ensures
-	 * timely vmpressure notifications when system is under
-	 * memory pressure, and optimal number of events when
-	 * cached is high. The sqaure root function is empirically
-	 * found to serve the purpose.
-	 */
-	x = int_sqrt(x);
-	vmpressure_win = x;
-}
-
-=======
->>>>>>> 12a1795554df (mm: vmpressure: allow in-kernel clients to subscribe for events)
 void vmpressure_global(gfp_t gfp, unsigned long scanned,
 		unsigned long reclaimed)
 {
 	struct vmpressure *vmpr = &global_vmpressure;
 	unsigned long pressure;
-<<<<<<< HEAD
-	unsigned long stall;
-=======
->>>>>>> 12a1795554df (mm: vmpressure: allow in-kernel clients to subscribe for events)
 
 	if (!(gfp & (__GFP_HIGHMEM | __GFP_MOVABLE | __GFP_IO | __GFP_FS)))
 		return;
@@ -350,21 +289,8 @@ void vmpressure_global(gfp_t gfp, unsigned long scanned,
 		return;
 
 	spin_lock(&vmpr->sr_lock);
-<<<<<<< HEAD
-	if (!vmpr->scanned)
-		calculate_vmpressure_win();
-
 	vmpr->scanned += scanned;
 	vmpr->reclaimed += reclaimed;
-
-	if (!current_is_kswapd())
-		vmpr->stall += scanned;
-
-	stall = vmpr->stall;
-=======
-	vmpr->scanned += scanned;
-	vmpr->reclaimed += reclaimed;
->>>>>>> 12a1795554df (mm: vmpressure: allow in-kernel clients to subscribe for events)
 	scanned = vmpr->scanned;
 	reclaimed = vmpr->reclaimed;
 	spin_unlock(&vmpr->sr_lock);
@@ -375,17 +301,9 @@ void vmpressure_global(gfp_t gfp, unsigned long scanned,
 	spin_lock(&vmpr->sr_lock);
 	vmpr->scanned = 0;
 	vmpr->reclaimed = 0;
-<<<<<<< HEAD
-	vmpr->stall = 0;
 	spin_unlock(&vmpr->sr_lock);
 
 	pressure = vmpressure_calc_pressure(scanned, reclaimed);
-	pressure = vmpressure_account_stall(pressure, stall, scanned);
-=======
-	spin_unlock(&vmpr->sr_lock);
-
-	pressure = vmpressure_calc_pressure(scanned, reclaimed);
->>>>>>> 12a1795554df (mm: vmpressure: allow in-kernel clients to subscribe for events)
 	vmpressure_notify(pressure);
 }
 
