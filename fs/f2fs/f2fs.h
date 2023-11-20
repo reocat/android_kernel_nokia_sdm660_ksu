@@ -1308,6 +1308,7 @@ enum {
 	GC_IDLE_GREEDY,
 	GC_IDLE_AT,
 	GC_URGENT,
+	GC_URGENT_MID,
 	MAX_GC_MODE,
 };
 
@@ -2420,6 +2421,9 @@ static inline bool is_idle(struct f2fs_sb_info *sbi, int type)
 
 	if (is_inflight_io(sbi, type))
 		return false;
+
+	if (sbi->gc_mode == GC_URGENT_MID)
+		return true;
 
 	return f2fs_time_over(sbi, type);
 }
