@@ -327,6 +327,11 @@ Description:	Give a way to change checkpoint merge daemon's io priority.
 		and set the I/O priority within valid range of it. "," delimiter
 		is necessary in between I/O class and priority number.
 
+What:		/sys/fs/f2fs/<disk>/ovp_segments
+Date:		March 2021
+Contact:	"Jaegeuk Kim" <jaegeuk@kernel.org>
+Description:	Shows the number of overprovision segments.
+
 What:		/sys/fs/f2fs/<disk>/atgc_candidate_ratio
 Date:		May 2021
 Contact:	"Chao Yu" <yuchao0@huawei.com>
