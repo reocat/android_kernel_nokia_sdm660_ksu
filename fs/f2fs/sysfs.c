@@ -263,6 +263,14 @@ static ssize_t f2fs_sbi_show(struct f2fs_attr *a,
 		return len;
 	}
 
+	if (!strcmp(a->attr.name, "gc_segment_mode"))
+		return snprintf(buf, PAGE_SIZE, "%u\n", sbi->gc_segment_mode);
+
+	if (!strcmp(a->attr.name, "gc_reclaimed_segments")) {
+		return snprintf(buf, PAGE_SIZE, "%u\n",
+			sbi->gc_reclaimed_segs[sbi->gc_segment_mode]);
+	}
+
 	ui = (unsigned int *)(ptr + a->offset);
 
 	return sprintf(buf, "%u\n", *ui);
@@ -455,6 +463,21 @@ out:
 		if (t > 100)
 			return -EINVAL;
 		sbi->am.age_weight = t;
+		return count;
+	}
+
+	if (!strcmp(a->attr.name, "gc_segment_mode")) {
+		if (t < MAX_GC_MODE)
+			sbi->gc_segment_mode = t;
+		else
+			return -EINVAL;
+		return count;
+	}
+
+	if (!strcmp(a->attr.name, "gc_reclaimed_segments")) {
+		if (t != 0)
+			return -EINVAL;
+		sbi->gc_reclaimed_segs[sbi->gc_segment_mode] = 0;
 		return count;
 	}
 
@@ -688,6 +711,9 @@ F2FS_RW_ATTR(ATGC_INFO, atgc_management, atgc_candidate_count, max_candidate_cou
 F2FS_RW_ATTR(ATGC_INFO, atgc_management, atgc_age_weight, age_weight);
 F2FS_RW_ATTR(ATGC_INFO, atgc_management, atgc_age_threshold, age_threshold);
 
+F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, gc_segment_mode, gc_segment_mode);
+F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, gc_reclaimed_segments, gc_reclaimed_segs);
+
 /* For block age extent cache */
 F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, hot_data_age_threshold, hot_data_age_threshold);
 F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, warm_data_age_threshold, warm_data_age_threshold);
@@ -761,6 +787,8 @@ static struct attribute *f2fs_attrs[] = {
 	ATTR_LIST(atgc_candidate_count),
 	ATTR_LIST(atgc_age_weight),
 	ATTR_LIST(atgc_age_threshold),
+	ATTR_LIST(gc_segment_mode),
+	ATTR_LIST(gc_reclaimed_segments),
 	ATTR_LIST(hot_data_age_threshold),
 	ATTR_LIST(warm_data_age_threshold),
 	ATTR_LIST(last_age_weight),

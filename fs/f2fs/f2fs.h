@@ -1308,6 +1308,7 @@ enum {
 	GC_IDLE_GREEDY,
 	GC_IDLE_AT,
 	GC_URGENT,
+	MAX_GC_MODE,
 };
 
 enum {
@@ -1530,6 +1531,10 @@ struct f2fs_sb_info {
 
 	struct kmem_cache *inline_xattr_slab;	/* inline xattr entry */
 	unsigned int inline_xattr_slab_size;	/* default inline xattr slab size */
+
+	/* For reclaimed segs statistics per each GC mode */
+	unsigned int gc_segment_mode;		/* GC state for reclaimed segments */
+	unsigned int gc_reclaimed_segs[MAX_GC_MODE];	/* Reclaimed segs for each mode */
 };
 
 struct f2fs_private_dio {
