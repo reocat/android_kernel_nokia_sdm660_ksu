@@ -51,7 +51,7 @@ static struct drv2605L_data *pDRV2605Ldata = NULL;
 int getPatternValue=0;
 
 
-int vibrator_get_pattern_value()
+int vibrator_get_pattern_value(void)
 {
 	return getPatternValue;
 }
