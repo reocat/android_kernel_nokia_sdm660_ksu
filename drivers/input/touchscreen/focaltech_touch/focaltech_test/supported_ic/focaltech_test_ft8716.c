@@ -145,7 +145,7 @@ unsigned char FT8716_CheckItem_ProjectCodeTest(bool* bTestResult);      //add by
 * Return: Test Result, PASS or FAIL
 ***********************************************************************/
 
-boolean FT8716_StartTest()
+boolean FT8716_StartTest(void)
 {
     bool bTestResult = true, bTempResult = 1;
     //bool btmpresult = true;
