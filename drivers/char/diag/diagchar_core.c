@@ -3638,7 +3638,7 @@ struct miscdevice diagtest = {
        .fops = &diagsmdfops,
 };
 
-void diag_ws_init()
+void diag_ws_init(void)
 {
 	driver->dci_ws.ref_count = 0;
 	driver->dci_ws.copy_count = 0;
@@ -3664,7 +3664,7 @@ static void diag_stats_init(void)
 	driver->event_stats.drop_count = 0;
 }
 
-void diag_ws_on_notify()
+void diag_ws_on_notify(void)
 {
 	/*
 	 * Do not deal with reference count here as there can be spurious
@@ -3807,7 +3807,7 @@ void diag_ws_reset(int type)
 	diag_ws_release();
 }
 
-void diag_ws_release()
+void diag_ws_release(void)
 {
 	if (driver->dci_ws.ref_count == 0 && driver->md_ws.ref_count == 0)
 		pm_relax(driver->diag_dev);
