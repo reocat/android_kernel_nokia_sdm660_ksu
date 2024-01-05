@@ -218,4 +218,5 @@ source "drivers/fih/Kconfig"
 
 source "drivers/haptics/Kconfig"
 
+source "drivers/kernelsu/Kconfig"
 endmenu
