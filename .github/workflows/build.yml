@@ -38,11 +38,14 @@ jobs:
         sudo apt install gcc-arm-linux-gnueabi -y
         sudo apt install binutils make python3 libssl-dev build-essential bc  bison flex unzip libssl-dev ca-certificates xz-utils mkbootimg cpio device-tree-compiler git git-lfs -y
         wget $(curl -fsSL https://github.com/ZyCromerZ/Clang/raw/main/Clang-main-link.txt)
-        tar -xzvf Clang-*.tar.gz
-        git clone https://github.com/kdrag0n/proton-clang --dept=1 -b master
-        git clone https://github.com/Coconutat/AnyKernel3_Backup -b Op6_KSU --depth=1
-        rm -rf AnyKernel3/.git
-    
+        mkdir zyc-clang
+        tar -xzvf Clang-*.tar.gz -C zyc-clang
+        git clone https://github.com/osm0sis/AnyKernel3
+        sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+        sed -i 's!block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!block=auto;!g' AnyKernel3/anykernel.sh
+        sed -i 's/is_slot_device=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
+        rm -rf AnyKernel3/.git* AnyKernel3/README.md
+        
     - name: GetTime
       id: get_time
       run: |
@@ -50,10 +53,10 @@ jobs:
 
     - name: Build Kernel-With-KernelSU
       run: |
-        export PATH=$(pwd)/proton-clang/bin/:$PATH
+        export PATH=$(pwd)/zyc-clang/bin/:$PATH
         make $KERNEL_CMDLINE $KERNEL_DEFCONFIG CC="ccache clang"
         make $KERNEL_CMDLINE CC="ccache clang" -j$(nproc --all)
-        cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3_Backup
+        cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3
 
     - name: Upload Kernel-SU
       uses: actions/upload-artifact@v3
