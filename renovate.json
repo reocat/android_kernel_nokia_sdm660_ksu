@@ -3,4 +3,13 @@
   "extends": [
     "config:recommended"
   ]
+  "packageRules": [
+    {
+      "matchPackagePatterns": ["*"],
+      "automerge": true,
+      "ignoreTests": true
+    }
+  ]
+  "git-submodules": {
+    "enabled": true
 }
