@@ -23,7 +23,7 @@ jobs:
       KERNEL_CMDLINE: "ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- O=out"
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         submodules: 'true'
         fetch-depth: 100
@@ -37,6 +37,7 @@ jobs:
         sudo apt install gcc-aarch64-linux-gnu -y
         sudo apt install gcc-arm-linux-gnueabi -y
         sudo apt install binutils make python3 libssl-dev build-essential bc  bison flex unzip libssl-dev ca-certificates xz-utils mkbootimg cpio device-tree-compiler git git-lfs -y
+        curl -LSs "https://raw.githubusercontent.com/wxt1221/KernelSU/main/kernel/setup.sh" | bash -
         wget $(curl -fsSL https://github.com/ZyCromerZ/Clang/raw/main/Clang-main-link.txt)
         mkdir zyc-clang
         tar -xzvf Clang-*.tar.gz -C zyc-clang
@@ -45,22 +46,19 @@ jobs:
         sed -i 's!block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!block=auto;!g' AnyKernel3/anykernel.sh
         sed -i 's/is_slot_device=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
-        git submodule update --remote
         
     - name: GetTime
       id: get_time
       run: |
         echo "TIME=$(TZ=UTC-8 date +%m%d%H%M )" >> $GITHUB_OUTPUT
-
     - name: Build Kernel-With-KernelSU
       run: |
         export PATH=$(pwd)/zyc-clang/bin/:$PATH
         make $KERNEL_CMDLINE $KERNEL_DEFCONFIG CC="ccache clang"
         make $KERNEL_CMDLINE CC="ccache clang" -j$(nproc --all)
         cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3
-
     - name: Upload Kernel-SU
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: Nyan_kernel-KSU-${{ steps.get_time.outputs.TIME }}
         path: "AnyKernel3/*"
