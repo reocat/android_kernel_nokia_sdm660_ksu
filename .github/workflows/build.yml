@@ -46,6 +46,8 @@ jobs:
         sed -i 's/is_slot_device=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
         git submodule update --remote
+        git revert -n 0ea7144ed137953a4b09b8741102d5c64c7b47ed
+        curl -LSs "https://raw.githubusercontent.com/wxt1221/KernelSU/main/kernel/setup.sh" | bash -
         
     - name: GetTime
       id: get_time
