@@ -50,7 +50,7 @@ jobs:
     - name: GetTime
       id: get_time
       run: |
-        echo "TIME=$(TZ=UTC-8 date +%m%d%H%M )" >> $GITHUB_OUTPUT
+        echo "TIME=$(TZ=UTC+3 date +%s )" >> $GITHUB_OUTPUT
     - name: Build Kernel-With-KernelSU
       run: |
         export PATH=$(pwd)/zyc-clang/bin/:$PATH
